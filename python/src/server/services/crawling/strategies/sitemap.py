@@ -51,6 +51,14 @@ class SitemapCrawlStrategy:
                 urls = [loc.text for loc in tree.findall('.//{*}loc') if loc.text]
                 logger.info(f"Successfully extracted {len(urls)} URLs from sitemap")
 
+                # Check for cancellation after parsing
+                if cancellation_check:
+                    try:
+                        cancellation_check()
+                    except asyncio.CancelledError:
+                        logger.info("Sitemap parsing cancelled by user after extraction")
+                        raise
+
             except ElementTree.ParseError:
                 logger.exception(f"Error parsing sitemap XML from {sitemap_url}")
             except Exception:

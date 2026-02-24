@@ -654,22 +654,41 @@ async def refresh_knowledge_item(source_id: str):
         # Create a wrapped task that acquires the semaphore
         async def _perform_refresh_with_semaphore():
             try:
-                async with crawl_semaphore:
-                    safe_logfire_info(f"Acquired crawl semaphore for refresh | source_id={source_id}")
-                    result = await crawl_service.orchestrate_crawl(request_dict)
+                try:
+                    async with crawl_semaphore:
+                        safe_logfire_info(f"Acquired crawl semaphore for refresh | source_id={source_id}")
+                        result = await crawl_service.orchestrate_crawl(request_dict)
 
-                    # Store the ACTUAL crawl task for proper cancellation
-                    crawl_task = result.get("task")
-                    if crawl_task:
-                        active_crawl_tasks[progress_id] = crawl_task
-                        safe_logfire_info(
-                            f"Stored actual refresh crawl task | progress_id={progress_id} | task_name={crawl_task.get_name()}"
-                        )
-            finally:
-                # Clean up task from registry when done (success or failure)
-                if progress_id in active_crawl_tasks:
-                    del active_crawl_tasks[progress_id]
-                    safe_logfire_info(f"Cleaned up refresh task from registry | progress_id={progress_id}")
+                        # Store the ACTUAL crawl task for proper cancellation
+                        crawl_task = result.get("task")
+                        if crawl_task:
+                            active_crawl_tasks[progress_id] = crawl_task
+                            safe_logfire_info(
+                                f"Stored actual refresh crawl task | progress_id={progress_id} | task_name={crawl_task.get_name()}"
+                            )
+                finally:
+                    # Clean up task from registry when done (success or failure)
+                    if progress_id in active_crawl_tasks:
+                        del active_crawl_tasks[progress_id]
+                        safe_logfire_info(f"Cleaned up refresh task from registry | progress_id={progress_id}")
+            except Exception as e:
+                # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
+                error_message = f"Critical refresh failure: {str(e)}"
+                logger.error(f"=== BACKGROUND TASK EXCEPTION (REFRESH) ===")
+                logger.error(f"Progress ID: {progress_id}")
+                logger.error(f"Source ID: {source_id}")
+                logger.error(f"Error: {error_message}")
+                logger.error(f"Exception Type: {type(e).__name__}")
+                import traceback
+                logger.error(f"Traceback:\n{traceback.format_exc()}")
+                logger.error("=== END BACKGROUND TASK EXCEPTION ===")
+                safe_logfire_error(f"Background refresh task failed | progress_id={progress_id} | error={str(e)}")
+
+                # Update progress tracker (best effort)
+                try:
+                    await tracker.error(error_message)
+                except Exception:
+                    pass  # Don't fail on tracker failure
 
         # Start the wrapper task - we don't need to track it since we'll track the actual crawl task
         asyncio.create_task(_perform_refresh_with_semaphore())
@@ -733,134 +752,154 @@ async def revectorize_knowledge_item(source_id: str):
 
 async def _perform_revectorize_with_progress(progress_id: str, source_id: str, provider: str, tracker):
     """Perform the actual re-vectorize operation with progress tracking."""
-    async with revectorize_semaphore:
-        try:
-            from ..services.embeddings.embedding_service import create_embeddings_batch
-            from ..services.llm_provider_service import get_embedding_model
+    try:
+        async with revectorize_semaphore:
+            try:
+                from ..services.embeddings.embedding_service import create_embeddings_batch
+                from ..services.llm_provider_service import get_embedding_model
 
-            await tracker.update(
-                {
-                    "status": "processing",
-                    "progress": 5,
-                    "log": "Fetching documents...",
-                }
-            )
-
-            # Get current embedding settings for provenance
-            embedding_model = await get_embedding_model(provider=provider)
-            embedding_dimensions = 1536
-
-            # Fetch all documents for this source
-            supabase = get_supabase_client()
-            docs_response = supabase.table("archon_crawled_pages").select("*").eq("source_id", source_id).execute()
-
-            if not docs_response.data:
-                await tracker.error("No documents found for source")
-                return
-
-            documents = docs_response.data
-            total_docs = len(documents)
-
-            await tracker.update(
-                {
-                    "status": "processing",
-                    "progress": 10,
-                    "log": f"Found {total_docs} documents to re-vectorize",
-                    "documents_total": total_docs,
-                    "documents_processed": 0,
-                }
-            )
-
-            # Get current vectorizer settings for provenance
-            use_contextual = await credential_service.get_credential("USE_CONTEXTUAL_EMBEDDINGS", False)
-            use_hybrid = await credential_service.get_credential("USE_HYBRID_SEARCH", True)
-            chunk_size = await credential_service.get_credential("CHUNK_SIZE", 512)
-
-            vectorizer_settings = {"use_contextual": use_contextual, "use_hybrid": use_hybrid, "chunk_size": chunk_size}
-
-            # Process documents in batches
-            batch_size = 100
-            total_updated = 0
-            errors = []
-
-            for i in range(0, len(documents), batch_size):
-                batch = documents[i : i + batch_size]
-                contents = [doc.get("content", "") or doc.get("markdown", "") for doc in batch]
-
-                # Create embeddings
-                result = await create_embeddings_batch(contents, provider=provider)
-
-                if result.embeddings:
-                    # Update documents with new embeddings
-                    for j, (doc, embedding) in enumerate(zip(batch, result.embeddings, strict=False)):
-                        doc_id = doc.get("id")
-                        if not doc_id:
-                            continue
-
-                        # Determine embedding column based on dimension
-                        embedding_dim = len(embedding) if isinstance(embedding, list) else 0
-                        embedding_column = None
-                        if embedding_dim == 768:
-                            embedding_column = "embedding_768"
-                        elif embedding_dim == 1024:
-                            embedding_column = "embedding_1024"
-                        elif embedding_dim == 1536:
-                            embedding_column = "embedding_1536"
-                        elif embedding_dim == 3072:
-                            embedding_column = "embedding_3072"
-                        else:
-                            errors.append(f"Unsupported dimension {embedding_dim} for doc {doc_id}")
-                            continue
-
-                        try:
-                            supabase.table("archon_crawled_pages").update(
-                                {
-                                    embedding_column: embedding,
-                                    "embedding_model": embedding_model,
-                                    "embedding_dimension": embedding_dim,
-                                }
-                            ).eq("id", doc_id).execute()
-                            total_updated += 1
-                        except Exception as e:
-                            errors.append(f"Failed to update doc {doc_id}: {str(e)}")
-
-                # Update progress
-                progress = 10 + int((i + len(batch)) / total_docs * 85)
                 await tracker.update(
                     {
                         "status": "processing",
-                        "progress": progress,
-                        "log": f"Processed {min(i + len(batch), total_docs)}/{total_docs} documents",
-                        "documents_total": total_docs,
-                        "documents_processed": min(i + len(batch), total_docs),
+                        "progress": 5,
+                        "log": "Fetching documents...",
                     }
                 )
 
-            # Update source provenance
-            supabase.table("archon_sources").update(
-                {
-                    "embedding_model": embedding_model,
-                    "embedding_dimensions": embedding_dim,
-                    "embedding_provider": provider,
-                    "vectorizer_settings": vectorizer_settings,
-                    "last_vectorized_at": datetime.utcnow().isoformat(),
-                    "needs_revectorization": False,
-                }
-            ).eq("id", source_id).execute()
+                # Get current embedding settings for provenance
+                embedding_model = await get_embedding_model(provider=provider)
+                embedding_dimensions = 1536
 
-            await tracker.complete(
-                {
-                    "log": f"Re-vectorization complete: {total_updated} documents updated",
-                    "documents_total": total_updated,
-                    "documents_processed": total_updated,
-                }
-            )
+                # Fetch all documents for this source
+                supabase = get_supabase_client()
+                docs_response = supabase.table("archon_crawled_pages").select("*").eq("source_id", source_id).execute()
 
-            logger.info(f"✅ Re-vectorize complete: {total_updated} documents updated")
+                if not docs_response.data:
+                    await tracker.error("No documents found for source")
+                    return
 
-        except Exception as e:
-            safe_logfire_error(f"Failed to re-vectorize | error={str(e)} | source_id={source_id}")
-            await tracker.error(f"Re-vectorization failed: {str(e)}")
+                documents = docs_response.data
+                total_docs = len(documents)
+
+                await tracker.update(
+                    {
+                        "status": "processing",
+                        "progress": 10,
+                        "log": f"Found {total_docs} documents to re-vectorize",
+                        "documents_total": total_docs,
+                        "documents_processed": 0,
+                    }
+                )
+
+                # Get current vectorizer settings for provenance
+                use_contextual = await credential_service.get_credential("USE_CONTEXTUAL_EMBEDDINGS", False)
+                use_hybrid = await credential_service.get_credential("USE_HYBRID_SEARCH", True)
+                chunk_size = await credential_service.get_credential("CHUNK_SIZE", 512)
+
+                vectorizer_settings = {"use_contextual": use_contextual, "use_hybrid": use_hybrid, "chunk_size": chunk_size}
+
+                # Process documents in batches
+                batch_size = 100
+                total_updated = 0
+                errors = []
+                embedding_dim = 0  # Initialize to avoid unbound variable
+
+                for i in range(0, len(documents), batch_size):
+                    batch = documents[i : i + batch_size]
+                    contents = [doc.get("content", "") or doc.get("markdown", "") for doc in batch]
+
+                    # Create embeddings
+                    result = await create_embeddings_batch(contents, provider=provider)
+
+                    if result.embeddings:
+                        # Update documents with new embeddings
+                        for j, (doc, embedding) in enumerate(zip(batch, result.embeddings, strict=False)):
+                            doc_id = doc.get("id")
+                            if not doc_id:
+                                continue
+
+                            # Determine embedding column based on dimension
+                            embedding_dim = len(embedding) if isinstance(embedding, list) else 0
+                            embedding_column = None
+                            if embedding_dim == 768:
+                                embedding_column = "embedding_768"
+                            elif embedding_dim == 1024:
+                                embedding_column = "embedding_1024"
+                            elif embedding_dim == 1536:
+                                embedding_column = "embedding_1536"
+                            elif embedding_dim == 3072:
+                                embedding_column = "embedding_3072"
+                            else:
+                                errors.append(f"Unsupported dimension {embedding_dim} for doc {doc_id}")
+                                continue
+
+                            try:
+                                supabase.table("archon_crawled_pages").update(
+                                    {
+                                        embedding_column: embedding,
+                                        "embedding_model": embedding_model,
+                                        "embedding_dimension": embedding_dim,
+                                    }
+                                ).eq("id", doc_id).execute()
+                                total_updated += 1
+                            except Exception as e:
+                                errors.append(f"Failed to update doc {doc_id}: {str(e)}")
+
+                    # Update progress
+                    progress = 10 + int((i + len(batch)) / total_docs * 85)
+                    await tracker.update(
+                        {
+                            "status": "processing",
+                            "progress": progress,
+                            "log": f"Processed {min(i + len(batch), total_docs)}/{total_docs} documents",
+                            "documents_total": total_docs,
+                            "documents_processed": min(i + len(batch), total_docs),
+                        }
+                    )
+
+                # Update source provenance
+                supabase.table("archon_sources").update(
+                    {
+                        "embedding_model": embedding_model,
+                        "embedding_dimensions": embedding_dim,
+                        "embedding_provider": provider,
+                        "vectorizer_settings": vectorizer_settings,
+                        "last_vectorized_at": datetime.utcnow().isoformat(),
+                        "needs_revectorization": False,
+                    }
+                ).eq("id", source_id).execute()
+
+                await tracker.complete(
+                    {
+                        "log": f"Re-vectorization complete: {total_updated} documents updated",
+                        "documents_total": total_updated,
+                        "documents_processed": total_updated,
+                    }
+                )
+
+                logger.info(f"✅ Re-vectorize complete: {total_updated} documents updated")
+
+            except Exception as e:
+                safe_logfire_error(f"Failed to re-vectorize | error={str(e)} | source_id={source_id}")
+                await tracker.error(f"Re-vectorization failed: {str(e)}")
+    except Exception as e:
+        # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
+        error_message = f"Critical re-vectorize failure: {str(e)}"
+        logger.error(f"=== BACKGROUND TASK EXCEPTION (RE-VECTORIZE) ===")
+        logger.error(f"Progress ID: {progress_id}")
+        logger.error(f"Source ID: {source_id}")
+        logger.error(f"Error: {error_message}")
+        logger.error(f"Exception Type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        logger.error("=== END BACKGROUND TASK EXCEPTION ===")
+        safe_logfire_error(f"Background re-vectorize task failed | progress_id={progress_id} | error={str(e)}")
+
+        # Update progress tracker (best effort)
+        try:
+            await tracker.error(error_message)
+        except Exception:
+            pass  # Don't fail on tracker failure
 
 
 @router.post("/knowledge-items/{source_id}/resummarize")
@@ -913,106 +952,125 @@ async def resummarize_knowledge_item(source_id: str):
 
 async def _perform_resummarize_with_progress(progress_id: str, source_id: str, tracker):
     """Perform the actual re-summarize operation with progress tracking."""
-    async with resummarize_semaphore:
-        try:
-            from ..services.storage.code_storage_service import _get_model_choice, generate_code_summaries_batch
+    try:
+        async with resummarize_semaphore:
+            try:
+                from ..services.storage.code_storage_service import _get_model_choice, generate_code_summaries_batch
 
-            await tracker.update(
-                {
-                    "status": "processing",
-                    "progress": 5,
-                    "log": "Fetching code examples...",
-                }
-            )
-
-            # Fetch all code examples for this source
-            supabase = get_supabase_client()
-            code_response = supabase.table("archon_code_examples").select("*").eq("source_id", source_id).execute()
-
-            if not code_response.data:
-                await tracker.error("No code examples found for source")
-                return
-
-            code_examples = code_response.data
-            total_examples = len(code_examples)
-
-            await tracker.update(
-                {
-                    "status": "processing",
-                    "progress": 10,
-                    "log": f"Found {total_examples} code examples to re-summarize",
-                    "examples_total": total_examples,
-                    "examples_processed": 0,
-                }
-            )
-
-            # Get code summarization model
-            code_summarization_model = await _get_model_choice()
-
-            # Prepare code blocks for summarization
-            code_blocks = []
-            for example in code_examples:
-                code_blocks.append(
+                await tracker.update(
                     {
-                        "code": example.get("content", ""),
-                        "context_before": "",
-                        "context_after": "",
-                        "language": example.get("metadata", {}).get("language", ""),
+                        "status": "processing",
+                        "progress": 5,
+                        "log": "Fetching code examples...",
                     }
                 )
 
-            # Generate new summaries
-            max_workers = int(await credential_service.get_credential("CODE_SUMMARY_MAX_WORKERS", 3))
-            summary_results = await generate_code_summaries_batch(code_blocks, max_workers=max_workers)
+                # Fetch all code examples for this source
+                supabase = get_supabase_client()
+                code_response = supabase.table("archon_code_examples").select("*").eq("source_id", source_id).execute()
 
-            # Update code examples with new summaries
-            total_updated = 0
-            errors = []
+                if not code_response.data:
+                    await tracker.error("No code examples found for source")
+                    return
 
-            for idx, (example, summary) in enumerate(zip(code_examples, summary_results, strict=False)):
-                example_id = example.get("id")
-                if not example_id:
-                    continue
+                code_examples = code_response.data
+                total_examples = len(code_examples)
 
-                try:
-                    supabase.table("archon_code_examples").update(
-                        {"summary": summary.get("summary", ""), "llm_chat_model": code_summarization_model}
-                    ).eq("id", example_id).execute()
-                    total_updated += 1
-                except Exception as e:
-                    errors.append(f"Failed to update example {example_id}: {str(e)}")
+                await tracker.update(
+                    {
+                        "status": "processing",
+                        "progress": 10,
+                        "log": f"Found {total_examples} code examples to re-summarize",
+                        "examples_total": total_examples,
+                        "examples_processed": 0,
+                    }
+                )
 
-                # Update progress every 10 examples
-                if idx % 10 == 0 or idx == len(code_examples) - 1:
-                    progress = 10 + int((idx + 1) / total_examples * 85)
-                    await tracker.update(
+                # Get code summarization model
+                code_summarization_model = await _get_model_choice()
+
+                # Prepare code blocks for summarization
+                code_blocks = []
+                for example in code_examples:
+                    code_blocks.append(
                         {
-                            "status": "processing",
-                            "progress": progress,
-                            "log": f"Processed {idx + 1}/{total_examples} code examples",
-                            "examples_total": total_examples,
-                            "examples_processed": idx + 1,
+                            "code": example.get("content", ""),
+                            "context_before": "",
+                            "context_after": "",
+                            "language": example.get("metadata", {}).get("language", ""),
                         }
                     )
 
-            # Update source provenance
-            supabase.table("archon_sources").update({"summarization_model": code_summarization_model}).eq(
-                "id", source_id
-            ).execute()
+                # Generate new summaries
+                max_workers = int(await credential_service.get_credential("CODE_SUMMARY_MAX_WORKERS", 3))
+                summary_results = await generate_code_summaries_batch(code_blocks, max_workers=max_workers)
 
-            await tracker.complete(
-                {
-                    "log": f"Re-summarization complete: {total_updated} code examples updated",
-                    "examples_total": total_updated,
-                    "examples_processed": total_updated,
-                }
-            )
+                # Update code examples with new summaries
+                total_updated = 0
+                errors = []
 
-            logger.info(f"✅ Re-summarize complete: {total_updated} code examples updated")
+                for idx, (example, summary) in enumerate(zip(code_examples, summary_results, strict=False)):
+                    example_id = example.get("id")
+                    if not example_id:
+                        continue
 
-        except Exception as e:
-            safe_logfire_error(f"Failed to re-summarize | error={str(e)} | source_id={source_id}")
-            await tracker.error(f"Re-summarization failed: {str(e)}")
+                    try:
+                        supabase.table("archon_code_examples").update(
+                            {"summary": summary.get("summary", ""), "llm_chat_model": code_summarization_model}
+                        ).eq("id", example_id).execute()
+                        total_updated += 1
+                    except Exception as e:
+                        errors.append(f"Failed to update example {example_id}: {str(e)}")
+
+                    # Update progress every 10 examples
+                    if idx % 10 == 0 or idx == len(code_examples) - 1:
+                        progress = 10 + int((idx + 1) / total_examples * 85)
+                        await tracker.update(
+                            {
+                                "status": "processing",
+                                "progress": progress,
+                                "log": f"Processed {idx + 1}/{total_examples} code examples",
+                                "examples_total": total_examples,
+                                "examples_processed": idx + 1,
+                            }
+                        )
+
+                # Update source provenance
+                supabase.table("archon_sources").update({"summarization_model": code_summarization_model}).eq(
+                    "id", source_id
+                ).execute()
+
+                await tracker.complete(
+                    {
+                        "log": f"Re-summarization complete: {total_updated} code examples updated",
+                        "examples_total": total_updated,
+                        "examples_processed": total_updated,
+                    }
+                )
+
+                logger.info(f"✅ Re-summarize complete: {total_updated} code examples updated")
+
+            except Exception as e:
+                safe_logfire_error(f"Failed to re-summarize | error={str(e)} | source_id={source_id}")
+                await tracker.error(f"Re-summarization failed: {str(e)}")
+    except Exception as e:
+        # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
+        error_message = f"Critical re-summarize failure: {str(e)}"
+        logger.error(f"=== BACKGROUND TASK EXCEPTION (RE-SUMMARIZE) ===")
+        logger.error(f"Progress ID: {progress_id}")
+        logger.error(f"Source ID: {source_id}")
+        logger.error(f"Error: {error_message}")
+        logger.error(f"Exception Type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        logger.error("=== END BACKGROUND TASK EXCEPTION ===")
+        safe_logfire_error(f"Background re-summarize task failed | progress_id={progress_id} | error={str(e)}")
+
+        # Update progress tracker (best effort)
+        try:
+            await tracker.error(error_message)
+        except Exception:
+            pass  # Don't fail on tracker failure
 
 
 @router.post("/knowledge-items/crawl")
@@ -1092,82 +1150,101 @@ async def crawl_knowledge_item(request: KnowledgeItemRequest):
 
 async def _perform_crawl_with_progress(progress_id: str, request: KnowledgeItemRequest, tracker):
     """Perform the actual crawl operation with progress tracking using service layer."""
-    # Acquire semaphore to limit concurrent crawls
-    async with crawl_semaphore:
-        safe_logfire_info(f"Acquired crawl semaphore | progress_id={progress_id} | url={str(request.url)}")
-        try:
-            safe_logfire_info(
-                f"Starting crawl with progress tracking | progress_id={progress_id} | url={str(request.url)}"
-            )
-
-            # Get crawler from CrawlerManager
+    try:
+        # Acquire semaphore to limit concurrent crawls
+        async with crawl_semaphore:
+            safe_logfire_info(f"Acquired crawl semaphore | progress_id={progress_id} | url={str(request.url)}")
             try:
-                crawler = await get_crawler()
-                if crawler is None:
-                    raise Exception("Crawler not available - initialization may have failed")
-            except Exception as e:
-                safe_logfire_error(f"Failed to get crawler | error={str(e)}")
-                await tracker.error(f"Failed to initialize crawler: {str(e)}")
-                return
-
-            supabase_client = get_supabase_client()
-            orchestration_service = CrawlingService(crawler, supabase_client)
-            orchestration_service.set_progress_id(progress_id)
-
-            # Convert request to dict for service
-            request_dict = {
-                "url": str(request.url),
-                "knowledge_type": request.knowledge_type,
-                "tags": request.tags or [],
-                "max_depth": request.max_depth,
-                "extract_code_examples": request.extract_code_examples,
-                "generate_summary": True,
-                "use_new_pipeline": request.use_new_pipeline,
-            }
-
-            # Orchestrate the crawl - this returns immediately with task info including the actual task
-            result = await orchestration_service.orchestrate_crawl(request_dict)
-
-            # Store the ACTUAL crawl task for proper cancellation
-            crawl_task = result.get("task")
-            if crawl_task:
-                active_crawl_tasks[progress_id] = crawl_task
                 safe_logfire_info(
-                    f"Stored actual crawl task in active_crawl_tasks | progress_id={progress_id} | task_name={crawl_task.get_name()}"
+                    f"Starting crawl with progress tracking | progress_id={progress_id} | url={str(request.url)}"
                 )
-            else:
-                safe_logfire_error(f"No task returned from orchestrate_crawl | progress_id={progress_id}")
 
-            # The orchestration service now runs in background and handles all progress updates
-            safe_logfire_info(f"Crawl task started | progress_id={progress_id} | task_id={result.get('task_id')}")
-        except asyncio.CancelledError:
-            safe_logfire_info(f"Crawl cancelled | progress_id={progress_id}")
-            raise
-        except Exception as e:
-            error_message = f"Crawling failed: {str(e)}"
-            safe_logfire_error(
-                f"Crawl failed | progress_id={progress_id} | error={error_message} | exception_type={type(e).__name__}"
-            )
-            import traceback
+                # Get crawler from CrawlerManager
+                try:
+                    crawler = await get_crawler()
+                    if crawler is None:
+                        raise Exception("Crawler not available - initialization may have failed")
+                except Exception as e:
+                    safe_logfire_error(f"Failed to get crawler | error={str(e)}")
+                    await tracker.error(f"Failed to initialize crawler: {str(e)}")
+                    return
 
-            tb = traceback.format_exc()
-            # Ensure the error is visible in logs
-            logger.error(f"=== CRAWL ERROR FOR {progress_id} ===")
-            logger.error(f"Error: {error_message}")
-            logger.error(f"Exception Type: {type(e).__name__}")
-            logger.error(f"Traceback:\n{tb}")
-            logger.error("=== END CRAWL ERROR ===")
-            safe_logfire_error(f"Crawl exception traceback | traceback={tb}")
-            # Ensure clients see the failure
-            try:
-                await tracker.error(error_message)
-            except Exception:
-                pass
-        finally:
-            # Clean up task from registry when done (success or failure)
-            if progress_id in active_crawl_tasks:
-                del active_crawl_tasks[progress_id]
-                safe_logfire_info(f"Cleaned up crawl task from registry | progress_id={progress_id}")
+                supabase_client = get_supabase_client()
+                orchestration_service = CrawlingService(crawler, supabase_client)
+                orchestration_service.set_progress_id(progress_id)
+
+                # Convert request to dict for service
+                request_dict = {
+                    "url": str(request.url),
+                    "knowledge_type": request.knowledge_type,
+                    "tags": request.tags or [],
+                    "max_depth": request.max_depth,
+                    "extract_code_examples": request.extract_code_examples,
+                    "generate_summary": True,
+                    "use_new_pipeline": request.use_new_pipeline,
+                }
+
+                # Orchestrate the crawl - this returns immediately with task info including the actual task
+                result = await orchestration_service.orchestrate_crawl(request_dict)
+
+                # Store the ACTUAL crawl task for proper cancellation
+                crawl_task = result.get("task")
+                if crawl_task:
+                    active_crawl_tasks[progress_id] = crawl_task
+                    safe_logfire_info(
+                        f"Stored actual crawl task in active_crawl_tasks | progress_id={progress_id} | task_name={crawl_task.get_name()}"
+                    )
+                else:
+                    safe_logfire_error(f"No task returned from orchestrate_crawl | progress_id={progress_id}")
+
+                # The orchestration service now runs in background and handles all progress updates
+                safe_logfire_info(f"Crawl task started | progress_id={progress_id} | task_id={result.get('task_id')}")
+            except asyncio.CancelledError:
+                safe_logfire_info(f"Crawl cancelled | progress_id={progress_id}")
+                raise
+            except Exception as e:
+                error_message = f"Crawling failed: {str(e)}"
+                safe_logfire_error(
+                    f"Crawl failed | progress_id={progress_id} | error={error_message} | exception_type={type(e).__name__}"
+                )
+                import traceback
+
+                tb = traceback.format_exc()
+                # Ensure the error is visible in logs
+                logger.error(f"=== CRAWL ERROR FOR {progress_id} ===")
+                logger.error(f"Error: {error_message}")
+                logger.error(f"Exception Type: {type(e).__name__}")
+                logger.error(f"Traceback:\n{tb}")
+                logger.error("=== END CRAWL ERROR ===")
+                safe_logfire_error(f"Crawl exception traceback | traceback={tb}")
+                # Ensure clients see the failure
+                try:
+                    await tracker.error(error_message)
+                except Exception:
+                    pass
+            finally:
+                # Clean up task from registry when done (success or failure)
+                if progress_id in active_crawl_tasks:
+                    del active_crawl_tasks[progress_id]
+                    safe_logfire_info(f"Cleaned up crawl task from registry | progress_id={progress_id}")
+    except Exception as e:
+        # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
+        error_message = f"Critical crawl failure: {str(e)}"
+        logger.error(f"=== BACKGROUND TASK EXCEPTION (CRAWL) ===")
+        logger.error(f"Progress ID: {progress_id}")
+        logger.error(f"URL: {str(request.url)}")
+        logger.error(f"Error: {error_message}")
+        logger.error(f"Exception Type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        logger.error("=== END BACKGROUND TASK EXCEPTION ===")
+        safe_logfire_error(f"Background crawl task failed | progress_id={progress_id} | error={str(e)}")
+
+        # Update progress tracker (best effort)
+        try:
+            await tracker.error(error_message)
+        except Exception:
+            pass  # Don't fail on tracker failure
 
 
 @router.post("/documents/upload")
@@ -1676,18 +1753,19 @@ async def resume_operation(progress_id: str):
                 status_code=400, detail={"error": f"Cannot resume operation in status: {current_status}"}
             )
 
-        # Resume the operation
-        success = await ProgressTracker.resume_operation(progress_id)
-
-        if not success:
-            raise HTTPException(status_code=500, detail={"error": "Failed to resume operation"})
-
         # Get source_id and operation_type to restart the crawl
         source_id = progress_data.get("source_id")
         operation_type = progress_data.get("type", "crawl")
 
+        # IMPORTANT: Check if we have source_id and source record BEFORE updating database status
+        if not source_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "Cannot resume operation: missing source_id. Operation may have been interrupted too early."}
+            )
+
         # Restart the actual operation based on type
-        if operation_type == "crawl" and source_id:
+        if operation_type == "crawl":
             from ..services.crawling.crawling_service import CrawlingService
 
             supabase = get_supabase_client()
@@ -1696,25 +1774,91 @@ async def resume_operation(progress_id: str):
                 supabase.table("archon_sources").select("source_url, metadata").eq("source_id", source_id).execute()
             )
 
-            if source_result.data and len(source_result.data) > 0:
-                source_url = source_result.data[0].get("source_url")
-                metadata = source_result.data[0].get("metadata", {})
-
-                crawl_request = {
-                    "url": source_url,
-                    "knowledge_type": metadata.get("knowledge_type", "website"),
-                    "tags": metadata.get("tags", []),
-                    "max_depth": metadata.get("max_depth", 3),
-                    "allow_external_links": metadata.get("allow_external_links", False),
-                }
-
-                crawl_service = CrawlingService(supabase_client=supabase, progress_id=progress_id)
-                await crawl_service.orchestrate_crawl(crawl_request)
-                safe_logfire_info(
-                    f"Restarted crawl | progress_id={progress_id} | source_id={source_id} | url={source_url}"
+            # Check if source record exists BEFORE updating status
+            if not source_result.data or len(source_result.data) == 0:
+                safe_logfire_error(f"Source not found for resume | source_id={source_id}")
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": f"Cannot resume operation: source record not found (source_id: {source_id}). Operation may have been interrupted too early."
+                    }
                 )
-            else:
-                safe_logfire_warning(f"Source not found for resume | source_id={source_id}")
+
+            source_url = source_result.data[0].get("source_url")
+            metadata = source_result.data[0].get("metadata", {})
+
+            crawl_request = {
+                "url": source_url,
+                "knowledge_type": metadata.get("knowledge_type", "website"),
+                "tags": metadata.get("tags", []),
+                "max_depth": metadata.get("max_depth", 3),
+                "allow_external_links": metadata.get("allow_external_links", False),
+            }
+
+            # Get crawler for the service
+            try:
+                crawler = await get_crawler()
+                if crawler is None:
+                    raise Exception("Crawler not available")
+            except Exception as e:
+                safe_logfire_error(f"Failed to get crawler for resume | error={str(e)}")
+                raise HTTPException(status_code=500, detail={"error": f"Failed to initialize crawler: {str(e)}"})
+
+            # Update status to in_progress now that we've verified everything
+            success = await ProgressTracker.resume_operation(progress_id)
+            if not success:
+                raise HTTPException(status_code=500, detail={"error": "Failed to update operation status"})
+
+            # Create crawl service and start orchestration
+            crawl_service = CrawlingService(crawler=crawler, supabase_client=supabase, progress_id=progress_id)
+
+            # Create wrapper task with semaphore (same pattern as crawl endpoint)
+            async def _perform_resume_with_semaphore():
+                try:
+                    try:
+                        async with crawl_semaphore:
+                            safe_logfire_info(f"Acquired crawl semaphore for resume | progress_id={progress_id}")
+                            result = await crawl_service.orchestrate_crawl(crawl_request)
+
+                            # Store the ACTUAL crawl task for proper cancellation
+                            crawl_task = result.get("task")
+                            if crawl_task:
+                                active_crawl_tasks[progress_id] = crawl_task
+                                safe_logfire_info(
+                                    f"Stored actual resume crawl task | progress_id={progress_id} | task_name={crawl_task.get_name()}"
+                                )
+                    finally:
+                        # Clean up task from registry when done
+                        if progress_id in active_crawl_tasks:
+                            del active_crawl_tasks[progress_id]
+                            safe_logfire_info(f"Cleaned up resume task from registry | progress_id={progress_id}")
+                except Exception as e:
+                    # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
+                    error_message = f"Critical resume failure: {str(e)}"
+                    logger.error(f"=== BACKGROUND TASK EXCEPTION (RESUME) ===")
+                    logger.error(f"Progress ID: {progress_id}")
+                    logger.error(f"Source ID: {source_id}")
+                    logger.error(f"Error: {error_message}")
+                    logger.error(f"Exception Type: {type(e).__name__}")
+                    import traceback
+                    logger.error(f"Traceback:\n{traceback.format_exc()}")
+                    logger.error("=== END BACKGROUND TASK EXCEPTION ===")
+                    safe_logfire_error(f"Background resume task failed | progress_id={progress_id} | error={str(e)}")
+
+                    # Update progress tracker (best effort)
+                    try:
+                        from ..utils.progress.progress_tracker import ProgressTracker
+                        tracker = ProgressTracker(progress_id, operation_type="crawl")
+                        await tracker.error(error_message)
+                    except Exception:
+                        pass  # Don't fail on tracker failure
+
+            # Start the wrapper task in background
+            asyncio.create_task(_perform_resume_with_semaphore())
+
+            safe_logfire_info(
+                f"Restarted crawl | progress_id={progress_id} | source_id={source_id} | url={source_url}"
+            )
 
         safe_logfire_info(f"Operation resumed | progress_id={progress_id} | source_id={source_id}")
         return {

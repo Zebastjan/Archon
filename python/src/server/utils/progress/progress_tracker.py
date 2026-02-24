@@ -5,6 +5,7 @@ Tracks operation progress in memory and persists to database for restart/resume 
 """
 
 import asyncio
+import traceback
 from datetime import datetime
 from typing import Any
 
@@ -211,10 +212,51 @@ class ProgressTracker:
                 source_id = record.get("source_id")
                 operation_type = record.get("operation_type", "crawl")
 
-                if not progress_id or not source_id:
+                if not progress_id:
+                    safe_logfire_error(f"Auto-resume skipped: missing progress_id")
+                    continue
+
+                if not source_id:
+                    safe_logfire_error(
+                        f"Auto-resume failed: missing source_id | progress_id={progress_id}"
+                    )
+                    # Mark operation as failed since we can't resume without source_id
+                    try:
+                        supabase.table("archon_operation_progress").update(
+                            {
+                                "status": "failed",
+                                "error_message": "Cannot auto-resume: missing source_id",
+                                "updated_at": datetime.now().isoformat(),
+                            }
+                        ).eq("progress_id", progress_id).execute()
+                    except Exception:
+                        pass
                     continue
 
                 try:
+                    # Get source metadata to reconstruct crawl request
+                    source_result = (
+                        supabase.table("archon_sources")
+                        .select("source_url, metadata")
+                        .eq("source_id", source_id)
+                        .execute()
+                    )
+
+                    # Check if source record exists
+                    if not source_result.data or len(source_result.data) == 0:
+                        safe_logfire_error(
+                            f"Auto-resume failed: source record not found | progress_id={progress_id} | source_id={source_id}"
+                        )
+                        # Mark operation as failed
+                        supabase.table("archon_operation_progress").update(
+                            {
+                                "status": "failed",
+                                "error_message": f"Cannot auto-resume: source record not found (source_id: {source_id})",
+                                "updated_at": datetime.now().isoformat(),
+                            }
+                        ).eq("progress_id", progress_id).execute()
+                        continue
+
                     # Update status to in_progress
                     supabase.table("archon_operation_progress").update(
                         {
@@ -226,42 +268,92 @@ class ProgressTracker:
                     # Restart the crawl operation
                     if operation_type == "crawl":
                         from ...services.crawling.crawling_service import CrawlingService
+                        from ...services.crawler_manager import get_crawler
 
-                        # Get source metadata to reconstruct crawl request
-                        source_result = (
-                            supabase.table("archon_sources")
-                            .select("source_url, metadata")
-                            .eq("source_id", source_id)
-                            .execute()
-                        )
+                        source_url = source_result.data[0].get("source_url")
+                        metadata = source_result.data[0].get("metadata", {})
 
-                        if source_result.data and len(source_result.data) > 0:
-                            source_url = source_result.data[0].get("source_url")
-                            metadata = source_result.data[0].get("metadata", {})
+                        crawl_request = {
+                            "url": source_url,
+                            "knowledge_type": metadata.get("knowledge_type", "website"),
+                            "tags": metadata.get("tags", []),
+                            "max_depth": metadata.get("max_depth", 3),
+                            "allow_external_links": metadata.get("allow_external_links", False),
+                        }
 
-                            crawl_request = {
-                                "url": source_url,
-                                "knowledge_type": metadata.get("knowledge_type", "website"),
-                                "tags": metadata.get("tags", []),
-                                "max_depth": metadata.get("max_depth", 3),
-                                "allow_external_links": metadata.get("allow_external_links", False),
-                            }
-
-                            # Create crawl service and start orchestration in background
-                            crawl_service = CrawlingService(supabase_client=supabase, progress_id=progress_id)
-                            # Use asyncio.create_task to run in background without awaiting
-                            asyncio.create_task(crawl_service.orchestrate_crawl(crawl_request))
-
-                            safe_logfire_info(
-                                f"Auto-resumed crawl | progress_id={progress_id} | "
-                                f"source_id={source_id} | url={source_url}"
+                        # Get crawler instance (REQUIRED)
+                        try:
+                            crawler = await get_crawler()
+                            if crawler is None:
+                                raise Exception("Crawler not available for auto-resume")
+                        except Exception as crawler_error:
+                            safe_logfire_error(
+                                f"Failed to get crawler for auto-resume | progress_id={progress_id} | error={str(crawler_error)}"
                             )
-                            resumed_count += 1
+                            # Mark operation as failed
+                            try:
+                                supabase.table("archon_operation_progress").update({
+                                    "status": "failed",
+                                    "error_message": f"Auto-resume failed: Could not initialize crawler - {str(crawler_error)}",
+                                    "updated_at": datetime.now().isoformat(),
+                                }).eq("progress_id", progress_id).execute()
+                            except Exception:
+                                pass
+                            continue  # Skip to next operation
+
+                        # Create wrapper function with exception handling
+                        async def _auto_resume_crawl_with_exception_handling():
+                            try:
+                                crawl_service = CrawlingService(
+                                    crawler=crawler,
+                                    supabase_client=supabase,
+                                    progress_id=progress_id
+                                )
+                                await crawl_service.orchestrate_crawl(crawl_request)
+                            except Exception as e:
+                                error_message = f"Auto-resume crawl failed: {str(e)}"
+                                safe_logfire_error(
+                                    f"=== AUTO-RESUME BACKGROUND TASK EXCEPTION ===\n"
+                                    f"Progress ID: {progress_id}\n"
+                                    f"Source ID: {source_id}\n"
+                                    f"Error: {error_message}\n"
+                                    f"Traceback: {traceback.format_exc()}\n"
+                                    f"=== END AUTO-RESUME EXCEPTION ==="
+                                )
+                                # Mark as failed in database (best effort)
+                                try:
+                                    supabase.table("archon_operation_progress").update({
+                                        "status": "failed",
+                                        "error_message": error_message,
+                                        "updated_at": datetime.now().isoformat(),
+                                    }).eq("progress_id", progress_id).execute()
+                                except Exception:
+                                    pass
+
+                        # Start in background
+                        asyncio.create_task(_auto_resume_crawl_with_exception_handling())
+
+                        safe_logfire_info(
+                            f"Auto-resumed crawl | progress_id={progress_id} | "
+                            f"source_id={source_id} | url={source_url}"
+                        )
+                        resumed_count += 1
 
                 except Exception as e:
                     safe_logfire_error(
                         f"Failed to auto-resume operation | progress_id={progress_id} | error={str(e)}"
                     )
+                    # Mark as failed with error details
+                    try:
+                        supabase.table("archon_operation_progress").update(
+                            {
+                                "status": "failed",
+                                "error_message": f"Auto-resume error: {str(e)}",
+                                "updated_at": datetime.now().isoformat(),
+                            }
+                        ).eq("progress_id", progress_id).execute()
+                    except Exception:
+                        pass
                     # Continue with next operation even if one fails
                     continue
 
