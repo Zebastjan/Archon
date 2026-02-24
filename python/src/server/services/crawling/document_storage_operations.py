@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
+from ..chunking import get_chunker
 from ..source_management_service import extract_source_summary, update_source_info
 from ..storage.document_storage_service import add_documents_to_supabase
 from ..storage.storage_services import DocumentStorageService
@@ -76,8 +77,17 @@ class DocumentStorageOperations:
                 source_display_name,
             )
 
-        # Reuse initialized storage service for chunking
-        storage_service = self.doc_storage_service
+        # Get chunking strategy from request, default to "basic" for backward compatibility
+        chunking_strategy = request.get("chunking_strategy", "basic")
+        chunk_size = request.get("chunk_size", 5000)
+
+        # Get the chunker from the factory
+        try:
+            chunker = get_chunker(chunking_strategy, chunk_size=chunk_size)
+            safe_logfire_info(f"Using chunking strategy: {chunking_strategy} (chunk_size={chunk_size})")
+        except Exception as e:
+            safe_logfire_error(f"Failed to get chunker for strategy '{chunking_strategy}': {e}, falling back to basic")
+            chunker = get_chunker("basic", chunk_size=chunk_size)
 
         # Initialize URL state tracking if enabled
         url_state_service = get_crawl_url_state_service(self.supabase_client)
@@ -128,8 +138,9 @@ class DocumentStorageOperations:
             # Store full document for code extraction context
             url_to_full_document[doc_url] = markdown_content
 
-            # CHUNK THE CONTENT
-            chunks = await storage_service.smart_chunk_text_async(markdown_content, chunk_size=5000)
+            # CHUNK THE CONTENT using new chunking API
+            chunk_results = await chunker.chunk_async(markdown_content)
+            chunks = [cr.content for cr in chunk_results]
 
             # Use the original source_id for all documents
             source_id = original_source_id
@@ -228,7 +239,9 @@ class DocumentStorageOperations:
             for section in sections:
                 # Update url_to_full_document with section content
                 url_to_full_document[section.url] = section.content
-                section_chunks = await storage_service.smart_chunk_text_async(section.content, chunk_size=5000)
+                # CHUNK THE CONTENT using new chunking API
+                section_chunk_results = await chunker.chunk_async(section.content)
+                section_chunks = [cr.content for cr in section_chunk_results]
 
                 for i, chunk in enumerate(section_chunks):
                     all_urls.append(section.url)
