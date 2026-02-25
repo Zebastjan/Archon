@@ -20,6 +20,13 @@ from ..client_manager import get_supabase_client
 
 logger = get_logger(__name__)
 
+# Git configuration
+# Email storage: Set ARCHON_GIT_STORE_EMAILS=false to omit author/committer emails (PII compliance)
+STORE_COMMIT_EMAILS = os.getenv("ARCHON_GIT_STORE_EMAILS", "true").lower() == "true"
+
+# Maximum commits to sync in one operation (prevents OOM with large repos)
+DEFAULT_MAX_COMMITS = 10000
+
 
 class GitError(Exception):
     """Base exception for git-related errors."""
@@ -184,12 +191,35 @@ TEXT_EXTENSIONS = {
     ".gitattributes",
     ".dockerignore",
     ".editorconfig",
-    ".env",
     # Build/Package
     ".makefile",
     ".cmake",
     ".gradle",
     ".maven",
+}
+
+# Sensitive filenames that should never be indexed
+SENSITIVE_FILENAMES = {
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".env.test",
+    ".secrets",
+    ".secret",
+    "credentials",
+    "credentials.json",
+    "secret.json",
+    "secrets.yaml",
+    "id_rsa",
+    "id_dsa",
+    "id_ed25519",
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    "oauth_token",
+    "access_token",
 }
 
 # Language detection mapping (file extension -> language name)
@@ -321,15 +351,26 @@ class GitRepositoryService:
 
     def should_index_file(self, file_path: str) -> bool:
         """
-        Determine if file should be indexed (skip binaries).
+        Determine if file should be indexed (skip binaries and sensitive files).
 
         Args:
             file_path: Path to file
 
         Returns:
-            True if file should be indexed, False if binary
+            True if file should be indexed, False if binary or sensitive
         """
+        file_name = Path(file_path).name.lower()
+
+        # Skip sensitive files (credentials, secrets, keys)
+        for sensitive_pattern in SENSITIVE_FILENAMES:
+            if file_name == sensitive_pattern or file_name.startswith(sensitive_pattern):
+                return False
+
         ext = Path(file_path).suffix.lower()
+
+        # Skip files with sensitive extensions
+        if ext in {".pem", ".key", ".p12", ".pfx"}:
+            return False
 
         # Explicitly known binary
         if ext in BINARY_EXTENSIONS:
@@ -369,6 +410,8 @@ class GitRepositoryService:
                     "Repository is in detached HEAD state", repo_path=repo_path
                 )
             return repo.active_branch.name
+        except GitError:
+            raise
         except Exception as e:
             raise GitError(
                 f"Failed to get current branch: {e}", repo_path=repo_path, original_error=str(e)
@@ -549,8 +592,12 @@ class GitRepositoryService:
                     available_branches=available_branches,
                 )
 
-            # Get commits from branch
+            # Get commits from branch (cap to prevent OOM)
             branch_ref = repo.heads[branch_name]
+            if max_commits is None or max_commits > DEFAULT_MAX_COMMITS:
+                max_commits = DEFAULT_MAX_COMMITS
+                logger.info(f"Capping commit sync to {DEFAULT_MAX_COMMITS} for branch '{branch_name}'")
+
             commits = list(repo.iter_commits(branch_ref, max_count=max_commits))
 
             # Prepare commit data for batch insert
@@ -561,27 +608,42 @@ class GitRepositoryService:
                     "commit_sha": commit.hexsha,
                     "parent_shas": [parent.hexsha for parent in commit.parents],
                     "author_name": commit.author.name,
-                    "author_email": commit.author.email,
                     "author_date": datetime.fromtimestamp(commit.authored_date, tz=UTC).isoformat(),
                     "committer_name": commit.committer.name,
-                    "committer_email": commit.committer.email,
                     "commit_date": datetime.fromtimestamp(commit.committed_date, tz=UTC).isoformat(),
                     "message": commit.message.strip(),
                     "branches": [branch_name],
                     "tags": [],  # Tags can be populated separately if needed
                     "created_at": datetime.now(UTC).isoformat(),
                 }
+
+                # Conditionally include emails based on configuration (PII compliance)
+                if STORE_COMMIT_EMAILS:
+                    commit_data["author_email"] = commit.author.email
+                    commit_data["committer_email"] = commit.committer.email
+                else:
+                    commit_data["author_email"] = None
+                    commit_data["committer_email"] = None
+
                 commit_records.append(commit_data)
 
-            # Batch insert commits (using upsert to handle duplicates)
+            # Batch insert commits in chunks (prevents payload limit errors)
             if commit_records:
-                response = (
-                    self.supabase_client.table("archon_git_commits")
-                    .upsert(commit_records, on_conflict="repo_id,commit_sha")
-                    .execute()
-                )
+                BATCH_SIZE = 500
+                inserted_count = 0
 
-                inserted_count = len(response.data) if response.data else 0
+                # Chunk commit_records into batches
+                for i in range(0, len(commit_records), BATCH_SIZE):
+                    batch = commit_records[i : i + BATCH_SIZE]
+                    response = (
+                        self.supabase_client.table("archon_git_commits")
+                        .upsert(batch, on_conflict="repo_id,commit_sha")
+                        .execute()
+                    )
+                    batch_count = len(response.data) if response.data else 0
+                    inserted_count += batch_count
+                    logger.debug(f"Synced batch {i // BATCH_SIZE + 1}: {batch_count} commits")
+
                 logger.info(f"Synced {inserted_count} commits for branch '{branch_name}'")
             else:
                 inserted_count = 0

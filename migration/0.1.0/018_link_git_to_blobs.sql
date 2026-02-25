@@ -51,9 +51,9 @@ COMMENT ON COLUMN archon_document_blobs.git_commit_id IS
 COMMENT ON COLUMN archon_sources.repo_id IS
     'Reference to Git repository if this source is a Git-based knowledge source';
 
-COMMIT;
-
 -- Record migration application
 INSERT INTO archon_migrations (version, migration_name)
 VALUES ('0.1.0', '018_link_git_to_blobs')
 ON CONFLICT (version, migration_name) DO NOTHING;
+
+COMMIT;

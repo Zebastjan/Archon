@@ -1,7 +1,7 @@
 # ADR-003: Git-Aware Knowledge Base Architecture
 
 **Status**: Accepted
-**Date**: 2025-02-25
+**Date**: 2026-02-25
 **Authors**: Claude Code, zebastjan
 
 ## Context
@@ -232,7 +232,6 @@ async def chunk_file(
 
 ## Related Documents
 
-- Implementation Plan: `/home/zebastjan/.claude/projects/-home-zebastjan-dev-archon/d29e78f3-939c-4f20-bb3d-a62fad3aa343.jsonl`
 - Migration 017: `migration/0.1.0/017_add_git_tables.sql`
 - Migration 018: `migration/0.1.0/018_link_git_to_blobs.sql`
 - Git Service: `python/src/server/services/git/git_repository_service.py`

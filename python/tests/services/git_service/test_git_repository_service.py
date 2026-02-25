@@ -5,15 +5,15 @@ These tests verify the core functionality of the git repository service
 including repository validation, commit syncing, and file operations.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from src.server.services.git import (
-    GitRepositoryService,
+    GitBranchNotFoundError,
     GitError,
     GitRepositoryNotFoundError,
-    GitBranchNotFoundError,
-    GitCommitNotFoundError,
-    GitFileNotFoundError,
+    GitRepositoryService,
 )
 
 
@@ -143,7 +143,11 @@ class TestGitRepositoryService:
         mock_commit.hexsha = "abc123def456"
         mock_branch.commit = mock_commit
 
-        mock_repo.heads = {"main": mock_branch}
+        # Mock heads to behave like GitPython's IterableList
+        mock_heads = MagicMock()
+        mock_heads.__getitem__ = MagicMock(return_value=mock_branch)
+        mock_heads.__contains__ = MagicMock(return_value=True)
+        mock_repo.heads = mock_heads
         mock_repo_class.return_value = mock_repo
 
         result = service.get_current_commit_sha(str(tmp_path), "main")
@@ -159,7 +163,12 @@ class TestGitRepositoryService:
         # Setup mock
         mock_repo = MagicMock()
         mock_repo.bare = False
-        mock_repo.heads = []
+
+        # Mock heads to behave like GitPython's IterableList (empty)
+        mock_heads = MagicMock()
+        mock_heads.__contains__ = MagicMock(return_value=False)
+        mock_heads.__iter__ = MagicMock(return_value=iter([]))
+        mock_repo.heads = mock_heads
         mock_repo_class.return_value = mock_repo
 
         with pytest.raises(GitBranchNotFoundError) as exc_info:

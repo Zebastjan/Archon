@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS archon_git_commits (
 CREATE INDEX IF NOT EXISTS idx_git_commits_repo_id ON archon_git_commits(repo_id);
 CREATE INDEX IF NOT EXISTS idx_git_commits_sha ON archon_git_commits(commit_sha);
 CREATE INDEX IF NOT EXISTS idx_git_commits_date ON archon_git_commits(commit_date);
+
+COMMENT ON COLUMN archon_git_commits.author_email IS
+    'Author email address (PII). Can be omitted via ARCHON_GIT_STORE_EMAILS=false environment variable for privacy compliance.';
+COMMENT ON COLUMN archon_git_commits.committer_email IS
+    'Committer email address (PII). Can be omitted via ARCHON_GIT_STORE_EMAILS=false environment variable for privacy compliance.';
 CREATE INDEX IF NOT EXISTS idx_git_commits_author ON archon_git_commits(author_email);
 CREATE INDEX IF NOT EXISTS idx_git_commits_branches ON archon_git_commits USING GIN (branches);
 
@@ -133,17 +138,17 @@ ALTER TABLE archon_git_commits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archon_git_files ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Service role full access to git_repositories" ON archon_git_repositories
-    FOR ALL USING (true) WITH CHECK (true);
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Service role full access to git_commits" ON archon_git_commits
-    FOR ALL USING (true) WITH CHECK (true);
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Service role full access to git_files" ON archon_git_files
-    FOR ALL USING (true) WITH CHECK (true);
-
-COMMIT;
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Record migration application
 INSERT INTO archon_migrations (version, migration_name)
 VALUES ('0.1.0', '017_add_git_tables')
 ON CONFLICT (version, migration_name) DO NOTHING;
+
+COMMIT;
