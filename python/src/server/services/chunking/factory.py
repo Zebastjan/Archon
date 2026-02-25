@@ -1,12 +1,19 @@
 """Factory for creating chunker instances."""
 
 from src.server.services.chunking.chunker_base import BaseChunker
-from src.server.services.chunking.chunkers import BasicChunker, TokenAwareChunker
+from src.server.services.chunking.chunkers import (
+    BasicChunker,
+    CodeAwareChunker,
+    MarkdownAwareChunker,
+    TokenAwareChunker,
+)
 from src.server.services.chunking.exceptions import ChunkingStrategyError
 
-CHUNKER_STRATEGIES = {
+CHUNKER_STRATEGIES: dict[str, type[BaseChunker]] = {
     "basic": BasicChunker,
     "token_aware": TokenAwareChunker,
+    "markdown_aware": MarkdownAwareChunker,
+    "code_aware": CodeAwareChunker,
 }
 
 AVAILABLE_STRATEGIES = list(CHUNKER_STRATEGIES.keys())

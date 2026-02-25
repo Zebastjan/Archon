@@ -20,6 +20,16 @@ class TestChunkerFactory:
         chunker = get_chunker("token_aware")
         assert isinstance(chunker, BaseChunker)
 
+    def test_get_markdown_aware_chunker(self):
+        """Factory returns MarkdownAwareChunker for 'markdown_aware' strategy."""
+        chunker = get_chunker("markdown_aware")
+        assert isinstance(chunker, BaseChunker)
+
+    def test_get_code_aware_chunker(self):
+        """Factory returns CodeAwareChunker for 'code_aware' strategy."""
+        chunker = get_chunker("code_aware")
+        assert isinstance(chunker, BaseChunker)
+
     def test_invalid_strategy_raises_error(self):
         """Invalid strategy raises ChunkingStrategyError."""
         with pytest.raises(ChunkingStrategyError):
