@@ -501,6 +501,18 @@ class YourService:
 - Provide specific, actionable feedback
 - Acknowledge good practices and improvements
 
+### CodeRabbit Review
+
+Before committing changes, run CodeRabbit to review uncommitted work:
+
+```bash
+./scripts/coderabbit-review.sh
+```
+
+This runs `coderabbit review --prompt-only --type uncommitted` which provides an informational review without blocking the commit. Address any significant issues before committing to avoid needing a separate fix-up commit.
+
+**For AI agents:** Run this review before every commit as part of the normal workflow. This ensures code quality issues are caught and addressed in the same commit rather than requiring a second pass.
+
 ## 📞 Getting Help
 
 - **GitHub Issues**: For bugs, feature requests, and questions

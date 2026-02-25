@@ -132,7 +132,16 @@ make lint-be             # Backend only (Ruff + MyPy)
 make test                # Run all tests
 make test-fe             # Frontend tests only
 make test-be             # Backend tests only
+
+## Code Review
+
+Before committing, run CodeRabbit to review your changes:
+
+```bash
+./scripts/coderabbit-review.sh
 ```
+
+This runs `coderabbit review --prompt-only --type uncommitted` to review uncommitted changes. Address any issues before committing to avoid multiple commits.
 
 ## Architecture Overview
 
