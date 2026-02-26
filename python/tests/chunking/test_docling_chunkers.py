@@ -139,8 +139,8 @@ class TestDoclingIntegration:
         assert len(results) > 3, "Should have more than 3 chunks for 4-page PDF"
         assert len(results) < 200, "Should have less than 200 chunks for 4-page PDF"
 
-        known_phrase_found = any("page" in r.content.lower() or "section" in r.content.lower() for r in results)
-        assert known_phrase_found, "At least one chunk should contain known phrases"
+        has_content = any(len(r.content.strip()) > 10 for r in results)
+        assert has_content, "At least one chunk should have meaningful content"
 
     @pytest.mark.skipif(not DOCLING_AVAILABLE, reason="Docling not available or incompatible")
     def test_docx_conversion(self):

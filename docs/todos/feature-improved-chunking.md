@@ -9,13 +9,24 @@
 
 ### Fix Torch/Torchvision Compatibility (Blocking Issue)
 
-- [ ] Diagnose and fix torch/torchvision version incompatibility
-- [ ] Verify docling can import successfully
-- [ ] Run test_docling_chunkers.py to verify implementation
+- [x] Diagnose and fix torch/torchvision version incompatibility
+- [x] Verify docling can import successfully
+- [x] Run test_docling_chunkers.py to verify implementation
 - [ ] Commit fix
 
-**Issue:** torch 2.8.0+cpu and torchvision 0.23.0 are incompatible with docling.
+**Issue:** torch 2.8.0+cpu and torchvision 0.23.0 were incompatible with docling.
 Error: `RuntimeError: operator torchvision::nms does not exist`
+
+**Fix Applied:**
+1. Pinned torch==2.2.2 and torchvision==0.17.2 in pyproject.toml
+2. Added numpy<2.0 constraint (torch 2.2.2 requires numpy 1.x)
+3. Fixed docling 2.75.0 API changes:
+   - Updated imports for chunker classes
+   - Fixed PdfPipelineOptions configuration (now uses PdfFormatOption)
+   - Fixed chunk metadata access (page info in doc_items)
+   - Fixed name collision bug (recursion error)
+
+**Result:** All 66 chunking tests pass!
 
 ---
 

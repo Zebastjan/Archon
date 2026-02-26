@@ -14,11 +14,12 @@ class DoclingNotInstalledError(ImportError):
         )
 
 
-from docling.chunking import HierarchicalChunker as DoclingHierarchicalChunker
-from docling.chunking import HybridChunker as DoclingHybridChunker
-from docling.document_converter import DocumentConverter
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+from docling_core.transforms.chunker.hierarchical_chunker import HierarchicalChunker as _DoclingHierarchicalChunker
+from docling_core.transforms.chunker.hybrid_chunker import HybridChunker as _DoclingHybridChunker
 
 from src.server.services.chunking.chunker_base import BaseChunker, ChunkResult
 
@@ -31,7 +32,7 @@ def _get_default_converter() -> DocumentConverter:
 
     return DocumentConverter(
         format_options={
-            InputFormat.PDF: pdf_options,
+            InputFormat.PDF: PdfFormatOption(pipeline_cls=StandardPdfPipeline, pipeline_options=pdf_options),
         }
     )
 
@@ -61,7 +62,7 @@ class DoclingHierarchicalChunker(BaseChunker):
         """
         super().__init__(**options)
         self._converter = _get_default_converter()
-        self._chunker = DoclingHierarchicalChunker()
+        self._chunker = _DoclingHierarchicalChunker()
 
     def chunk(self, text: str, **options: Any) -> list[ChunkResult]:
         """Split document into chunks using hierarchical structure.
@@ -78,7 +79,6 @@ class DoclingHierarchicalChunker(BaseChunker):
             FileNotFoundError: If file path doesn't exist
             ValueError: If input is invalid
         """
-        import docling_core.types.doc
 
         doc = self._resolve_document(text, options)
         return self._chunk_document(doc)
@@ -126,10 +126,15 @@ class DoclingHierarchicalChunker(BaseChunker):
 
         results = []
         for idx, chunk in enumerate(doc_chunks):
-            headings = chunk.meta.headings if chunk.meta.headings else []
+            headings = chunk.meta.headings if hasattr(chunk.meta, "headings") and chunk.meta.headings else []
             section_path = headings[:-1] if len(headings) > 1 else []
             section_title = headings[-1] if headings else None
-            page = chunk.meta.page
+
+            page = None
+            if hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
+                first_item = chunk.meta.doc_items[0]
+                if hasattr(first_item, "prov") and first_item.prov:
+                    page = first_item.prov[0].page_no
 
             element_type = self._determine_element_type(chunk)
 
@@ -206,7 +211,7 @@ class DoclingHybridChunker(BaseChunker):
         tokenizer = options.get("tokenizer", "sentence-transformers/all-MiniLM-L6-v2")
 
         self._converter = _get_default_converter()
-        self._chunker = DoclingHybridChunker(
+        self._chunker = _DoclingHybridChunker(
             tokenizer=tokenizer,
             max_tokens=self.max_tokens,
             merge_peers=True,
@@ -224,7 +229,6 @@ class DoclingHybridChunker(BaseChunker):
         Returns:
             List of ChunkResult objects with rich metadata
         """
-        import docling_core.types.doc
 
         doc = self._resolve_document(text, options)
         return self._chunk_document(doc)
@@ -272,12 +276,17 @@ class DoclingHybridChunker(BaseChunker):
 
         results = []
         for idx, chunk in enumerate(doc_chunks):
-            headings = chunk.meta.headings if chunk.meta.headings else []
+            headings = chunk.meta.headings if hasattr(chunk.meta, "headings") and chunk.meta.headings else []
             section_path = headings[:-1] if len(headings) > 1 else []
             section_title = headings[-1] if headings else None
-            page = chunk.meta.page
 
-            contextualized = self._chunker.contextualize(chunk)
+            page = None
+            if hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
+                first_item = chunk.meta.doc_items[0]
+                if hasattr(first_item, "prov") and first_item.prov:
+                    page = first_item.prov[0].page_no
+
+            contextualized = chunk.text
 
             element_type = self._determine_element_type(chunk)
 
