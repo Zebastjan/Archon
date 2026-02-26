@@ -1,0 +1,475 @@
+#!/usr/bin/env bash
+#
+# CodeRabbit Pre-Commit Hook
+# 
+# This hook runs CodeRabbit review on uncommitted changes before each commit.
+# 
+# Environment variables:
+#   SKIP_CODERABBIT=1   - Skip the review entirely
+#   FORCE_COMMIT=1      - Skip review and force commit
+#
+# Output tags (for agent consumption):
+#   CODERRABBIT_HOOK status=ok                  - Review passed
+#   CODERRABBIT_HOOK status=issues_found         - Review found issues
+#   CODERRABBIT_HOOK status=unchanged            - Diff unchanged, skipped
+#   CODERRABBIT_HOOK status=rate_limited         - API rate limited
+#   CODERRABBIT_INSTRUCTIONS: ...                - Brief guidance when needed
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+DISMISSALS_FILE="$REPO_ROOT/.coderabbit/dismissals.yaml"
+STATE_FILE="$REPO_ROOT/.git/coderabbit_state"
+
+function check_coderabbit() {
+    if ! command -v coderabbit &> /dev/null; then
+        echo "Error: coderabbit CLI not found. Install with: npm install -g @coderabbitai/code-review-global"
+        exit 1
+    fi
+}
+
+function get_diff_hash() {
+    git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1 || echo ""
+}
+
+function read_state() {
+    if [[ -f "$STATE_FILE" ]]; then
+        cat "$STATE_FILE"
+    else
+        echo ""
+    fi
+}
+
+function write_state() {
+    local last_hash="$1"
+    local last_status="$2"
+    cat > "$STATE_FILE" <<EOF
+last_hash=$last_hash
+last_status=$last_status
+last_run=$(date -Iseconds)
+EOF
+}
+
+function is_unchanged() {
+    local current_hash="$1"
+    local last_status="$2"
+    
+    if [[ -z "$current_hash" ]]; then
+        return 1
+    fi
+    
+    local last_hash
+    last_hash=$(read_state | grep "^last_hash=" | cut -d= -f2-)
+    
+    if [[ "$current_hash" == "$last_hash" ]] && [[ "$last_status" == "issues_found" || "$last_status" == "ok" ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+function is_interactive() {
+    [[ -t 0 ]]
+}
+
+function get_dismissed_patterns() {
+    if [[ -f "$DISMISSALS_FILE" ]]; then
+        grep -E "^\s*-\s*pattern:" "$DISMISSALS_FILE" 2>/dev/null | sed 's/.*pattern:\s*"\?\([^"]*\)"\?/\1/' || true
+    fi
+}
+
+function is_dismissed() {
+    local pattern="$1"
+    if [[ -f "$DISMISSALS_FILE" ]]; then
+        grep -q "\"$pattern\"" "$DISMISSALS_FILE" 2>/dev/null && return 0
+        grep -q "$pattern" "$DISMISSALS_FILE" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+function add_dismissal() {
+    local pattern="$1"
+    local reason="$2"
+    local timestamp
+    timestamp=$(date +%Y-%m-%d)
+    
+    if [[ -f "$DISMISSALS_FILE" ]]; then
+        if grep -q "^dismissals:.*\[\]" "$DISMISSALS_FILE"; then
+            sed -i "s/^dismissals: \[\]$/dismissals:\n  - pattern: \"$pattern\"\n    reason: \"$reason\"\n    date: $timestamp/" "$DISMISSALS_FILE"
+        else
+            sed -i "/^dismissals:/a\\  - pattern: \"$pattern\"\n    reason: \"$reason\"\n    date: $timestamp" "$DISMISSALS_FILE"
+        fi
+    fi
+}
+
+function run_coderabbit() {
+    local timeout_seconds=60
+    local output
+    output=$(timeout "$timeout_seconds" coderabbit review --type uncommitted --plain 2>&1) || true
+    
+    if echo "$output" | grep -qi "timeout"; then
+        echo "⚠ CodeRabbit review timed out after ${timeout_seconds}s"
+        return 124
+    fi
+    
+    echo "$output"
+}
+
+function handle_rate_limit() {
+    echo "CODERRABBIT_HOOK status=rate_limited"
+    echo ""
+    
+    if ! is_interactive; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠ Rate limited (non-interactive mode)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Options:"
+        echo "  [w] Wait and retry"
+        echo "  [s] Skip review and proceed"  
+        echo "  [a] Abort commit"
+        echo ""
+        echo -n "Choose [w/s/a]: "
+        read -r choice
+        
+        case "$choice" in
+            w|W)
+                echo "Retrying..."
+                return 0
+                ;;
+            s|S)
+                write_state "$(get_diff_hash)" "rate_limited"
+                echo "CODERRABBIT_HOOK status=rate_limited"
+                echo "CODERRABBIT_INSTRUCTIONS: Skipped due to rate limit. Review will run on next commit with new changes."
+                exit 0
+                ;;
+            a|A)
+                write_state "$(get_diff_hash)" "rate_limited"
+                echo "Aborting commit."
+                exit 1
+                ;;
+            *)
+                echo "Invalid choice. Aborting."
+                exit 1
+                ;;
+        esac
+    fi
+    
+    echo "Rate limited by CodeRabbit API. Options:"
+    echo "  [w] Wait and retry"
+    echo "  [s] Skip review and proceed"  
+    echo "  [a] Abort commit"
+    echo ""
+    echo -n "Choose [w/s/a]: "
+    read -r choice
+    
+    case "$choice" in
+        w|W)
+            echo "Retrying..."
+            return 0
+            ;;
+        s|S)
+            write_state "$(get_diff_hash)" "rate_limited"
+            echo "CODERRABBIT_HOOK status=rate_limited"
+            echo "CODERRABBIT_INSTRUCTIONS: Skipped due to rate limit. Review will run on next commit with new changes."
+            exit 0
+            ;;
+        a|A)
+            write_state "$(get_diff_hash)" "rate_limited"
+            echo "Aborting commit."
+            exit 1
+            ;;
+        *)
+            echo "Invalid choice. Aborting."
+            exit 1
+            ;;
+    esac
+}
+
+function interactive_review() {
+    local review_output
+    local coderabbit_exit_code=0
+    review_output=$(run_coderabbit) || coderabbit_exit_code=$?
+    
+    if [[ $coderabbit_exit_code -eq 124 ]]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠ CodeRabbit review timed out"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "The review service is taking too long."
+        if is_interactive; then
+            echo "Options:"
+            echo "  [c] Continue - proceed with commit anyway"
+            echo "  [a] Abort - stop and try again later"
+            echo ""
+            echo -n "Choose [c/a]: "
+            read -r choice
+            case "$choice" in
+                c|C)
+                    write_state "$(get_diff_hash)" "timeout"
+                    echo "CODERRABBIT_HOOK status=timeout"
+                    echo "Proceeding with commit (review timed out)."
+                    return 0
+                    ;;
+                *)
+                    echo "CODERRABBIT_HOOK status=timeout"
+                    echo "Aborting commit."
+                    exit 1
+                    ;;
+            esac
+        else
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "⚠ Non-interactive mode detected"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Review timed out. Options:"
+            echo "  [c] Continue - proceed with commit anyway"
+            echo "  [a] Abort - stop and try again later"
+            echo ""
+            echo -n "Choose [c/a]: "
+            read -r choice
+            case "$choice" in
+                c|C)
+                    write_state "$(get_diff_hash)" "timeout"
+                    echo "CODERRABBIT_HOOK status=timeout"
+                    echo "Proceeding with commit (review timed out)."
+                    return 0
+                    ;;
+                *)
+                    echo "CODERRABBIT_HOOK status=timeout"
+                    echo "Aborting commit."
+                    exit 1
+                    ;;
+            esac
+        fi
+    fi
+    
+    if [[ -z "$review_output" ]]; then
+        write_state "$(get_diff_hash)" "ok"
+        echo "CODERRABBIT_HOOK status=ok"
+        echo "✓ No CodeRabbit feedback found. Proceeding with commit."
+        return 0
+    fi
+    
+    if echo "$review_output" | grep -qi "rate limit"; then
+        handle_rate_limit
+        return $?
+    fi
+    
+    if [[ -z "$review_output" ]]; then
+        write_state "$(get_diff_hash)" "ok"
+        echo "CODERRABBIT_HOOK status=ok"
+        echo "✓ No CodeRabbit feedback found. Proceeding with commit."
+        return 0
+    fi
+    
+    local lines
+    IFS=$'\n' read -r -d '' -a lines <<< "$review_output" || true
+    
+    local items=()
+    local current_item=""
+    
+    for line in "${lines[@]}"; do
+        if echo "$line" | grep -qE "^\[|^(file|File|✓|✗|📝|🔴|🔍|\*\*)"; then
+            if [[ -n "$current_item" ]]; then
+                items+=("$current_item")
+            fi
+            current_item="$line"
+        else
+            current_item=$current_item$'\n'"$line"
+        fi
+    done
+    [[ -n "$current_item" ]] && items+=("$current_item")
+    
+    if [[ ${#items[@]} -eq 0 ]]; then
+        write_state "$(get_diff_hash)" "ok"
+        echo "CODERRABBIT_HOOK status=ok"
+        echo "✓ No issues found. Proceeding with commit."
+        return 0
+    fi
+    
+    echo ""
+    echo "CODERRABBIT_HOOK status=issues_found"
+    echo "CODERRABBIT_INSTRUCTIONS: Review each issue below. Fix, dismiss with reason, or choose [c]ommit anyway to proceed."
+    echo ""
+    echo "Found ${#items[@]} feedback items. Reviewing each one..."
+    echo ""
+    
+    local fixed_count=0
+    local dismissed_count=0
+    
+    for i in "${!items[@]}"; do
+        local item="${items[$i]}"
+        local item_num=$((i + 1))
+        
+        echo "----------------------------------------"
+        echo "Item $item_num of ${#items[@]}"
+        echo "----------------------------------------"
+        echo "$item"
+        echo ""
+        
+        local pattern
+        pattern=$(echo "$item" | head -5 | tr '\n' ' ' | cut -c1-100)
+        
+        if is_dismissed "$pattern"; then
+            echo "[AUTO-SKIPPED] This item matches a dismissed pattern."
+            ((dismissed_count++)) || true
+            echo ""
+            continue
+        fi
+        
+        while true; do
+            echo "Actions:"
+            echo "  [f] Fix it - make changes to address this issue"
+            echo "  [d] Dismiss - skip with a reason (will be saved)"
+            echo "  [v] View full - see complete context"
+            echo "  [s] Skip - leave as-is and continue to next item"
+            echo "  [q] Quit - abort commit"
+            echo ""
+            echo -n "Choose action [f/d/v/s/q]: "
+            read -r choice
+            
+            case "$choice" in
+                f|F)
+                    echo "[FIX] Opening file for editing..."
+                    local file_path
+                    file_path=$(echo "$item" | grep -oE "file:.*|^File:.*|src/[^:]+\.py" | head -1 | sed 's/file: *//;s/File: *//' | tr -d '`')
+                    if [[ -n "$file_path" && -f "$REPO_ROOT/$file_path" ]]; then
+                        echo "File: $file_path"
+                        $EDITOR "$REPO_ROOT/$file_path" 2>/dev/null || echo "No EDITOR set, skipping edit"
+                    else
+                        echo "Could not determine file to edit. Please fix manually."
+                    fi
+                    ((fixed_count++)) || true
+                    break
+                    ;;
+                d|D)
+                    echo -n "Enter reason for dismissing this issue: "
+                    read -r reason
+                    if [[ -n "$reason" ]]; then
+                        add_dismissal "$pattern" "$reason"
+                        echo "Dismissal saved."
+                        ((dismissed_count++)) || true
+                    else
+                        echo "No reason provided, skipping dismissal."
+                    fi
+                    break
+                    ;;
+                v|V)
+                    echo "========================================"
+                    echo "FULL ITEM CONTEXT:"
+                    echo "========================================"
+                    echo "$item"
+                    echo "========================================"
+                    echo ""
+                    ;;
+                s|S)
+                    echo "[SKIPPED] Leaving as-is."
+                    break
+                    ;;
+                q|Q)
+                    echo "Aborting commit."
+                    exit 1
+                    ;;
+                *)
+                    echo "Invalid choice. Please enter f, d, v, s, or q."
+                    ;;
+            esac
+        done
+        echo ""
+    done
+    
+    echo "=========================================="
+    echo "Review Summary:"
+    echo "  Fixed: $fixed_count"
+    echo "  Dismissed: $dismissed_count"
+    echo "  Skipped: $(( ${#items[@]} - fixed_count - dismissed_count ))"
+    echo "=========================================="
+    
+    if ! is_interactive; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠ Non-interactive mode detected"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Issues found. To proceed, either:"
+        echo "  - Fix the issues and commit again"
+        echo "  - Use SKIP_CODERABBIT=1 to skip review"
+        echo "  - Use FORCE_COMMIT=1 to force commit"
+        echo ""
+        write_state "$(get_diff_hash)" "issues_found"
+        echo "CODERRABBIT_HOOK status=issues_found"
+        echo "CODERRABBIT_INSTRUCTIONS: Fix or dismiss issues, then run git commit again. Or use SKIP_CODERABBIT=1 to bypass."
+        exit 1
+    fi
+    
+    while true; do
+        echo ""
+        echo "What would you like to do?"
+        echo "  [c] Commit anyway - proceed with commit (items remain unfixed)"
+        echo "  [a] Abort - stop and fix issues manually"
+        echo ""
+        echo -n "Choose [c/a]: "
+        read -r choice
+        
+        case "$choice" in
+            c|C)
+                write_state "$(get_diff_hash)" "issues_found"
+                echo "CODERRABBIT_HOOK status=issues_found"
+                echo "Proceeding with commit (issues were reviewed but not all fixed)."
+                return 0
+                ;;
+            a|A)
+                echo "CODERRABBIT_HOOK status=issues_found"
+                echo "CODERRABBIT_INSTRUCTIONS: Fix or dismiss all issues, then run git commit again."
+                echo "Aborting commit. Please fix issues and try again."
+                exit 1
+                ;;
+            *)
+                echo "Invalid choice."
+                ;;
+        esac
+    done
+}
+
+function main() {
+    check_coderabbit
+    
+    local staged_files
+    staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+    
+    if [[ -z "$staged_files" ]]; then
+        echo "No staged files to review."
+        exit 0
+    fi
+    
+    if [[ "${SKIP_CODERABBIT:-}" == "1" ]]; then
+        echo "CODERRABBIT_HOOK status=skipped"
+        echo "CODERRABBIT_INSTRUCTIONS: Skipped (SKIP_CODERABBIT=1). Run without env var to enable."
+        exit 0
+    fi
+    
+    if [[ "${FORCE_COMMIT:-}" == "1" ]]; then
+        echo "CODERRABBIT_HOOK status=forced"
+        exit 0
+    fi
+    
+    local current_hash
+    current_hash=$(get_diff_hash)
+    local last_status
+    last_status=$(read_state | grep "^last_status=" | cut -d= -f2-)
+    
+    if is_unchanged "$current_hash" "$last_status"; then
+        echo "CODERRABBIT_HOOK status=unchanged"
+        echo "CODERRABBIT_INSTRUCTIONS: No new staged changes since last review. Run without env var to re-review."
+        echo "Staged files unchanged since last review. Skipping re-review."
+        exit 0
+    fi
+    
+    echo "Staged files:"
+    echo "$staged_files"
+    echo ""
+    
+    interactive_review
+}
+
+main "$@"

@@ -5,7 +5,7 @@ SHELL := /bin/bash
 # Docker compose command - prefer newer 'docker compose' plugin over standalone 'docker-compose'
 COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: help dev dev-docker dev-docker-full dev-work-orders dev-hybrid-work-orders stop test test-fe test-be lint lint-fe lint-be clean install check agent-work-orders
+.PHONY: help dev dev-docker dev-docker-full dev-work-orders dev-hybrid-work-orders stop test test-fe test-be lint lint-fe lint-be clean install check agent-work-orders install-hooks
 
 help:
 	@echo "Archon Development Commands"
@@ -23,6 +23,7 @@ help:
 	@echo "  make lint                   - Run all linters"
 	@echo "  make lint-fe                - Run frontend linter only"
 	@echo "  make lint-be                - Run backend linter only"
+	@echo "  make install-hooks          - Install git hooks (CodeRabbit pre-commit)"
 	@echo "  make clean                  - Remove containers and volumes"
 	@echo "  make install                - Install dependencies"
 	@echo "  make check                  - Check environment setup"
@@ -43,6 +44,11 @@ check:
 	@docker --version > /dev/null 2>&1 || { echo "✗ Docker not found"; exit 1; }
 	@$(COMPOSE) version > /dev/null 2>&1 || { echo "✗ Docker Compose not found"; exit 1; }
 	@echo "✓ Environment OK"
+
+# Install git hooks
+install-hooks:
+	@echo "Installing git hooks..."
+	@bin/install-git-hooks
 
 
 # Hybrid development (recommended)
