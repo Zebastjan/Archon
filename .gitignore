@@ -28,3 +28,7 @@ UAT/
 
 # Local release notes testing
 release-notes-*.md
+
+# CodeRabbit state (internal)
+.git/coderabbit_state
+test
