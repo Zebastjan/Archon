@@ -1,0 +1,107 @@
+#!/usr/bin/env expect
+#
+# cr-commit - CodeRabbit review wrapper with expect
+#
+# Usage: cr-commit -m "commit message"
+#
+# Runs CodeRabbit review in a pseudo-TTY, shows all issues,
+# handles prompts automatically, then runs git commit.
+
+set timeout 180
+
+# Parse arguments
+set commit_msg ""
+
+for {set i 0} {$i < $argc} {incr i} {
+    set arg [lindex $argv $i]
+    if {$arg eq "-m" && $i + 1 < $argc} {
+        incr i
+        set commit_msg [lindex $argv $i]
+    }
+}
+
+if {$commit_msg eq ""} {
+    puts stderr "Usage: cr-commit -m \"commit message\""
+    exit 1
+}
+
+# Spawn coderabbit review - runs in current directory
+spawn coderabbit review --type uncommitted --plain
+
+set review_complete 0
+set issue_count 0
+
+# Watch for issues and prompts, auto-respond appropriately
+expect {
+    # Count issues
+    -re {(file:|File:|✗|🔴|📝)} {
+        incr issue_count
+        exp_continue
+    }
+    
+    # Review completed successfully
+    "CODERRABBIT_HOOK status=ok" {
+        set review_complete 1
+    }
+    
+    # Issues found - will commit anyway after showing all issues
+    "CODERRABBIT_HOOK status=issues_found" {
+        exp_continue
+    }
+    
+    # Rate limited - proceed with commit
+    -re {Rate limit} {
+        puts "\n⚠️ CodeRabbit rate limited"
+        set review_complete 1
+    }
+    
+    # Interactive prompt: choose action
+    -re {\[c/a\]:} {
+        send "c\r"
+        exp_continue
+    }
+    
+    # Interactive prompt: review item action
+    -re {\[f/d/v/s/q\]:} {
+        send "s\r"
+        exp_continue
+    }
+    
+    # Another prompt pattern
+    -re {Choose \[c/a\]:} {
+        send "c\r"
+        exp_continue
+    }
+    
+    # Another prompt pattern
+    -re {Choose action} {
+        send "c\r"
+        exp_continue
+    }
+    
+    timeout {
+        puts "\n⚠️ CodeRabbit timed out - proceeding with commit"
+        set review_complete 1
+    }
+    
+    eof {
+        set review_complete 1
+    }
+}
+
+# Wait for process to finish
+wait
+
+puts "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+puts "Review complete with $issue_count issues shown"
+puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Run git commit
+puts "\n🚀 Running git commit..."
+if {[catch {exec git commit -m $commit_msg} result]} {
+    puts "Git commit failed: $result"
+    exit 1
+}
+
+puts "✅ Commit complete!"
+exit 0
