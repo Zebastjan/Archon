@@ -362,3 +362,38 @@ When connected to Claude/Cursor/Windsurf, the following tools are available:
 - Docker Compose handles service orchestration
 - TanStack Query for all data fetching - NO PROP DRILLING
 - Vertical slice architecture in `/features` - features own their sub-features
+
+## Git Commit Workflow
+
+This project uses a CodeRabbit pre-commit hook that runs AI code review before each commit.
+
+### CodeRabbit Hook Behavior
+
+When you run `git commit`, the hook outputs status lines that you should interpret:
+
+- `CODERRABBIT_HOOK status=ok` - Review passed, proceed normally
+- `CODERRABBIT_HOOK status=issues_found` - Review found issues that need attention
+- `CODERRABBIT_HOOK status=unchanged` - No new staged changes since last review
+- `CODERRABBIT_HOOK status=rate_limited` - API rate limit hit
+- `CODERRABBIT_INSTRUCTIONS: ...` - Brief guidance when action is needed
+
+### How to Handle Each Status
+
+- **ok**: Continue with the commit normally
+- **issues_found**: Review each issue - fix, dismiss with reason, or choose to commit anyway
+- **unchanged**: Normal behavior, no re-review needed
+- **rate_limited**: Ask user whether to wait, skip with `SKIP_CODERABBIT=1`, or abort
+
+### Commit Commands
+
+- **Normal commit**: `git commit -m "message"` - runs gatekeeper hook (blocks on issues)
+- **Skip review**: `SKIP_CODERABBIT=1 git commit -m "message"` - bypass review entirely
+- **Force commit**: `FORCE_COMMIT=1 git commit -m "message"` - bypass review entirely
+- **Review only**: `bin/cr-review-only -m "message"` - run review without blocking (non-default path)
+
+### Two Modes
+
+1. **Gatekeeper mode** (default via pre-commit hook): Blocks commit when issues found. Use this for normal development.
+2. **Observe-only mode** (`bin/cr-review-only`): Runs review but always commits. Use this to evaluate CodeRabbit's feedback without blocking.
+
+Never spam `git commit` in a loop - always handle the status output appropriately.
