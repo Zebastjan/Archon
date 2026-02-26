@@ -96,9 +96,9 @@ puts "\n━━━━━━━━━━━━━━━━━━━━━━━━
 puts "Review complete with $issue_count issues shown"
 puts "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Run git commit
+# Run git commit (skip hook since we already ran review)
 puts "\n🚀 Running git commit..."
-if {[catch {exec git commit -m $commit_msg} result]} {
+if {[catch {exec git commit --no-verify -m $commit_msg} result]} {
     puts "Git commit failed: $result"
     exit 1
 }
