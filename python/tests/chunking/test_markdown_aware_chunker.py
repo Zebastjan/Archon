@@ -1,6 +1,5 @@
 """Tests for MarkdownAwareChunker."""
 
-
 from src.server.services.chunking.chunkers.markdown_aware import (
     MarkdownAwareChunker,
     _build_section_path,
@@ -43,12 +42,12 @@ class TestBuildSectionPath:
     def test_single_heading(self):
         """Single heading path."""
         result = _build_section_path(["Introduction"])
-        assert result == "Introduction"
+        assert result == ["Introduction"]
 
     def test_nested_headings(self):
         """Nested heading path."""
         result = _build_section_path(["Guide", "Installation", "Linux"])
-        assert result == "Guide > Installation > Linux"
+        assert result == ["Guide", "Installation", "Linux"]
 
 
 class TestMarkdownAwareChunker:
@@ -67,20 +66,20 @@ class TestMarkdownAwareChunker:
         results = chunker.chunk(text)
         assert len(results) > 0
         assert results[0].metadata["chunker"] == "markdown_aware"
-        assert results[0].metadata["section_path"] == ""
+        assert results[0].section_path == []
 
     def test_respects_headings(self):
-        """Chunker respects heading boundaries."""
-        chunker = MarkdownAwareChunker(chunk_size=5000)
+        """Chunker respects heading boundaries when sections are large enough."""
+        chunker = MarkdownAwareChunker(chunk_size=50, merge_threshold=20)
         text = "# Title\n\nIntro paragraph here.\n\n# Section 1\n\nContent in section 1."
         results = chunker.chunk(text)
 
         assert len(results) == 2
 
-        assert results[0].metadata["section_title"] == "Title"
+        assert results[0].section_title == "Title"
         assert "Intro" in results[0].content
 
-        assert results[1].metadata["section_title"] == "Section 1"
+        assert results[1].section_title == "Section 1"
         assert "section 1" in results[1].content.lower()
 
     def test_metadata_includes_section_path(self):
@@ -89,7 +88,7 @@ class TestMarkdownAwareChunker:
         text = "# Main\n\n## Sub\n\nContent here."
         results = chunker.chunk(text)
 
-        has_path = any(r.metadata.get("section_path") for r in results)
+        has_path = any(r.section_path for r in results)
         assert has_path
 
     def test_metadata_includes_heading_level(self):

@@ -13,6 +13,7 @@ from typing import Any
 from supabase import Client
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
+from ..chunking import get_chunker
 from ..credential_service import credential_service
 from ..llm_provider_service import get_embedding_model
 from ..storage.storage_services import DocumentStorageService
@@ -47,6 +48,7 @@ class PipelineOrchestrator:
         documents: list[dict],
         source_type: str = "url",
         chunk_size: int = 5000,
+        chunking_strategy: str = "basic",
         embedder_id: str | None = None,
         summarizer_model_id: str | None = None,
         summary_style: str = "overview",
@@ -60,6 +62,7 @@ class PipelineOrchestrator:
             documents: List of {url, content, title, ...}
             source_type: Type of source (url, git, file)
             chunk_size: Size of chunks
+            chunking_strategy: Chunking strategy to use (basic, token_aware, markdown_aware, code_aware)
             embedder_id: Embedding model to use
             summarizer_model_id: Model for summarization
             style: Summary style (overview, technical, user, brief)
@@ -69,6 +72,14 @@ class PipelineOrchestrator:
             Pipeline result with blob/chunk counts and queue info
         """
         await self.state_service.update_source_pipeline_status(source_id, PipelineStatus.CHUNKING)
+
+        # Get the chunker from the factory
+        try:
+            chunker = get_chunker(chunking_strategy, chunk_size=chunk_size)
+            safe_logfire_info(f"Using chunking strategy: {chunking_strategy} (chunk_size={chunk_size})")
+        except Exception as e:
+            safe_logfire_error(f"Failed to get chunker for strategy '{chunking_strategy}': {e}, falling back to basic")
+            chunker = get_chunker("basic", chunk_size=chunk_size)
 
         try:
             total_blobs = 0
@@ -91,7 +102,23 @@ class PipelineOrchestrator:
                     continue
                 total_blobs += 1
 
-                chunks = await self.storage_service.smart_chunk_text_async(content, chunk_size)
+                # Use new chunking API
+                chunk_results = await chunker.chunk_async(content)
+                chunks = [cr.content for cr in chunk_results]
+
+                # Extract metadata from chunk results
+                chunk_metadata = []
+                for cr in chunk_results:
+                    meta = {
+                        "section_path": cr.section_path,
+                        "section_title": cr.section_title,
+                        "page_number": cr.page_number,
+                        "element_type": cr.element_type,
+                        "order_index": cr.order_index,
+                        "token_estimate": cr.token_estimate,
+                        "metadata": cr.metadata,
+                    }
+                    chunk_metadata.append(meta)
 
                 start_offsets = []
                 current_offset = 0
@@ -99,7 +126,7 @@ class PipelineOrchestrator:
                     start_offsets.append(current_offset)
                     current_offset += len(chunk)
 
-                await self.state_service.create_chunks(blob.id, chunks, start_offsets)
+                await self.state_service.create_chunks(blob.id, chunks, start_offsets, chunk_metadata)
                 total_chunks += len(chunks)
 
                 if progress_callback:

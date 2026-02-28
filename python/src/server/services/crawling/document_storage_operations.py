@@ -607,6 +607,7 @@ class DocumentStorageOperations:
             source_id=original_source_id,
             documents=documents,
             chunk_size=request.get("chunk_size", 5000),
+            chunking_strategy=request.get("chunking_strategy", "basic"),
             embedder_id=request.get("embedder_id", "default"),
             summarizer_model_id=request.get("summarizer_model_id"),
             summary_style=request.get("summary_style", "OVERVIEW"),

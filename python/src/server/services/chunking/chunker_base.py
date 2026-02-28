@@ -12,14 +12,22 @@ class ChunkResult:
     Attributes:
         content: The text content of the chunk.
         index: Zero-based index of this chunk in the sequence.
-        section_path: Optional hierarchical path (e.g., "Intro > Getting Started").
+        section_path: Hierarchical path of headings (e.g., ["Guide", "Installation"]).
+        section_title: Title of the current section or heading.
+        page_number: Page number for PDF/DOCX sources.
+        element_type: Type of content (paragraph, heading, table, figure, code, list).
+        order_index: Global ordering index within document (survives re-chunking).
         token_estimate: Estimated token count for this chunk.
         metadata: Additional metadata about this chunk.
     """
 
     content: str
     index: int
-    section_path: str | None = None
+    section_path: list[str] | None = None
+    section_title: str | None = None
+    page_number: int | None = None
+    element_type: str = "paragraph"
+    order_index: int | None = None
     token_estimate: int | None = None
     metadata: dict[str, Any] | None = None
 

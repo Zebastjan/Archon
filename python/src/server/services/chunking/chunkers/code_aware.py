@@ -149,6 +149,8 @@ class CodeAwareChunker(BaseChunker):
                 ChunkResult(
                     content=chunk,
                     index=i,
+                    order_index=i,
+                    element_type="paragraph",
                     metadata={"chunker": "code_aware", "code_type": "text"},
                 )
                 for i, chunk in enumerate(raw_chunks)
@@ -165,6 +167,8 @@ class CodeAwareChunker(BaseChunker):
                         ChunkResult(
                             content=section_content,
                             index=index,
+                            order_index=index,
+                            element_type="code",
                             metadata={
                                 "chunker": "code_aware",
                                 "code_type": "code_block",
@@ -181,6 +185,8 @@ class CodeAwareChunker(BaseChunker):
                             ChunkResult(
                                 content=subchunk,
                                 index=index,
+                                order_index=index,
+                                element_type="code",
                                 metadata={
                                     "chunker": "code_aware",
                                     "code_type": "code_block",
@@ -196,6 +202,8 @@ class CodeAwareChunker(BaseChunker):
                         ChunkResult(
                             content=subchunk,
                             index=index,
+                            order_index=index,
+                            element_type="paragraph",
                             metadata={"chunker": "code_aware", "code_type": "prose"},
                         )
                     )
@@ -221,13 +229,15 @@ class CodeAwareChunker(BaseChunker):
             while (
                 len(current.content) < self.merge_threshold
                 and i + 1 < len(chunks)
-                and (chunks[i + 1].metadata or {}).get("code_type") == "prose"
-                and (current.metadata or {}).get("code_type") == "prose"
+                and chunks[i + 1].element_type == "paragraph"
+                and current.element_type == "paragraph"
             ):
                 i += 1
                 current = ChunkResult(
                     content=current.content + "\n\n" + chunks[i].content,
                     index=current.index,
+                    order_index=current.order_index,
+                    element_type=current.element_type,
                     metadata=current.metadata,
                 )
 

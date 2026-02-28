@@ -55,6 +55,8 @@ class TokenAwareChunker(BaseChunker):
                         ChunkResult(
                             content=chunk_text,
                             index=index,
+                            order_index=index,
+                            element_type="paragraph",
                             token_estimate=estimator(chunk_text),
                             metadata={"chunker": "token_aware", "target_tokens": target},
                         )
@@ -79,6 +81,8 @@ class TokenAwareChunker(BaseChunker):
                     ChunkResult(
                         content=chunk_text,
                         index=index,
+                        order_index=index,
+                        element_type="paragraph",
                         token_estimate=estimator(chunk_text),
                         metadata={"chunker": "token_aware", "target_tokens": target},
                     )
@@ -107,6 +111,8 @@ class TokenAwareChunker(BaseChunker):
                 current = ChunkResult(
                     content=current.content + "\n\n" + chunks[i].content,
                     index=current.index,
+                    order_index=current.order_index,
+                    element_type=current.element_type,
                     token_estimate=current.token_estimate,
                     metadata=current.metadata,
                 )

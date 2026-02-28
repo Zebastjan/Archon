@@ -89,6 +89,8 @@ class BasicChunker(BaseChunker):
             ChunkResult(
                 content=chunk,
                 index=i,
+                order_index=i,
+                element_type="paragraph",
                 metadata={"chunker": "basic", "char_count": len(chunk)},
             )
             for i, chunk in enumerate(raw_chunks)

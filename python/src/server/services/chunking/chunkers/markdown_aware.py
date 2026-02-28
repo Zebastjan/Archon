@@ -17,9 +17,9 @@ def _extract_heading_level(heading_text: str) -> int:
     return 1
 
 
-def _build_section_path(headings: list[str]) -> str:
+def _build_section_path(headings: list[str]) -> list[str]:
     """Build a section path from a list of headings."""
-    return " > ".join(headings)
+    return headings
 
 
 def _split_by_headings(text: str) -> list[tuple[str, str, int]]:
@@ -137,7 +137,11 @@ class MarkdownAwareChunker(BaseChunker):
                 ChunkResult(
                     content=chunk,
                     index=i,
-                    metadata={"chunker": "markdown_aware", "section_path": ""},
+                    order_index=i,
+                    element_type="paragraph",
+                    section_path=[],
+                    section_title=None,
+                    metadata={"chunker": "markdown_aware"},
                 )
                 for i, chunk in enumerate(raw_chunks)
             ]
@@ -152,7 +156,7 @@ class MarkdownAwareChunker(BaseChunker):
                     current_headings.pop()
                 current_headings.append(section_title)
 
-            section_path = _build_section_path(current_headings) if current_headings else ""
+            section_path = _build_section_path(current_headings) if current_headings else []
 
             subchunks = _split_into_subchunks(section_content, chunk_size)
 
@@ -161,10 +165,12 @@ class MarkdownAwareChunker(BaseChunker):
                     ChunkResult(
                         content=subchunk,
                         index=index,
+                        order_index=index,
+                        section_path=section_path,
+                        section_title=section_title,
+                        element_type="paragraph",
                         metadata={
                             "chunker": "markdown_aware",
-                            "section_path": section_path,
-                            "section_title": section_title,
                             "heading_level": level,
                         },
                     )
@@ -190,11 +196,15 @@ class MarkdownAwareChunker(BaseChunker):
 
             while len(current.content) < self.merge_threshold and i + 1 < len(chunks):
                 next_chunk = chunks[i + 1]
-                if (current.metadata or {}).get("section_path") == (next_chunk.metadata or {}).get("section_path"):
+                if current.section_path == next_chunk.section_path:
                     i += 1
                     current = ChunkResult(
                         content=current.content + "\n\n" + next_chunk.content,
                         index=current.index,
+                        order_index=current.order_index,
+                        section_path=current.section_path,
+                        section_title=current.section_title,
+                        element_type=current.element_type,
                         metadata=current.metadata,
                     )
                 else:

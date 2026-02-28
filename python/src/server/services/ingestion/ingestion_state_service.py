@@ -84,6 +84,12 @@ class Chunk:
     end_offset: int | None = None
     content: str = ""
     token_count: int | None = None
+    section_path: list[str] | None = None
+    section_title: str | None = None
+    page_number: int | None = None
+    element_type: str = "paragraph"
+    order_index: int | None = None
+    metadata: dict | None = None
     created_at: datetime | None = None
 
 
@@ -207,6 +213,7 @@ class IngestionStateService:
         blob_id: uuid.UUID,
         chunks: list[str],
         start_offsets: list[int] | None = None,
+        chunk_metadata: list[dict] | None = None,
     ) -> list[Chunk]:
         chunk_records = []
         for i, content in enumerate(chunks):
@@ -219,6 +226,23 @@ class IngestionStateService:
             if start_offsets and i < len(start_offsets):
                 record["start_offset"] = start_offsets[i]
                 record["end_offset"] = start_offsets[i] + len(content)
+
+            # Add new metadata fields if provided
+            if chunk_metadata and i < len(chunk_metadata):
+                meta = chunk_metadata[i]
+                if meta.get("section_path") is not None:
+                    record["section_path"] = meta["section_path"]
+                if meta.get("section_title") is not None:
+                    record["section_title"] = meta["section_title"]
+                if meta.get("page_number") is not None:
+                    record["page_number"] = meta["page_number"]
+                if meta.get("element_type") is not None:
+                    record["element_type"] = meta["element_type"]
+                if meta.get("order_index") is not None:
+                    record["order_index"] = meta["order_index"]
+                if meta.get("metadata"):
+                    record["metadata"] = meta["metadata"]
+
             chunk_records.append(record)
 
         response = self.supabase.table("archon_chunks").insert(chunk_records).execute()
@@ -232,6 +256,12 @@ class IngestionStateService:
                 end_offset=row.get("end_offset"),
                 content=row["content"],
                 token_count=row.get("token_count"),
+                section_path=row.get("section_path"),
+                section_title=row.get("section_title"),
+                page_number=row.get("page_number"),
+                element_type=row.get("element_type", "paragraph"),
+                order_index=row.get("order_index"),
+                metadata=row.get("metadata"),
                 created_at=row.get("created_at"),
             )
             for row in response.data
@@ -250,6 +280,12 @@ class IngestionStateService:
                 end_offset=row.get("end_offset"),
                 content=row["content"],
                 token_count=row.get("token_count"),
+                section_path=row.get("section_path"),
+                section_title=row.get("section_title"),
+                page_number=row.get("page_number"),
+                element_type=row.get("element_type", "paragraph"),
+                order_index=row.get("order_index"),
+                metadata=row.get("metadata"),
                 created_at=row.get("created_at"),
             )
             for row in response.data
@@ -257,12 +293,7 @@ class IngestionStateService:
 
     async def get_chunks_by_source(self, source_id: str) -> list[Chunk]:
         # First get all blob_ids for this source
-        blobs_response = (
-            self.supabase.table("archon_document_blobs")
-            .select("id")
-            .eq("source_id", source_id)
-            .execute()
-        )
+        blobs_response = self.supabase.table("archon_document_blobs").select("id").eq("source_id", source_id).execute()
 
         if not blobs_response.data:
             return []
@@ -276,12 +307,7 @@ class IngestionStateService:
 
         for i in range(0, len(blob_ids), batch_size):
             batch = blob_ids[i : i + batch_size]
-            response = (
-                self.supabase.table("archon_chunks")
-                .select("*")
-                .in_("blob_id", batch)
-                .execute()
-            )
+            response = self.supabase.table("archon_chunks").select("*").in_("blob_id", batch).execute()
             all_chunks.extend(response.data)
 
         return [
@@ -293,6 +319,12 @@ class IngestionStateService:
                 end_offset=row.get("end_offset"),
                 content=row["content"],
                 token_count=row.get("token_count"),
+                section_path=row.get("section_path"),
+                section_title=row.get("section_title"),
+                page_number=row.get("page_number"),
+                element_type=row.get("element_type", "paragraph"),
+                order_index=row.get("order_index"),
+                metadata=row.get("metadata"),
                 created_at=row.get("created_at"),
             )
             for row in all_chunks

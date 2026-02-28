@@ -4,6 +4,8 @@ from src.server.services.chunking.chunker_base import BaseChunker
 from src.server.services.chunking.chunkers import (
     BasicChunker,
     CodeAwareChunker,
+    DoclingHierarchicalChunker,
+    DoclingHybridChunker,
     MarkdownAwareChunker,
     TokenAwareChunker,
 )
@@ -14,6 +16,8 @@ CHUNKER_STRATEGIES: dict[str, type[BaseChunker]] = {
     "token_aware": TokenAwareChunker,
     "markdown_aware": MarkdownAwareChunker,
     "code_aware": CodeAwareChunker,
+    "docling_hierarchical": DoclingHierarchicalChunker,
+    "docling_hybrid": DoclingHybridChunker,
 }
 
 AVAILABLE_STRATEGIES = list(CHUNKER_STRATEGIES.keys())
