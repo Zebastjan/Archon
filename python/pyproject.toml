@@ -45,6 +45,7 @@ server = [
     "watchfiles>=0.18",
     # Web crawling
     "crawl4ai==0.7.4",
+    "tavily-python>=0.5.0",
     # Database and storage
     "supabase==2.15.1",
     "asyncpg>=0.29.0",
@@ -55,6 +56,11 @@ server = [
     "pdfplumber>=0.11.6",
     "python-docx>=1.1.2",
     "markdown>=3.8",
+    # Tree-sitter parsing
+    "tree-sitter>=0.21.0",
+    "tree-sitter-python>=0.21.0",
+    "tree-sitter-javascript>=0.21.0",
+    "tree-sitter-typescript>=0.21.0",
     # Security and utilities
     "python-jose[cryptography]>=3.3.0",
     "cryptography>=41.0.0",
@@ -134,6 +140,11 @@ all = [
     "pdfplumber>=0.11.6",
     "python-docx>=1.1.2",
     "markdown>=3.8",
+    # Tree-sitter parsing
+    "tree-sitter>=0.21.0",
+    "tree-sitter-python>=0.21.0",
+    "tree-sitter-javascript>=0.21.0",
+    "tree-sitter-typescript>=0.21.0",
     "python-jose[cryptography]>=3.3.0",
     "cryptography>=41.0.0",
     "slowapi>=0.1.9",

@@ -154,6 +154,7 @@ class KnowledgeItemRequest(BaseModel):
     max_depth: int = 2  # Maximum crawl depth (1-5)
     extract_code_examples: bool = True  # Whether to extract code examples
     use_new_pipeline: bool = True  # Whether to use the new restartable pipeline
+    crawl_provider: str | None = None  # Optional provider override: "tavily", "crawl4ai", or None (use default)
 
     class Config:
         schema_extra = {
@@ -165,6 +166,7 @@ class KnowledgeItemRequest(BaseModel):
                 "max_depth": 2,
                 "extract_code_examples": True,
                 "use_new_pipeline": True,
+                "crawl_provider": None,
             }
         }
 
@@ -175,6 +177,7 @@ class CrawlRequest(BaseModel):
     tags: list[str] = []
     update_frequency: int = 7
     max_depth: int = 2  # Maximum crawl depth (1-5)
+    crawl_provider: str | None = None  # Optional provider override: "tavily", "crawl4ai", or None (use default)
 
 
 class RagQueryRequest(BaseModel):

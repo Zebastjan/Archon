@@ -35,6 +35,10 @@ from .strategies.recursive import RecursiveCrawlStrategy
 from .strategies.single_page import SinglePageCrawlStrategy
 from .strategies.sitemap import SitemapCrawlStrategy
 
+# Import provider factory for multi-provider support
+from .provider_factory import CrawlProviderFactory
+from .providers.base_provider import CrawlProviderError, CrawlResult
+
 logger = get_logger(__name__)
 
 
@@ -594,7 +598,8 @@ class CrawlingService:
                 discovery_request["is_discovery_target"] = True
                 discovery_request["original_domain"] = self.url_handler.get_base_url(discovered_url)
 
-                crawl_results, crawl_type = await self._crawl_by_url_type(
+                # Use provider-based crawling with fallback
+                crawl_results, crawl_type, provider_metadata = await self._crawl_with_provider(
                     discovered_url, discovery_request, original_source_id, has_existing_state
                 )
 
@@ -605,9 +610,11 @@ class CrawlingService:
                     "analyzing", 50, f"Analyzing URL type for {url}", total_pages=total_urls_to_crawl, processed_pages=0
                 )
 
-                # Crawl the main URL
+                # Crawl the main URL using provider-based crawling with fallback
                 safe_logfire_info(f"No discovery file found, crawling main URL: {url}")
-                crawl_results, crawl_type = await self._crawl_by_url_type(url, request, original_source_id, has_existing_state)
+                crawl_results, crawl_type, provider_metadata = await self._crawl_with_provider(
+                    url, request, original_source_id, has_existing_state
+                )
 
             # Update progress tracker with crawl type
             if self.progress_tracker and crawl_type:
@@ -675,7 +682,7 @@ class CrawlingService:
             storage_results = await self.doc_storage_ops.process_and_store_documents(
                 crawl_results,
                 request,
-                crawl_type,
+                crawl_type or "unknown",  # Provide default if None
                 original_source_id,
                 doc_storage_callback,
                 self._check_cancellation,
@@ -683,6 +690,26 @@ class CrawlingService:
                 source_display_name=source_display_name,
                 url_to_page_id=None,  # Will be populated after page storage
             )
+
+            # Store provider metadata in source record
+            if provider_metadata and storage_results.get("source_id"):
+                try:
+                    # Update source record with provider metadata
+                    self.supabase_client.table("archon_sources").update(
+                        {
+                            "crawl_provider": provider_metadata.get("provider", "crawl4ai"),
+                            "provider_metadata": provider_metadata,
+                        }
+                    ).eq("source_id", storage_results["source_id"]).execute()
+
+                    safe_logfire_info(
+                        f"Stored provider metadata | source_id={storage_results['source_id']} | "
+                        f"provider={provider_metadata.get('provider')} | "
+                        f"pages={provider_metadata.get('pages_crawled')}"
+                    )
+                except Exception as e:
+                    # Log error but don't fail the crawl
+                    safe_logfire_error(f"Failed to store provider metadata: {e}")
 
             # Update progress tracker with source_id now that it's created
             if self.progress_tracker and storage_results.get("source_id"):
@@ -1008,6 +1035,146 @@ class CrawlingService:
             )
 
         return filtered
+
+    async def _crawl_with_provider(
+        self, url: str, request: dict[str, Any], source_id: str | None = None, has_existing_state: bool = False
+    ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+        """
+        Crawl using provider factory with fallback logic.
+
+        This method integrates the provider abstraction layer, attempting to use
+        the requested provider (Tavily or Crawl4AI) and falling back as needed.
+
+        Args:
+            url: URL to crawl
+            request: Crawl request parameters (includes crawl_provider)
+            source_id: Optional source ID for resume filtering
+            has_existing_state: Whether the source has existing crawl state
+
+        Returns:
+            Tuple of (crawl_results, crawl_type, provider_metadata)
+        """
+        provider_metadata = {}
+        crawl_results = []
+        crawl_type = None
+
+        # Get requested provider from request or use default
+        requested_provider = request.get("crawl_provider")
+        safe_logfire_info(
+            f"Provider-based crawl starting | url={url} | requested_provider={requested_provider or 'default'}"
+        )
+
+        try:
+            # Get provider instance from factory (with fallback enabled by default)
+            provider = await CrawlProviderFactory.get_provider(
+                provider_name=requested_provider,
+                fallback_on_error=True,
+                crawler=self.crawler,
+                supabase_client=self.supabase_client,
+            )
+
+            safe_logfire_info(f"Using crawl provider: {provider.provider_type.value}")
+
+            # Store which provider we're using
+            provider_metadata["provider"] = provider.provider_type.value
+            provider_metadata["requested_provider"] = requested_provider or "default"
+
+            # For Tavily provider: use direct crawl (Tavily handles URL types internally)
+            if provider.provider_type.value == "tavily":
+                safe_logfire_info(f"Using Tavily provider for URL: {url}")
+
+                # Create progress callback
+                progress_callback = await self._create_crawl_progress_callback("crawling")
+
+                # Call Tavily provider
+                tavily_results = await provider.crawl(
+                    url=url,
+                    max_depth=request.get("max_depth", 2),
+                    progress_callback=progress_callback,
+                    cancellation_check=self._check_cancellation,
+                    request=request,  # Pass full request for additional options
+                    source_id=source_id,
+                    has_existing_state=has_existing_state,
+                )
+
+                # Convert CrawlResult objects to dict format for compatibility with existing pipeline
+                crawl_results = self._convert_crawl_results_to_dicts(tavily_results)
+                crawl_type = "tavily_crawl"
+
+                # Extract provider metadata from results
+                if tavily_results:
+                    first_result_metadata = tavily_results[0].metadata
+                    provider_metadata["total_credits_used"] = first_result_metadata.get("total_credits_used", 0)
+                    provider_metadata["pages_crawled"] = len(tavily_results)
+
+                safe_logfire_info(
+                    f"Tavily crawl completed | url={url} | pages={len(crawl_results)} | "
+                    f"credits={provider_metadata.get('total_credits_used', 'N/A')}"
+                )
+
+            else:
+                # For Crawl4AI or other providers: use existing _crawl_by_url_type logic
+                safe_logfire_info(f"Using Crawl4AI provider for URL: {url}")
+                crawl_results, crawl_type = await self._crawl_by_url_type(url, request, source_id, has_existing_state)
+                provider_metadata["pages_crawled"] = len(crawl_results)
+
+        except CrawlProviderError as e:
+            # Provider-specific error with fallback support
+            if e.fallback_available:
+                safe_logfire_info(
+                    f"Provider {requested_provider or 'default'} failed, attempting fallback | error={e.message}"
+                )
+
+                # Fallback to Crawl4AI
+                safe_logfire_info("Falling back to Crawl4AI provider")
+                crawl_results, crawl_type = await self._crawl_by_url_type(url, request, source_id, has_existing_state)
+
+                # Update metadata to reflect fallback
+                provider_metadata["provider"] = "crawl4ai"
+                provider_metadata["requested_provider"] = requested_provider or "default"
+                provider_metadata["fallback_used"] = True
+                provider_metadata["fallback_reason"] = str(e)
+                provider_metadata["pages_crawled"] = len(crawl_results)
+            else:
+                # Error with no fallback - re-raise
+                raise
+
+        except Exception as e:
+            # Unexpected error - log and fallback to Crawl4AI
+            safe_logfire_error(f"Unexpected error during provider crawl, falling back to Crawl4AI | error={e}")
+
+            crawl_results, crawl_type = await self._crawl_by_url_type(url, request, source_id, has_existing_state)
+
+            # Update metadata to reflect fallback
+            provider_metadata["provider"] = "crawl4ai"
+            provider_metadata["requested_provider"] = requested_provider or "default"
+            provider_metadata["fallback_used"] = True
+            provider_metadata["fallback_reason"] = str(e)
+            provider_metadata["pages_crawled"] = len(crawl_results)
+
+        return crawl_results, crawl_type, provider_metadata
+
+    def _convert_crawl_results_to_dicts(self, crawl_results: list[CrawlResult]) -> list[dict[str, Any]]:
+        """
+        Convert CrawlResult objects to dict format for compatibility with existing pipeline.
+
+        Args:
+            crawl_results: List of CrawlResult objects
+
+        Returns:
+            List of dicts with url, markdown, title, metadata keys
+        """
+        dict_results = []
+        for result in crawl_results:
+            dict_result = {
+                "url": result.url,
+                "markdown": result.markdown,
+                "title": result.title,
+                "metadata": result.metadata,
+            }
+            dict_results.append(dict_result)
+
+        return dict_results
 
     async def _crawl_by_url_type(
         self, url: str, request: dict[str, Any], source_id: str | None = None, has_existing_state: bool = False
