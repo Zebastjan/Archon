@@ -1,0 +1,88 @@
+## Crawl4AI Roadmap for Archon (Feb 2026)
+
+This roadmap is based on the **Crawl4AI Audit Report for Archon (Feb 2026)** and focuses on upgrading to **0.7.7** and tuning our settings for targeted, high‑quality crawling. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+
+### Phase 0 – Baseline and Guardrails
+
+**Goal:** Keep current behavior but make it safe.
+
+- Add a **hard `max_pages` cap** (e.g., 100–200 pages per crawl job) in the recursive strategy loop so we never accidentally crawl thousands of pages. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+- Clamp **user depth** to a safe range:
+  - `depth_clamped = max(1, min(user_depth, 3))` used for Crawl4AI deep crawling. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+- Adjust batch and concurrency defaults:
+  - Reduce `CRAWL_BATCH_SIZE` from 50 → ~30.  
+  - Reduce `CRAWL_MAX_CONCURRENT` from 10 → 5–8 for better stability and lower memory. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+
+Deliverable: updated recursive/batch crawl code with `MAX_PAGES_HARD_CAP`, depth clamp, and new batch/concurrency defaults.
+
+### Phase 1 – Upgrade to Crawl4AI 0.7.7
+
+**Goal:** Move to the latest stable 0.7.x without changing our integration pattern.
+
+- Bump `crawl4ai` from **0.7.4 → 0.7.7** in `pyproject.toml` and lockfiles. [github](https://github.com/unclecode/crawl4ai/releases)
+- Run the existing test suite and a few manual crawls (docs site + generic site) to confirm:
+  - No API changes break our code paths.  
+  - No regressions in output format or stability.  
+
+Deliverable: PR that bumps the version and notes any needed minor code adjustments (if any).
+
+### Phase 2 – Config Tuning for Better Content
+
+**Goal:** Improve content quality and completeness for typical Archon workflows.
+
+1. **Wait strategy and timeouts**
+
+   - For “docs mode” (when the target looks like documentation or an agent flags it as docs):
+     - Switch from `wait_until="domcontentloaded"` → `wait_until="networkidle"`.  
+     - Increase `page_timeout` to ~60s and `delay_before_return_html` to ~1.0s. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+   - For generic/quick crawls, consider keeping `domcontentloaded` for speed.
+
+2. **Pruning and filters**
+
+   - Increase `PruningContentFilter` threshold from `0.2 → ~0.3` for more aggressive junk removal. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+   - Add optional **keyword-based filtering** for targeted crawls:
+     - Default keywords for docs: `["docs", "api", "guide", "tutorial", "reference"]`. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+     - Allow agents/config to pass custom keywords (e.g., `["esperanto", "grammar", "course"]`).
+
+3. **Output format**
+
+   - Keep using markdown with code block preservation (current `DefaultMarkdownGenerator`), as confirmed in the audit. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+
+Deliverable: updated `CrawlerRunConfig` and content filter wiring in `recursive.py`/provider code, with clear “docs mode” vs “generic mode” paths.
+
+### Phase 3 – Data Validation Layer
+
+**Goal:** Prevent obvious junk/error pages from ever reaching the KB.
+
+Implement the two layers from the audit (you can adapt their example code directly): [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+
+1. **Per-page validation**
+
+   - Minimum content length / word count (e.g., ≥500 chars / ≥100 words).  
+   - Detect common error/login/captcha pages via phrase matching.  
+   - Drop ultra-short or clearly non-content pages.
+
+2. **Job-level validation**
+
+   - Compute:
+     - Total pages.  
+     - Count/ratio of “short” pages.  
+   - Emit warnings when:
+     - Short-page ratio > 50%.  
+     - Total pages close to `MAX_PAGES_HARD_CAP`.  
+   - Mark jobs as `ok` vs `warning`, and store stats in crawl job metadata.
+
+Deliverable: a small `validation.py` (or equivalent) used by the crawl pipeline before chunking/embedding.
+
+### Phase 4 – UX and Provider Abstraction
+
+**Goal:** Make this behavior accessible and adjustable from Archon while staying future-proof.
+
+- Confirm/introduce a `CrawlProvider` abstraction where `Crawl4AICrawlProvider` is the default. [ppl-ai-file-upload.s3.amazonaws](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/23796480/776f32a8-ae22-4ed7-b50a-448a054e70a7/crawl4ai-audit-2026-02.md)
+- Expose minimal, safe knobs at the user/agent level:
+  - `url` (required).  
+  - `depth` (1–3, with clamping).  
+  - Optional `mode` = `docs` | `generic`.  
+- Keep Tavily/Firecrawl as **future alternative providers**, but do not integrate them yet; this roadmap is strictly about getting Crawl4AI into a good place.
+
+Deliverable: updated provider interface and a short note in dev docs explaining the new defaults and caps.

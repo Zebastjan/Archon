@@ -151,16 +151,6 @@ make test                # Run all tests
 make test-fe             # Frontend tests only
 make test-be             # Backend tests only
 
-## Code Review
-
-Before committing, run CodeRabbit to review your changes:
-
-```bash
-./scripts/coderabbit-review.sh
-```
-
-This runs `coderabbit review --prompt-only --type uncommitted` to review uncommitted changes. Address any issues before committing to avoid multiple commits.
-
 # Prompt regression tests
 uv run python tests/prompts/test_code_summary_prompt.py  # Test code summary prompt
 uv run pytest tests/prompts/ -v                           # Run all prompt tests with pytest
