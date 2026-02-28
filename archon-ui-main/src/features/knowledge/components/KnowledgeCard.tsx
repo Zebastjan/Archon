@@ -6,7 +6,7 @@
 
 import { format } from "date-fns";
 import { motion } from "framer-motion";
-import { ChevronRight, Clock, Code, ExternalLink, File, FileText, Globe, Settings2 } from "lucide-react";
+import { ChevronRight, Clock, Code, ExternalLink, File, FileText, Globe, Settings2, Zap, Bot } from "lucide-react";
 import { useState } from "react";
 import { isOptimistic } from "@/features/shared/utils/optimistic";
 import { KnowledgeCardProgress } from "../../progress/components/KnowledgeCardProgress";
@@ -65,6 +65,12 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
   const hasError = item.status === "error";
   const codeExamplesCount = item.code_examples_count || item.metadata?.code_examples_count || 0;
   const documentCount = item.document_count || item.metadata?.document_count || 0;
+
+  // Provider information
+  const crawlProvider = item.metadata?.crawl_provider;
+  const providerMetadata = item.metadata?.provider_metadata;
+  const creditsUsed = providerMetadata?.total_credits_used;
+  const fallbackUsed = providerMetadata?.fallback_used;
 
   // Provenance fields
   const hasProvenance = !!(item.embedding_model || item.embedding_provider || item.summarization_model);
@@ -311,6 +317,29 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                   />
                 </div>
               </SimpleTooltip>
+
+              {/* Provider badge */}
+              {crawlProvider && (
+                <SimpleTooltip
+                  content={
+                    crawlProvider === "tavily"
+                      ? `Crawled with Tavily${creditsUsed ? ` (${creditsUsed} credits)` : ""}${fallbackUsed ? " • Fallback used" : ""}`
+                      : `Crawled with ${crawlProvider === "crawl4ai" ? "Crawl4AI" : crawlProvider}${fallbackUsed ? " • Fallback used" : ""}`
+                  }
+                >
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/50">
+                    {crawlProvider === "tavily" ? (
+                      <Zap className="w-3 h-3 text-cyan-500" />
+                    ) : (
+                      <Bot className="w-3 h-3 text-blue-500" />
+                    )}
+                    <span className="text-xs text-gray-600 dark:text-gray-400 font-medium">
+                      {crawlProvider === "tavily" ? "Tavily" : "Crawl4AI"}
+                    </span>
+                    {fallbackUsed && <span className="text-xs text-orange-500">!</span>}
+                  </div>
+                </SimpleTooltip>
+              )}
             </div>
           </div>
 

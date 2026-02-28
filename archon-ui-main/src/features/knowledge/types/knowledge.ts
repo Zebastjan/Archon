@@ -21,6 +21,13 @@ export interface KnowledgeItemMetadata {
   original_url?: string;
   document_count?: number; // Number of documents in this knowledge item
   code_examples_count?: number; // Number of code examples found
+  crawl_provider?: string; // Crawl provider used (tavily, crawl4ai)
+  provider_metadata?: {
+    pages_crawled?: number;
+    total_credits_used?: number;
+    fallback_used?: boolean;
+    fallback_reason?: string;
+  };
 }
 
 export interface VectorizerSettings {
@@ -155,6 +162,7 @@ export interface CrawlRequest {
   update_frequency?: number;
   max_depth?: number;
   extract_code_examples?: boolean;
+  crawl_provider?: "tavily" | "crawl4ai" | null; // Optional provider override
 }
 
 export interface UploadMetadata {
