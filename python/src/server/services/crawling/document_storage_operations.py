@@ -110,7 +110,9 @@ class DocumentStorageOperations:
         initial_doc_count = len(crawl_results)
 
         if debug_settings.debug_ingestion:
-            logger.info(f"DOC_COUNT_INVARIANT_START | initial_count={initial_doc_count} | source_id={original_source_id}")
+            logger.info(
+                f"DOC_COUNT_INVARIANT_START | initial_count={initial_doc_count} | source_id={original_source_id}"
+            )
 
         # Initialize URL state tracking if enabled
         url_state_service = get_crawl_url_state_service(self.supabase_client)
@@ -263,7 +265,6 @@ class DocumentStorageOperations:
                 )
                 for i, preview in enumerate(chunk_previews):
                     logger.info(f"CHUNKING_SAMPLE | chunk_num={i} | preview={preview}")
-
 
             # Use the original source_id for all documents
             source_id = original_source_id
@@ -438,7 +439,9 @@ class DocumentStorageOperations:
 
             # Log first few chunk metadata to verify structure
             sample_metadata = all_metadatas[:3] if all_metadatas else []
-            logger.info(f"DOCS_BEFORE_WRITE_SAMPLE_METADATA | sample_count={len(sample_metadata)} | metadata={sample_metadata}")
+            logger.info(
+                f"DOCS_BEFORE_WRITE_SAMPLE_METADATA | sample_count={len(sample_metadata)} | metadata={sample_metadata}"
+            )
         else:
             safe_logfire_info(
                 f"Document storage | processed={processed_docs}/{len(crawl_results)} | chunks={len(all_contents)} | avg_chunks_per_doc={avg_chunks:.1f}"

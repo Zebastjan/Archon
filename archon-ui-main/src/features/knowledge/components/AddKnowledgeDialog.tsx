@@ -14,6 +14,7 @@ import { useCrawlUrl, useUploadDocument } from "../hooks";
 import type { CrawlRequest, UploadMetadata } from "../types";
 import { KnowledgeTypeSelector } from "./KnowledgeTypeSelector";
 import { LevelSelector } from "./LevelSelector";
+import { ProviderSelector } from "./ProviderSelector";
 import { TagInput } from "./TagInput";
 
 interface AddKnowledgeDialogProps {
@@ -42,6 +43,7 @@ export const AddKnowledgeDialog: React.FC<AddKnowledgeDialogProps> = ({
   const [crawlUrl, setCrawlUrl] = useState("");
   const [crawlType, setCrawlType] = useState<"technical" | "business">("technical");
   const [maxDepth, setMaxDepth] = useState("2");
+  const [crawlProvider, setCrawlProvider] = useState<"tavily" | "crawl4ai" | null>(null); // null = Auto
   const [tags, setTags] = useState<string[]>([]);
 
   // Upload form state
@@ -53,6 +55,7 @@ export const AddKnowledgeDialog: React.FC<AddKnowledgeDialogProps> = ({
     setCrawlUrl("");
     setCrawlType("technical");
     setMaxDepth("2");
+    setCrawlProvider(null); // Reset to Auto
     setTags([]);
     setSelectedFile(null);
     setUploadType("technical");
@@ -71,6 +74,7 @@ export const AddKnowledgeDialog: React.FC<AddKnowledgeDialogProps> = ({
         knowledge_type: crawlType,
         max_depth: parseInt(maxDepth, 10),
         tags: tags.length > 0 ? tags : undefined,
+        crawl_provider: crawlProvider, // Include provider selection (null = Auto)
       };
 
       const response = await crawlMutation.mutateAsync(request);
@@ -179,6 +183,8 @@ export const AddKnowledgeDialog: React.FC<AddKnowledgeDialogProps> = ({
               <KnowledgeTypeSelector value={crawlType} onValueChange={setCrawlType} disabled={isProcessing} />
 
               <LevelSelector value={maxDepth} onValueChange={setMaxDepth} disabled={isProcessing} />
+
+              <ProviderSelector value={crawlProvider} onValueChange={setCrawlProvider} disabled={isProcessing} />
             </div>
 
             <TagInput

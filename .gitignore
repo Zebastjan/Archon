@@ -24,7 +24,12 @@ UAT/
 /ACTUAL_*.md
 /VALIDATION_*.md
 
+.claude/
+.vscode/
+
 .DS_Store
 
 # Local release notes testing
 release-notes-*.md
+
+test

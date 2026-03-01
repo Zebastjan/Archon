@@ -43,9 +43,7 @@ async def add_documents_to_supabase(
         progress_callback: Optional async callback function for progress reporting
         provider: Optional provider override for embeddings
     """
-    with safe_span(
-        "add_documents_to_supabase", total_documents=len(contents), batch_size=batch_size
-    ) as span:
+    with safe_span("add_documents_to_supabase", total_documents=len(contents), batch_size=batch_size) as span:
         # Simple progress reporting helper with batch info support
         async def report_progress(message: str, progress: int, batch_info: dict = None):
             if progress_callback and asyncio.iscoroutinefunction(progress_callback):
@@ -61,6 +59,7 @@ async def add_documents_to_supabase(
         try:
             # Defensive import to handle any initialization issues
             from ..credential_service import credential_service as cred_service
+
             rag_settings = await cred_service.get_credentials_by_category("rag_strategy")
             if batch_size is None:
                 batch_size = int(rag_settings.get("DOCUMENT_STORAGE_BATCH_SIZE", "50"))
@@ -96,7 +95,7 @@ async def add_documents_to_supabase(
                                     99,
                                     "Storage cancelled during deletion",
                                     current_batch=i // delete_batch_size + 1,
-                                    total_batches=(len(unique_urls) + delete_batch_size - 1) // delete_batch_size
+                                    total_batches=(len(unique_urls) + delete_batch_size - 1) // delete_batch_size,
                                 )
                             raise
 
@@ -105,9 +104,7 @@ async def add_documents_to_supabase(
                     # Yield control to allow other async operations
                     if i + delete_batch_size < len(unique_urls):
                         await asyncio.sleep(0.05)  # Reduced pause between delete batches
-                search_logger.info(
-                    f"Deleted existing records for {len(unique_urls)} URLs in batches"
-                )
+                search_logger.info(f"Deleted existing records for {len(unique_urls)} URLs in batches")
         except Exception as e:
             search_logger.warning(f"Batch delete failed: {e}. Trying smaller batches as fallback.")
             # Fallback: delete in smaller batches with rate limiting
@@ -125,7 +122,7 @@ async def add_documents_to_supabase(
                                 99,
                                 "Storage cancelled during fallback deletion",
                                 current_batch=i // fallback_batch_size + 1,
-                                total_batches=(len(unique_urls) + fallback_batch_size - 1) // fallback_batch_size
+                                total_batches=(len(unique_urls) + fallback_batch_size - 1) // fallback_batch_size,
                             )
                         raise
 
@@ -134,9 +131,7 @@ async def add_documents_to_supabase(
                     client.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
                     await asyncio.sleep(0.05)  # Rate limit to prevent overwhelming
                 except Exception as inner_e:
-                    search_logger.error(
-                        f"Error deleting batch of {len(batch_urls)} URLs: {inner_e}"
-                    )
+                    search_logger.error(f"Error deleting batch of {len(batch_urls)} URLs: {inner_e}")
                     failed_urls.extend(batch_urls)
 
             if failed_urls:
@@ -172,7 +167,7 @@ async def add_documents_to_supabase(
                             99,
                             "Storage cancelled during batch processing",
                             current_batch=batch_num,
-                            total_batches=total_batches
+                            total_batches=total_batches,
                         )
                     raise
 
@@ -204,16 +199,16 @@ async def add_documents_to_supabase(
                 try:
                     await progress_callback(
                         "document_storage",  # status (will be overridden by base_status anyway)
-                        current_progress,    # progress
+                        current_progress,  # progress
                         f"Processing batch {batch_num}/{total_batches} ({len(batch_contents)} chunks)",  # message
-                    **{  # **kwargs - these will be stored at top level
-                        "current_batch": batch_num,
-                        "total_batches": total_batches,
-                        "completed_batches": completed_batches,
-                        "chunks_in_batch": len(batch_contents),
-                        "active_workers": max_workers if use_contextual_embeddings else 1,
-                    }
-                )
+                        **{  # **kwargs - these will be stored at top level
+                            "current_batch": batch_num,
+                            "total_batches": total_batches,
+                            "completed_batches": completed_batches,
+                            "chunks_in_batch": len(batch_contents),
+                            "active_workers": max_workers if use_contextual_embeddings else 1,
+                        },
+                    )
                 except Exception as e:
                     search_logger.warning(f"Progress callback failed: {e}. Storage continuing...")
 
@@ -231,9 +226,7 @@ async def add_documents_to_supabase(
 
                 # Get contextual embedding batch size from settings
                 try:
-                    contextual_batch_size = max(
-                        1, int(rag_settings.get("CONTEXTUAL_EMBEDDING_BATCH_SIZE", "50"))
-                    )
+                    contextual_batch_size = max(1, int(rag_settings.get("CONTEXTUAL_EMBEDDING_BATCH_SIZE", "50")))
                 except Exception:
                     contextual_batch_size = 50
 
@@ -254,7 +247,7 @@ async def add_documents_to_supabase(
                                         99,
                                         "Storage cancelled during contextual embedding",
                                         current_batch=batch_num,
-                                        total_batches=total_batches
+                                        total_batches=total_batches,
                                     )
                                 raise
 
@@ -264,9 +257,7 @@ async def add_documents_to_supabase(
                         sub_batch_docs = full_documents[ctx_i:ctx_end]
 
                         # Process sub-batch with a single API call
-                        sub_results = await generate_contextual_embeddings_batch(
-                            sub_batch_docs, sub_batch_contents
-                        )
+                        sub_results = await generate_contextual_embeddings_batch(sub_batch_docs, sub_batch_contents)
 
                         # Extract results from this sub-batch
                         for idx, (contextual_text, success) in enumerate(sub_results):
@@ -284,9 +275,7 @@ async def add_documents_to_supabase(
                     search_logger.error(f"Error in batch contextual embedding: {e}")
                     # Fallback to original contents
                     contextual_contents = batch_contents
-                    search_logger.warning(
-                        f"Batch {batch_num}: Falling back to original content due to error"
-                    )
+                    search_logger.warning(f"Batch {batch_num}: Falling back to original content due to error")
             else:
                 # If not using contextual embeddings, use original contents
                 contextual_contents = batch_contents
@@ -303,10 +292,11 @@ async def add_documents_to_supabase(
                                 progress,  # Use captured batch progress
                                 message,
                                 current_batch=batch,
-                                event="rate_limit_wait"
+                                event="rate_limit_wait",
                             )
                         except Exception as e:
                             search_logger.warning(f"Progress callback failed during rate limiting: {e}")
+
                 return embedding_progress_wrapper
 
             wrapper_func = make_embedding_progress_wrapper(current_progress, batch_num)
@@ -327,9 +317,7 @@ async def add_documents_to_supabase(
 
             # Pass progress callback for rate limiting updates
             result = await create_embeddings_batch(
-                contextual_contents,
-                provider=provider,
-                progress_callback=wrapper_func if progress_callback else None
+                contextual_contents, provider=provider, progress_callback=wrapper_func if progress_callback else None
             )
 
             if debug_settings.debug_ingestion:
@@ -381,14 +369,13 @@ async def add_documents_to_supabase(
                     llm_chat_model = "gpt-4o-mini"  # Default fallback
 
             if not batch_embeddings:
-                search_logger.warning(
-                    f"Skipping batch {batch_num} - no successful embeddings created"
-                )
+                search_logger.warning(f"Skipping batch {batch_num} - no successful embeddings created")
                 completed_batches += 1
                 continue
 
             # Prepare batch data - only for successful embeddings
             from collections import defaultdict, deque
+
             batch_data = []
 
             # Build positions map to handle duplicate texts correctly
@@ -403,7 +390,9 @@ async def add_documents_to_supabase(
                 if positions_by_text[text]:
                     j = positions_by_text[text].popleft()  # Original index for this occurrence
                 else:
-                    search_logger.warning(f"Could not map embedding back to original text (no remaining index for text: {text[:50]}...)")
+                    search_logger.warning(
+                        f"Could not map embedding back to original text (no remaining index for text: {text[:50]}...)"
+                    )
                     continue
                 # Require a valid source_id to maintain referential integrity
                 source_id = batch_metadatas[j].get("source_id")
@@ -465,7 +454,7 @@ async def add_documents_to_supabase(
                                 99,
                                 "Storage cancelled during batch insert",
                                 current_batch=batch_num,
-                                total_batches=total_batches
+                                total_batches=total_batches,
                             )
                         raise
 
@@ -522,9 +511,7 @@ async def add_documents_to_supabase(
 
                         # Check for recommended metadata fields (warn but don't fail)
                         sample_metadata = batch_data[0].get("metadata", {}) if batch_data else {}
-                        missing_recommended = [
-                            f for f in RECOMMENDED_METADATA_FIELDS if f not in sample_metadata
-                        ]
+                        missing_recommended = [f for f in RECOMMENDED_METADATA_FIELDS if f not in sample_metadata]
                         if missing_recommended:
                             search_logger.info(
                                 f"DB_WRITE_METADATA_RECOMMENDATION | missing_recommended={missing_recommended} | "
@@ -578,10 +565,10 @@ async def add_documents_to_supabase(
                         metadata_fields = list(sample_record.get("metadata", {}).keys())
 
                         # Determine which embedding field is used
-                        embedding_field_used = next(
-                            (f for f in EMBEDDING_FIELDS if sample_record.get(f)), "NONE"
+                        embedding_field_used = next((f for f in EMBEDDING_FIELDS if sample_record.get(f)), "NONE")
+                        embedding_dim = (
+                            len(sample_record.get(embedding_field_used, [])) if embedding_field_used != "NONE" else 0
                         )
-                        embedding_dim = len(sample_record.get(embedding_field_used, [])) if embedding_field_used != "NONE" else 0
 
                         search_logger.info(
                             f"DB_WRITE_SCHEMA_CHECK | required_fields={REQUIRED_FIELDS} | "
@@ -611,9 +598,7 @@ async def add_documents_to_supabase(
                     # Calculate progress within document storage stage (0-100% of this stage only)
                     new_progress = int((completed_batches / total_batches) * 100)
 
-                    complete_msg = (
-                        f"Completed batch {batch_num}/{total_batches} ({len(batch_data)} chunks)"
-                    )
+                    complete_msg = f"Completed batch {batch_num}/{total_batches} ({len(batch_data)} chunks)"
 
                     # Simple batch completion info
                     batch_info = {
@@ -633,15 +618,11 @@ async def add_documents_to_supabase(
 
                 except Exception as e:
                     if retry < max_retries - 1:
-                        search_logger.warning(
-                            f"Error inserting batch (attempt {retry + 1}/{max_retries}): {e}"
-                        )
+                        search_logger.warning(f"Error inserting batch (attempt {retry + 1}/{max_retries}): {e}")
                         await asyncio.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
                     else:
-                        search_logger.error(
-                            f"Failed to insert batch after {max_retries} attempts: {e}"
-                        )
+                        search_logger.error(f"Failed to insert batch after {max_retries} attempts: {e}")
                         # Try individual inserts as last resort
                         successful_inserts = 0
                         for record in batch_data:
@@ -656,7 +637,7 @@ async def add_documents_to_supabase(
                                             99,
                                             "Storage cancelled during individual insert",
                                             current_batch=batch_num,
-                                            total_batches=total_batches
+                                            total_batches=total_batches,
                                         )
                                     raise
 
@@ -665,13 +646,9 @@ async def add_documents_to_supabase(
                                 successful_inserts += 1
                                 total_chunks_stored += 1
                             except Exception as individual_error:
-                                search_logger.error(
-                                    f"Failed individual insert for {record['url']}: {individual_error}"
-                                )
+                                search_logger.error(f"Failed individual insert for {record['url']}: {individual_error}")
 
-                        search_logger.info(
-                            f"Individual inserts: {successful_inserts}/{len(batch_data)} successful"
-                        )
+                        search_logger.info(f"Individual inserts: {successful_inserts}/{len(batch_data)} successful")
 
             # Minimal delay between batches to prevent overwhelming
             if i + batch_size < len(contents):
@@ -719,11 +696,22 @@ async def add_documents_to_supabase(
 
                 # Find a rare/distinctive word (8+ characters, alphabetic, not common)
                 import re
-                words = re.findall(r'\b[A-Za-z]{8,}\b', test_content)
+
+                words = re.findall(r"\b[A-Za-z]{8,}\b", test_content)
                 # Filter out common words
                 common_words = {
-                    "document", "function", "example", "information", "description", "implementation",
-                    "parameter", "available", "application", "configuration", "installation", "development"
+                    "document",
+                    "function",
+                    "example",
+                    "information",
+                    "description",
+                    "implementation",
+                    "parameter",
+                    "available",
+                    "application",
+                    "configuration",
+                    "installation",
+                    "development",
                 }
                 distinctive_words = [w for w in words if w.lower() not in common_words]
 
@@ -740,14 +728,13 @@ async def add_documents_to_supabase(
 
                     # Perform RAG search using the service
                     from ..search.rag_service import RAGService
+
                     rag_service = RAGService(client)
 
                     # Perform RAG query (source defaults to None - searches all sources)
                     # Type hint on perform_rag_query should be str | None but is str - safe to ignore
                     success, result = await rag_service.perform_rag_query(  # type: ignore[arg-type]
-                        query=test_word,
-                        match_count=5,
-                        return_mode="chunks"
+                        query=test_word, match_count=5, return_mode="chunks"
                     )
 
                     if success:
@@ -764,7 +751,7 @@ async def add_documents_to_supabase(
                                     "result_index": idx,
                                     "similarity_score": chunk.get("similarity_score", 0),
                                     "chunk_id": chunk.get("id"),
-                                    "content_preview": chunk_content[:100]
+                                    "content_preview": chunk_content[:100],
                                 }
                                 break
 

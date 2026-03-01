@@ -21,6 +21,19 @@ export interface KnowledgeItemMetadata {
   original_url?: string;
   document_count?: number; // Number of documents in this knowledge item
   code_examples_count?: number; // Number of code examples found
+  crawl_provider?: string; // Crawl provider used (tavily, crawl4ai)
+  provider_metadata?: {
+    pages_crawled?: number;
+    total_credits_used?: number;
+    fallback_used?: boolean;
+    fallback_reason?: string;
+  };
+}
+
+export interface VectorizerSettings {
+  use_contextual?: boolean;
+  use_hybrid?: boolean;
+  chunk_size?: number;
 }
 
 export interface KnowledgeItem {
@@ -33,6 +46,15 @@ export interface KnowledgeItem {
   status: "active" | "processing" | "error" | "completed";
   document_count: number;
   code_examples_count: number;
+  // Provenance tracking fields
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  embedding_provider?: string;
+  vectorizer_settings?: VectorizerSettings;
+  summarization_model?: string;
+  last_crawled_at?: string;
+  last_vectorized_at?: string;
+  needs_revectorization?: boolean;
   metadata: KnowledgeItemMetadata;
   created_at: string;
   updated_at: string;
@@ -140,6 +162,7 @@ export interface CrawlRequest {
   update_frequency?: number;
   max_depth?: number;
   extract_code_examples?: boolean;
+  crawl_provider?: "tavily" | "crawl4ai" | null; // Optional provider override
 }
 
 export interface UploadMetadata {
@@ -195,6 +218,14 @@ export interface KnowledgeSource {
   knowledge_type: "technical" | "business";
   status: "active" | "processing" | "error";
   document_count: number;
+  // Provenance tracking fields
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  embedding_provider?: string;
+  vectorizer_settings?: VectorizerSettings;
+  summarization_model?: string;
+  last_crawled_at?: string;
+  last_vectorized_at?: string;
   created_at: string;
   updated_at: string;
 }

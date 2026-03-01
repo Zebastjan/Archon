@@ -6,7 +6,7 @@
 
 import { format } from "date-fns";
 import { motion } from "framer-motion";
-import { Clock, Code, ExternalLink, File, FileText, Globe } from "lucide-react";
+import { ChevronRight, Clock, Code, ExternalLink, File, FileText, Globe, Settings2, Zap, Bot } from "lucide-react";
 import { useState } from "react";
 import { isOptimistic } from "@/features/shared/utils/optimistic";
 import { KnowledgeCardProgress } from "../../progress/components/KnowledgeCardProgress";
@@ -16,7 +16,7 @@ import { DataCard, DataCardContent, DataCardFooter, DataCardHeader } from "../..
 import { OptimisticIndicator } from "../../ui/primitives/OptimisticIndicator";
 import { cn } from "../../ui/primitives/styles";
 import { SimpleTooltip } from "../../ui/primitives/tooltip";
-import { useDeleteKnowledgeItem, useRefreshKnowledgeItem } from "../hooks";
+import { useDeleteKnowledgeItem, useRefreshKnowledgeItem, useRevectorizeKnowledgeItem, useResummarizeKnowledgeItem } from "../hooks";
 import type { KnowledgeItem } from "../types";
 import { extractDomain } from "../utils/knowledge-utils";
 import { KnowledgeCardActions } from "./KnowledgeCardActions";
@@ -44,8 +44,11 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
   onRefreshStarted,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [showProvenance, setShowProvenance] = useState(false);
   const deleteMutation = useDeleteKnowledgeItem();
   const refreshMutation = useRefreshKnowledgeItem();
+  const revectorizeMutation = useRevectorizeKnowledgeItem();
+  const resummarizeMutation = useResummarizeKnowledgeItem();
 
   // Check if item is optimistic
   const optimistic = isOptimistic(item);
@@ -63,6 +66,16 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
   const codeExamplesCount = item.code_examples_count || item.metadata?.code_examples_count || 0;
   const documentCount = item.document_count || item.metadata?.document_count || 0;
 
+  // Provider information
+  const crawlProvider = item.metadata?.crawl_provider;
+  const providerMetadata = item.metadata?.provider_metadata;
+  const creditsUsed = providerMetadata?.total_credits_used;
+  const fallbackUsed = providerMetadata?.fallback_used;
+
+  // Provenance fields
+  const hasProvenance = !!(item.embedding_model || item.embedding_provider || item.summarization_model);
+  const needsRevectorization = item.needs_revectorization === true;
+
   const handleDelete = async () => {
     await deleteMutation.mutateAsync(item.source_id);
     onDeleteSuccess();
@@ -75,6 +88,22 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
     const response = await refreshMutation.mutateAsync(item.source_id);
 
     // Notify parent about the new refresh operation
+    if (response?.progressId && onRefreshStarted) {
+      onRefreshStarted(response.progressId);
+    }
+  };
+
+  const handleRevectorize = async () => {
+    if (revectorizeMutation.isPending) return;
+    const response = await revectorizeMutation.mutateAsync(item.source_id);
+    if (response?.progressId && onRefreshStarted) {
+      onRefreshStarted(response.progressId);
+    }
+  };
+
+  const handleResummarize = async () => {
+    if (resummarizeMutation.isPending) return;
+    const response = await resummarizeMutation.mutateAsync(item.source_id);
     if (response?.progressId && onRefreshStarted) {
       onRefreshStarted(response.progressId);
     }
@@ -164,9 +193,12 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                 itemTitle={item.title}
                 isUrl={isUrl}
                 hasCodeExamples={codeExamplesCount > 0}
+                hasDocuments={documentCount > 0}
                 onViewDocuments={onViewDocument}
                 onViewCodeExamples={codeExamplesCount > 0 ? onViewCodeExamples : undefined}
                 onRefresh={isUrl ? handleRefresh : undefined}
+                onRevectorize={handleRevectorize}
+                onResummarize={handleResummarize}
                 onDelete={handleDelete}
                 onExport={onExport}
               />
@@ -285,8 +317,103 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                   />
                 </div>
               </SimpleTooltip>
+
+              {/* Provider badge */}
+              {crawlProvider && (
+                <SimpleTooltip
+                  content={
+                    crawlProvider === "tavily"
+                      ? `Crawled with Tavily${creditsUsed ? ` (${creditsUsed} credits)` : ""}${fallbackUsed ? " • Fallback used" : ""}`
+                      : `Crawled with ${crawlProvider === "crawl4ai" ? "Crawl4AI" : crawlProvider}${fallbackUsed ? " • Fallback used" : ""}`
+                  }
+                >
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/50">
+                    {crawlProvider === "tavily" ? (
+                      <Zap className="w-3 h-3 text-cyan-500" />
+                    ) : (
+                      <Bot className="w-3 h-3 text-blue-500" />
+                    )}
+                    <span className="text-xs text-gray-600 dark:text-gray-400 font-medium">
+                      {crawlProvider === "tavily" ? "Tavily" : "Crawl4AI"}
+                    </span>
+                    {fallbackUsed && <span className="text-xs text-orange-500">!</span>}
+                  </div>
+                </SimpleTooltip>
+              )}
             </div>
           </div>
+
+          {/* Needs Re-vectorization Indicator */}
+          {needsRevectorization && (
+            <div className="mt-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+                <Settings2 className="w-3 h-3" />
+                Needs re-vectorization
+              </span>
+            </div>
+          )}
+
+          {/* Provenance / Processing Details */}
+          {hasProvenance && (
+            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowProvenance(!showProvenance);
+                }}
+                className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-cyan-500 dark:hover:text-cyan-400 transition-colors"
+              >
+                <ChevronRight
+                  className={cn("w-3 h-3 transition-transform", showProvenance && "rotate-90")}
+                />
+                <Settings2 className="w-3 h-3" />
+                Processing Details
+              </button>
+
+              {showProvenance && (
+                <div className="mt-2 pl-4 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+                  {item.embedding_provider && item.embedding_model && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400">Embeddings:</span>
+                      <span>
+                        {item.embedding_provider}/{item.embedding_model}
+                        {item.embedding_dimensions && ` (${item.embedding_dimensions}D)`}
+                      </span>
+                    </div>
+                  )}
+                  {item.summarization_model && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400">Summarization:</span>
+                      <span>{item.summarization_model}</span>
+                    </div>
+                  )}
+                  {item.vectorizer_settings && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400">Vectorizer:</span>
+                      <span>
+                        {item.vectorizer_settings.chunk_size && `chunk=${item.vectorizer_settings.chunk_size}`}
+                        {item.vectorizer_settings.use_contextual && " contextual"}
+                        {item.vectorizer_settings.use_hybrid && " hybrid"}
+                      </span>
+                    </div>
+                  )}
+                  {item.last_crawled_at && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400">Last crawled:</span>
+                      <span>{format(new Date(item.last_crawled_at), "M/d/yyyy h:mm a")}</span>
+                    </div>
+                  )}
+                  {item.last_vectorized_at && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400">Last vectorized:</span>
+                      <span>{format(new Date(item.last_vectorized_at), "M/d/yyyy h:mm a")}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </DataCardFooter>
       </DataCard>
     </motion.div>
