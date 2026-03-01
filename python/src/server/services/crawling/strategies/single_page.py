@@ -11,6 +11,7 @@ from typing import Any
 from crawl4ai import CacheMode, CrawlerRunConfig
 
 from ....config.logfire_config import get_logger
+from ...credential_service import credential_service
 
 logger = get_logger(__name__)
 
@@ -94,7 +95,14 @@ class SinglePageCrawlStrategy:
                 # Check if this is a documentation site that needs special handling
                 is_doc_site = is_documentation_site_func(url)
 
+                # Load settings for wait strategy
+                try:
+                    settings = await credential_service.get_credentials_by_category("rag_strategy")
+                except Exception:
+                    settings = {}
+
                 # Enhanced configuration for documentation sites
+                wait_selector = None  # Initialize for debug logging
                 if is_doc_site:
                     wait_selector = self._get_wait_selector_for_docs(url)
                     logger.info(f"Detected documentation site, using wait selector: {wait_selector}")
@@ -105,8 +113,7 @@ class SinglePageCrawlStrategy:
                         markdown_generator=self.markdown_generator,
                         # Wait for documentation content to load
                         wait_for=wait_selector,
-                        # Use domcontentloaded for problematic sites
-                        wait_until='domcontentloaded',  # Always use domcontentloaded for speed
+                        wait_until=settings.get("CRAWL_WAIT_STRATEGY_DOCS", "networkidle"),
                         # Increased timeout for JavaScript rendering
                         page_timeout=30000,  # 30 seconds
                         # Give JavaScript time to render
@@ -134,8 +141,23 @@ class SinglePageCrawlStrategy:
                         scan_full_page=True  # Trigger lazy loading
                     )
 
-                logger.info(f"Crawling {url} (attempt {attempt + 1}/{retry_count})")
-                logger.info(f"Using wait_until: {crawl_config.wait_until}, page_timeout: {crawl_config.page_timeout}")
+                # Debug ingestion logging
+                from ....config.debug_ingestion import get_debug_settings
+                debug_settings = get_debug_settings()
+
+                if debug_settings.debug_ingestion:
+                    logger.info(
+                        f"CRAWL_FETCH_START | url={url} | attempt={attempt + 1}/{retry_count} | "
+                        f"is_doc_site={is_doc_site} | cache_mode={cache_mode}"
+                    )
+                    logger.info(
+                        f"CRAWL_FETCH_CONFIG | wait_selector={wait_selector if is_doc_site else 'N/A'} | "
+                        f"wait_until={crawl_config.wait_until} | page_timeout={crawl_config.page_timeout} | "
+                        f"delay_before_return={crawl_config.delay_before_return_html}"
+                    )
+                else:
+                    logger.info(f"Crawling {url} (attempt {attempt + 1}/{retry_count})")
+                    logger.info(f"Using wait_until: {crawl_config.wait_until}, page_timeout: {crawl_config.page_timeout}")
 
                 try:
                     result = await self.crawler.arun(url=url, config=crawl_config)
@@ -156,30 +178,30 @@ class SinglePageCrawlStrategy:
                     continue
 
                 # Validate content
-                if not result.markdown or len(result.markdown.strip()) < 50:
-                    last_error = f"Insufficient content from {url}"
+                # Debug ingestion: bypass minimum length requirement if length filtering is disabled
+                from ....config.debug_ingestion import get_debug_settings
+
+                debug_settings = get_debug_settings()
+
+                min_length = 1 if debug_settings.disable_length_filtering else 50
+                content_length = len(result.markdown.strip()) if result.markdown else 0
+
+                if not result.markdown or content_length < min_length:
+                    last_error = f"Insufficient content from {url} (length: {content_length}, min: {min_length})"
                     logger.warning(f"Crawl attempt {attempt + 1}: {last_error}")
 
                     if attempt < retry_count - 1:
                         await asyncio.sleep(2 ** attempt)
                     continue
+                elif debug_settings.disable_length_filtering and content_length < 50:
+                    logger.info(
+                        f"FILTER_BYPASSED | filter_type=min_length | url={url} | "
+                        f"content_length={content_length} | normal_min=50 | debug_min=1 | "
+                        f"reason=DEBUG_INGESTION disabled length filtering"
+                    )
 
                 # Success! Return both markdown AND HTML
-                # Debug logging to see what we got
-                markdown_sample = result.markdown[:1000] if result.markdown else "NO MARKDOWN"
-                has_triple_backticks = '```' in result.markdown if result.markdown else False
-                backtick_count = result.markdown.count('```') if result.markdown else 0
-
-                logger.info(f"Crawl result for {url} | has_markdown={bool(result.markdown)} | markdown_length={len(result.markdown) if result.markdown else 0} | has_triple_backticks={has_triple_backticks} | backtick_count={backtick_count}")
-
-                # Log markdown info for debugging if needed
-                if backtick_count > 0:
-                    logger.info(f"Markdown has {backtick_count} code blocks for {url}")
-
-                if 'getting-started' in url:
-                    logger.info(f"Markdown sample for getting-started: {markdown_sample}")
-
-                # Extract title from HTML <title> tag
+                # Extract title from HTML <title> tag first (needed for logging)
                 title = "Untitled"
                 if result.html:
                     import re
@@ -190,6 +212,33 @@ class SinglePageCrawlStrategy:
                         extracted_title = extracted_title.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"')
                         if extracted_title:
                             title = extracted_title
+
+                # Debug logging to see what we got
+                markdown_sample = result.markdown[:1000] if result.markdown else "NO MARKDOWN"
+                has_triple_backticks = '```' in result.markdown if result.markdown else False
+                backtick_count = result.markdown.count('```') if result.markdown else 0
+
+                # Enhanced debug logging
+                from ....config.debug_ingestion import get_debug_settings
+                debug_settings = get_debug_settings()
+
+                if debug_settings.debug_ingestion:
+                    logger.info(
+                        f"CRAWL_FETCH_SUCCESS | url={url} | http_status=200 | "
+                        f"content_length={len(result.markdown) if result.markdown else 0} | "
+                        f"has_html={bool(result.html)} | html_length={len(result.html) if result.html else 0} | "
+                        f"title={title} | has_code_blocks={backtick_count > 0} | code_block_count={backtick_count}"
+                    )
+                    logger.info(f"CRAWL_FETCH_CONTENT_PREVIEW | url={url} | markdown_preview={markdown_sample[:500]}")
+                else:
+                    logger.info(f"Crawl result for {url} | has_markdown={bool(result.markdown)} | markdown_length={len(result.markdown) if result.markdown else 0} | has_triple_backticks={has_triple_backticks} | backtick_count={backtick_count}")
+
+                    # Log markdown info for debugging if needed
+                    if backtick_count > 0:
+                        logger.info(f"Markdown has {backtick_count} code blocks for {url}")
+
+                    if 'getting-started' in url:
+                        logger.info(f"Markdown sample for getting-started: {markdown_sample}")
 
                 return {
                     "success": True,

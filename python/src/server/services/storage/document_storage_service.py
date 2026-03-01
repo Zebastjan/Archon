@@ -311,12 +311,37 @@ async def add_documents_to_supabase(
 
             wrapper_func = make_embedding_progress_wrapper(current_progress, batch_num)
 
+            # Debug ingestion logging for embeddings
+            from ...config.debug_ingestion import get_debug_settings
+
+            debug_settings = get_debug_settings()
+
+            if debug_settings.debug_ingestion:
+                search_logger.info(
+                    f"EMBEDDING_START | batch_num={batch_num}/{total_batches} | "
+                    f"chunk_count={len(contextual_contents)} | provider={provider or 'default'}"
+                )
+                # Log preview of texts being embedded
+                text_previews = [t[:50] for t in contextual_contents[:2]]
+                search_logger.info(f"EMBEDDING_BATCH | texts_preview={text_previews}")
+
             # Pass progress callback for rate limiting updates
             result = await create_embeddings_batch(
                 contextual_contents,
                 provider=provider,
                 progress_callback=wrapper_func if progress_callback else None
             )
+
+            if debug_settings.debug_ingestion:
+                # Check embedding dimensions and quality
+                if result.embeddings:
+                    first_embedding = result.embeddings[0]
+                    embedding_dim = len(first_embedding)
+                    has_zeros = all(v == 0 for v in first_embedding)
+                    search_logger.info(
+                        f"EMBEDDING_RESULT | batch_num={batch_num} | embeddings_count={len(result.embeddings)} | "
+                        f"dimensions={embedding_dim} | has_zero_vector={has_zeros}"
+                    )
 
             # Log any failures
             if result.has_failures:
@@ -328,14 +353,20 @@ async def add_documents_to_supabase(
             # Use only successful embeddings
             batch_embeddings = result.embeddings
             successful_texts = result.texts_processed
-            
+
+            if debug_settings.debug_ingestion:
+                search_logger.info(
+                    f"EMBEDDING_COMPLETE | batch_num={batch_num} | total_embeddings={len(batch_embeddings)} | "
+                    f"failed={result.failure_count}"
+                )
+
             # Get model information for tracking
-            from ..llm_provider_service import get_embedding_model
             from ..credential_service import credential_service
-            
+            from ..llm_provider_service import get_embedding_model
+
             # Get embedding model name
             embedding_model_name = await get_embedding_model(provider=provider)
-            
+
             # Get LLM chat model (used for contextual embeddings if enabled)
             llm_chat_model = None
             if use_contextual_embeddings:
@@ -386,7 +417,7 @@ async def add_documents_to_supabase(
                 # Determine the correct embedding column based on dimension
                 embedding_dim = len(embedding) if isinstance(embedding, list) else len(embedding.tolist())
                 embedding_column = None
-                
+
                 if embedding_dim == 768:
                     embedding_column = "embedding_768"
                 elif embedding_dim == 1024:
@@ -399,7 +430,7 @@ async def add_documents_to_supabase(
                     # Default to closest supported dimension
                     search_logger.warning(f"Unsupported embedding dimension {embedding_dim}, using embedding_1536")
                     embedding_column = "embedding_1536"
-                
+
                 # Get page_id for this URL if available
                 page_id = url_to_page_id.get(batch_urls[j]) if url_to_page_id else None
 
@@ -439,8 +470,141 @@ async def add_documents_to_supabase(
                         raise
 
                 try:
-                    client.table("archon_crawled_pages").insert(batch_data).execute()
+                    # Debug ingestion logging
+                    from ...config.debug_ingestion import get_debug_settings
+
+                    debug_settings = get_debug_settings()
+
+                    if debug_settings.debug_ingestion:
+                        # Schema validation before DB write
+                        REQUIRED_FIELDS = ["url", "chunk_number", "content", "metadata", "source_id"]
+                        REQUIRED_METADATA_FIELDS = ["source_type", "knowledge_type"]
+                        RECOMMENDED_METADATA_FIELDS = ["title", "headers"]  # Used by UI but not required
+                        EMBEDDING_FIELDS = ["embedding_1536", "embedding_3072", "embedding_768"]
+
+                        # Validate all records in batch
+                        schema_issues = []
+                        for idx, record in enumerate(batch_data):
+                            # Check required fields
+                            missing_fields = [f for f in REQUIRED_FIELDS if not record.get(f)]
+                            if missing_fields:
+                                schema_issues.append(
+                                    {
+                                        "record_index": idx,
+                                        "url": record.get("url", "MISSING_URL"),
+                                        "missing_fields": missing_fields,
+                                    }
+                                )
+
+                            # Check at least one embedding field exists
+                            has_embedding = any(record.get(emb_field) for emb_field in EMBEDDING_FIELDS)
+                            if not has_embedding:
+                                schema_issues.append(
+                                    {
+                                        "record_index": idx,
+                                        "url": record.get("url", "MISSING_URL"),
+                                        "missing_fields": ["embedding (no embedding_* field found)"],
+                                    }
+                                )
+
+                            # Check metadata fields
+                            metadata = record.get("metadata", {})
+                            if metadata:
+                                missing_meta = [f for f in REQUIRED_METADATA_FIELDS if f not in metadata]
+                                if missing_meta:
+                                    schema_issues.append(
+                                        {
+                                            "record_index": idx,
+                                            "url": record.get("url", "MISSING_URL"),
+                                            "missing_metadata_fields": missing_meta,
+                                        }
+                                    )
+
+                        # Check for recommended metadata fields (warn but don't fail)
+                        sample_metadata = batch_data[0].get("metadata", {}) if batch_data else {}
+                        missing_recommended = [
+                            f for f in RECOMMENDED_METADATA_FIELDS if f not in sample_metadata
+                        ]
+                        if missing_recommended:
+                            search_logger.info(
+                                f"DB_WRITE_METADATA_RECOMMENDATION | missing_recommended={missing_recommended} | "
+                                f"note=UI may use these fields for display"
+                            )
+
+                        # Additional data quality checks
+                        quality_issues = []
+                        for idx, record in enumerate(batch_data[:10]):  # Check first 10 records
+                            # Check for empty content
+                            content = record.get("content", "")
+                            if not content or len(content.strip()) < 10:
+                                quality_issues.append(
+                                    {
+                                        "record_index": idx,
+                                        "issue": "very_short_content",
+                                        "content_length": len(content),
+                                    }
+                                )
+
+                            # Check for zero embeddings
+                            for emb_field in EMBEDDING_FIELDS:
+                                if record.get(emb_field):
+                                    embedding = record[emb_field]
+                                    if isinstance(embedding, list) and all(v == 0 for v in embedding):
+                                        quality_issues.append(
+                                            {"record_index": idx, "issue": "zero_embedding", "field": emb_field}
+                                        )
+
+                        if quality_issues:
+                            search_logger.warning(
+                                f"DB_WRITE_QUALITY_ISSUES | batch_num={batch_num} | issues_count={len(quality_issues)} | "
+                                f"sample_issues={quality_issues[:3]}"
+                            )
+
+                        # Log schema validation results
+                        search_logger.info(
+                            f"DB_WRITE_START | table=archon_crawled_pages | batch_num={batch_num}/{total_batches} | "
+                            f"row_count={len(batch_data)}"
+                        )
+
+                        if schema_issues:
+                            search_logger.warning(
+                                f"DB_WRITE_SCHEMA_ISSUES | batch_num={batch_num} | issues_count={len(schema_issues)} | "
+                                f"sample_issues={schema_issues[:3]}"
+                            )
+
+                        # Log sample record structure
+                        sample_record = batch_data[0] if batch_data else {}
+                        all_fields = list(sample_record.keys())
+                        metadata_fields = list(sample_record.get("metadata", {}).keys())
+
+                        # Determine which embedding field is used
+                        embedding_field_used = next(
+                            (f for f in EMBEDDING_FIELDS if sample_record.get(f)), "NONE"
+                        )
+                        embedding_dim = len(sample_record.get(embedding_field_used, [])) if embedding_field_used != "NONE" else 0
+
+                        search_logger.info(
+                            f"DB_WRITE_SCHEMA_CHECK | required_fields={REQUIRED_FIELDS} | "
+                            f"all_fields_present={all_fields} | embedding_field={embedding_field_used} | "
+                            f"embedding_dim={embedding_dim}"
+                        )
+
+                        search_logger.info(
+                            f"DB_WRITE_SAMPLE_RECORD | url={sample_record.get('url')} | "
+                            f"content_length={len(sample_record.get('content', ''))} | "
+                            f"metadata_fields={metadata_fields} | "
+                            f"source_id={sample_record.get('source_id')}"
+                        )
+
+                    result = client.table("archon_crawled_pages").insert(batch_data).execute()
                     total_chunks_stored += len(batch_data)
+
+                    if debug_settings.debug_ingestion:
+                        # Log successful insert
+                        search_logger.info(
+                            f"DB_WRITE_BATCH_SUCCESS | batch_num={batch_num}/{total_batches} | "
+                            f"rows_inserted={len(batch_data)} | total_stored={total_chunks_stored}"
+                        )
 
                     # Increment completed batches and report simple progress
                     completed_batches += 1
@@ -538,5 +702,100 @@ async def add_documents_to_supabase(
         span.set_attribute("success", True)
         span.set_attribute("total_processed", len(contents))
         span.set_attribute("total_stored", total_chunks_stored)
+
+        # Task #5: UI Literal Text Search Verification
+        # Verify end-to-end pipeline by searching for a distinctive word from stored content
+        from ...config.debug_ingestion import get_debug_settings
+
+        debug_settings = get_debug_settings()
+
+        if debug_settings.debug_ingestion and total_chunks_stored > 0:
+            try:
+                search_logger.info("LITERAL_TEXT_SEARCH_VERIFICATION_START | Verifying documents are searchable via UI")
+
+                # Extract a distinctive word from the first chunk's content
+                test_content = contents[0] if contents else ""
+                test_url = urls[0] if urls else "unknown"
+
+                # Find a rare/distinctive word (8+ characters, alphabetic, not common)
+                import re
+                words = re.findall(r'\b[A-Za-z]{8,}\b', test_content)
+                # Filter out common words
+                common_words = {
+                    "document", "function", "example", "information", "description", "implementation",
+                    "parameter", "available", "application", "configuration", "installation", "development"
+                }
+                distinctive_words = [w for w in words if w.lower() not in common_words]
+
+                if distinctive_words:
+                    # Use the first distinctive word
+                    test_word = distinctive_words[0]
+                    search_logger.info(
+                        f"LITERAL_TEXT_SEARCH_VERIFICATION_WORD | test_word={test_word} | "
+                        f"source_url={test_url} | word_length={len(test_word)}"
+                    )
+
+                    # Wait briefly to ensure DB write is committed
+                    await asyncio.sleep(0.5)
+
+                    # Perform RAG search using the service
+                    from ..search.rag_service import RAGService
+                    rag_service = RAGService(client)
+
+                    # Perform RAG query (source defaults to None - searches all sources)
+                    # Type hint on perform_rag_query should be str | None but is str - safe to ignore
+                    success, result = await rag_service.perform_rag_query(  # type: ignore[arg-type]
+                        query=test_word,
+                        match_count=5,
+                        return_mode="chunks"
+                    )
+
+                    if success:
+                        results = result.get("results", [])
+                        found_in_results = False
+                        match_details = None
+
+                        # Check if the test word appears in any of the returned chunks
+                        for idx, chunk in enumerate(results):
+                            chunk_content = chunk.get("content", "")
+                            if test_word.lower() in chunk_content.lower():
+                                found_in_results = True
+                                match_details = {
+                                    "result_index": idx,
+                                    "similarity_score": chunk.get("similarity_score", 0),
+                                    "chunk_id": chunk.get("id"),
+                                    "content_preview": chunk_content[:100]
+                                }
+                                break
+
+                        if found_in_results:
+                            search_logger.info(
+                                f"LITERAL_TEXT_SEARCH_VERIFICATION_PASS | test_word={test_word} | "
+                                f"found_in_results=true | results_count={len(results)} | "
+                                f"match_details={match_details}"
+                            )
+                        else:
+                            search_logger.warning(
+                                f"LITERAL_TEXT_SEARCH_VERIFICATION_FAIL | test_word={test_word} | "
+                                f"found_in_results=false | results_count={len(results)} | "
+                                f"reason=word_not_in_returned_chunks"
+                            )
+                    else:
+                        error_msg = result.get("error", "Unknown error")
+                        search_logger.warning(
+                            f"LITERAL_TEXT_SEARCH_VERIFICATION_FAIL | test_word={test_word} | "
+                            f"search_failed=true | error={error_msg}"
+                        )
+                else:
+                    search_logger.info(
+                        "LITERAL_TEXT_SEARCH_VERIFICATION_SKIP | reason=no_distinctive_words_found | "
+                        f"content_preview={test_content[:100]}"
+                    )
+
+            except Exception as e:
+                search_logger.warning(
+                    f"LITERAL_TEXT_SEARCH_VERIFICATION_ERROR | error={str(e)} | "
+                    "verification_failed_but_storage_succeeded"
+                )
 
         return {"chunks_stored": total_chunks_stored}

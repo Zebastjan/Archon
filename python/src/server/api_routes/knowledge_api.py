@@ -16,7 +16,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # Basic validation - simplified inline version
 
@@ -152,6 +152,16 @@ class KnowledgeItemRequest(BaseModel):
     max_depth: int = 2  # Maximum crawl depth (1-5)
     extract_code_examples: bool = True  # Whether to extract code examples
 
+    @field_validator("max_depth")
+    @classmethod
+    def validate_max_depth(cls, v: int) -> int:
+        """Validate max_depth is in supported range [1, 5]"""
+        if not isinstance(v, int):
+            raise ValueError(f"max_depth must be an integer, got {type(v).__name__}")
+        if v < 1 or v > 5:
+            raise ValueError(f"max_depth must be between 1 and 5, got {v}")
+        return v
+
     class Config:
         schema_extra = {
             "example": {
@@ -171,6 +181,16 @@ class CrawlRequest(BaseModel):
     tags: list[str] = []
     update_frequency: int = 7
     max_depth: int = 2  # Maximum crawl depth (1-5)
+
+    @field_validator("max_depth")
+    @classmethod
+    def validate_max_depth(cls, v: int) -> int:
+        """Validate max_depth is in supported range [1, 5]"""
+        if not isinstance(v, int):
+            raise ValueError(f"max_depth must be an integer, got {type(v).__name__}")
+        if v < 1 or v > 5:
+            raise ValueError(f"max_depth must be between 1 and 5, got {v}")
+        return v
 
 
 class RagQueryRequest(BaseModel):

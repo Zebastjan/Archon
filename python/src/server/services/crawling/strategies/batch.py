@@ -66,7 +66,7 @@ class BatchCrawlStrategy:
             settings = await credential_service.get_credentials_by_category("rag_strategy")
 
             # Clamp batch_size to prevent zero step in range()
-            raw_batch_size = int(settings.get("CRAWL_BATCH_SIZE", "50"))
+            raw_batch_size = int(settings.get("CRAWL_BATCH_SIZE", "30"))
             batch_size = max(1, raw_batch_size)
             if batch_size != raw_batch_size:
                 logger.warning(f"Invalid CRAWL_BATCH_SIZE={raw_batch_size}, clamped to {batch_size}")
@@ -74,7 +74,7 @@ class BatchCrawlStrategy:
             if max_concurrent is None:
                 # CRAWL_MAX_CONCURRENT: Pages to crawl in parallel within this single crawl operation
                 # (Different from server-level CONCURRENT_CRAWL_LIMIT which limits total crawl operations)
-                raw_max_concurrent = int(settings.get("CRAWL_MAX_CONCURRENT", "10"))
+                raw_max_concurrent = int(settings.get("CRAWL_MAX_CONCURRENT", "5"))
                 max_concurrent = max(1, raw_max_concurrent)
                 if max_concurrent != raw_max_concurrent:
                     logger.warning(f"Invalid CRAWL_MAX_CONCURRENT={raw_max_concurrent}, clamped to {max_concurrent}")
@@ -94,9 +94,9 @@ class BatchCrawlStrategy:
             logger.error(
                 f"Failed to load crawl settings from database: {e}, using defaults", exc_info=True
             )
-            batch_size = 50
+            batch_size = 30
             if max_concurrent is None:
-                max_concurrent = 10  # Safe default to prevent memory issues
+                max_concurrent = 5  # Safe default to prevent memory issues
             memory_threshold = 80.0
             check_interval = 0.5
             settings = {}  # Empty dict for defaults
@@ -111,7 +111,7 @@ class BatchCrawlStrategy:
                 cache_mode=CacheMode.BYPASS,
                 stream=True,  # Enable streaming for faster parallel processing
                 markdown_generator=self.markdown_generator,
-                wait_until=settings.get("CRAWL_WAIT_STRATEGY", "domcontentloaded"),
+                wait_until=settings.get("CRAWL_WAIT_STRATEGY_DOCS", "networkidle"),
                 page_timeout=int(settings.get("CRAWL_PAGE_TIMEOUT", "30000")),
                 delay_before_return_html=float(settings.get("CRAWL_DELAY_BEFORE_HTML", "1.0")),
                 wait_for_images=False,  # Skip images for faster crawling

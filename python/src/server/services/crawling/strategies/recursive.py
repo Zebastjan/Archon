@@ -69,7 +69,7 @@ class RecursiveCrawlStrategy:
             settings = await credential_service.get_credentials_by_category("rag_strategy")
 
             # Clamp batch_size to prevent zero step in range()
-            raw_batch_size = int(settings.get("CRAWL_BATCH_SIZE", "50"))
+            raw_batch_size = int(settings.get("CRAWL_BATCH_SIZE", "30"))
             batch_size = max(1, raw_batch_size)
             if batch_size != raw_batch_size:
                 logger.warning(f"Invalid CRAWL_BATCH_SIZE={raw_batch_size}, clamped to {batch_size}")
@@ -77,10 +77,14 @@ class RecursiveCrawlStrategy:
             if max_concurrent is None:
                 # CRAWL_MAX_CONCURRENT: Pages to crawl in parallel within this single crawl operation
                 # (Different from server-level CONCURRENT_CRAWL_LIMIT which limits total crawl operations)
-                raw_max_concurrent = int(settings.get("CRAWL_MAX_CONCURRENT", "10"))
+                raw_max_concurrent = int(settings.get("CRAWL_MAX_CONCURRENT", "5"))
                 max_concurrent = max(1, raw_max_concurrent)
                 if max_concurrent != raw_max_concurrent:
                     logger.warning(f"Invalid CRAWL_MAX_CONCURRENT={raw_max_concurrent}, clamped to {max_concurrent}")
+
+            # Load max_pages cap setting
+            max_pages_cap = int(settings.get("CRAWL_MAX_PAGES_CAP", "200"))
+            max_pages_cap = max(1, min(max_pages_cap, 500))  # Clamp to [1, 500]
 
             # Clamp memory threshold to sane bounds for dispatcher
             raw_memory_threshold = float(settings.get("MEMORY_THRESHOLD_PERCENT", "80"))
@@ -97,11 +101,12 @@ class RecursiveCrawlStrategy:
             logger.error(
                 f"Failed to load crawl settings from database: {e}, using defaults", exc_info=True
             )
-            batch_size = 50
+            batch_size = 30
             if max_concurrent is None:
-                max_concurrent = 10  # Safe default to prevent memory issues
+                max_concurrent = 5  # Safe default to prevent memory issues
             memory_threshold = 80.0
             check_interval = 0.5
+            max_pages_cap = 200  # Default max pages cap
             settings = {}  # Empty dict for defaults
 
         # Check if start URLs include documentation sites
@@ -115,7 +120,7 @@ class RecursiveCrawlStrategy:
                 cache_mode=CacheMode.BYPASS,
                 stream=True,  # Enable streaming for faster parallel processing
                 markdown_generator=self.markdown_generator,
-                wait_until=settings.get("CRAWL_WAIT_STRATEGY", "domcontentloaded"),
+                wait_until=settings.get("CRAWL_WAIT_STRATEGY_DOCS", "networkidle"),
                 page_timeout=int(settings.get("CRAWL_PAGE_TIMEOUT", "30000")),
                 delay_before_return_html=float(settings.get("CRAWL_DELAY_BEFORE_HTML", "1.0")),
                 wait_for_images=False,  # Skip images for faster crawling
@@ -165,8 +170,20 @@ class RecursiveCrawlStrategy:
         total_processed = 0
         total_discovered = len(current_urls)  # Track total URLs discovered (normalized & de-duped)
         cancelled = False
+        max_pages_reached = False
 
         for depth in range(max_depth):
+            # Check if max_pages cap reached before processing this depth
+            if total_processed >= max_pages_cap:
+                max_pages_reached = True
+                await report_progress(
+                    100,
+                    f"Reached max_pages cap of {max_pages_cap} - stopping crawl",
+                    status="completed",
+                    total_pages=total_discovered,
+                    processed_pages=total_processed,
+                )
+                break
             # Check for cancellation at the start of each depth level
             if cancellation_check:
                 try:
@@ -276,6 +293,12 @@ class RecursiveCrawlStrategy:
                     visited.add(norm_url)
                     total_processed += 1
 
+                    # Check if max_pages cap reached after processing this page
+                    if total_processed >= max_pages_cap:
+                        max_pages_reached = True
+                        logger.info(f"Reached max_pages cap of {max_pages_cap} at depth {depth + 1}")
+                        break
+
                     if result.success and result.markdown and result.markdown.fit_markdown:
                         # Extract title from HTML <title> tag
                         title = "Untitled"
@@ -301,14 +324,46 @@ class RecursiveCrawlStrategy:
                         links = getattr(result, "links", {}) or {}
                         for link in links.get("internal", []):
                             next_url = normalize_url(link["href"])
-                            # Skip binary files and already visited URLs
+
+                            # Skip binary files
                             is_binary = self.url_handler.is_binary_file(next_url)
-                            if next_url not in visited and not is_binary:
+                            if is_binary:
+                                logger.debug(f"Skipping binary file from crawl queue: {next_url}")
+                                continue
+
+                            # Keyword filtering for docs mode (optional)
+                            # Debug ingestion: bypass keyword filtering if disabled
+                            from ....config.debug_ingestion import get_debug_settings
+
+                            debug_settings = get_debug_settings()
+
+                            if has_doc_sites and not debug_settings.disable_keyword_filtering:
+                                keyword_filters = settings.get("CRAWL_KEYWORD_FILTERS_DOCS", "")
+                                if keyword_filters:
+                                    filters = [f.strip().lower() for f in keyword_filters.split(",")]
+                                    url_lower = next_url.lower()
+
+                                    # Skip if URL contains any excluded keyword
+                                    skip_url = False
+                                    for keyword in filters:
+                                        if keyword and keyword in url_lower:
+                                            logger.debug(f"Skipping URL with keyword '{keyword}': {next_url}")
+                                            skip_url = True
+                                            break
+
+                                    if skip_url:
+                                        continue
+                            elif has_doc_sites and debug_settings.disable_keyword_filtering:
+                                logger.info(
+                                    f"FILTER_BYPASSED | filter_type=keyword | url={next_url} | "
+                                    f"reason=DEBUG_INGESTION disabled keyword filtering"
+                                )
+
+                            # Add to next level if not visited
+                            if next_url not in visited:
                                 if next_url not in next_level_urls:
                                     next_level_urls.add(next_url)
                                     total_discovered += 1  # Increment when we discover a new URL
-                            elif is_binary:
-                                logger.debug(f"Skipping binary file from crawl queue: {next_url}")
                     else:
                         logger.warning(
                             f"Failed to crawl {original_url}: {getattr(result, 'error_message', 'Unknown error')}"
@@ -317,10 +372,10 @@ class RecursiveCrawlStrategy:
                     # Skip the confusing "processed X/Y URLs" updates
                     # The "crawling URLs" message at the start of each batch is more accurate
                     i += 1
-                if cancelled:
+                if cancelled or max_pages_reached:
                     break
 
-            if cancelled:
+            if cancelled or max_pages_reached:
                 break
 
             current_urls = next_level_urls
@@ -334,6 +389,9 @@ class RecursiveCrawlStrategy:
             )
 
         if cancelled:
+            return results_all
+        if max_pages_reached:
+            # Already reported progress at 100% when cap was hit
             return results_all
         await report_progress(
             100,

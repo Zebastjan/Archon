@@ -102,12 +102,12 @@ class SiteConfig:
     def get_link_pruning_markdown_generator():
         """
         Get markdown generator for the recursive crawling strategy that cleans up pages crawled.
-        
+
         Returns:
             Configured markdown generator
         """
         prune_filter = PruningContentFilter(
-            threshold=0.2,
+            threshold=0.3,
             threshold_type="fixed"
         )
 

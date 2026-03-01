@@ -171,17 +171,41 @@ def extract_text_from_document(file_content: bytes, filename: str, content_type:
         ValueError: If the file format is not supported
         Exception: If extraction fails
     """
+    # Debug ingestion logging for format conversion
+    from ..config.debug_ingestion import get_debug_settings
+
+    debug_settings = get_debug_settings()
+
     try:
         # PDF files
         if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
-            return extract_text_from_pdf(file_content)
+            if debug_settings.debug_ingestion:
+                logger.info(
+                    f"FORMAT_CONVERSION | filename={filename} | from=PDF | to=text | "
+                    f"input_size={len(file_content)} bytes | extraction_method=pdfplumber+PyPDF2"
+                )
+            extracted = extract_text_from_pdf(file_content)
+            if debug_settings.debug_ingestion:
+                logger.info(
+                    f"FORMAT_CONVERSION_RESULT | filename={filename} | output_length={len(extracted)} | "
+                    f"has_page_markers={'--- Page' in extracted} | has_code_blocks={'```' in extracted}"
+                )
+            return extracted
 
         # Word documents
         elif content_type in [
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "application/msword",
         ] or filename.lower().endswith((".docx", ".doc")):
-            return extract_text_from_docx(file_content)
+            if debug_settings.debug_ingestion:
+                logger.info(
+                    f"FORMAT_CONVERSION | filename={filename} | from=DOCX | to=text | "
+                    f"input_size={len(file_content)} bytes"
+                )
+            extracted = extract_text_from_docx(file_content)
+            if debug_settings.debug_ingestion:
+                logger.info(f"FORMAT_CONVERSION_RESULT | filename={filename} | output_length={len(extracted)}")
+            return extracted
 
         # HTML files - clean tags and extract text
         elif content_type == "text/html" or filename.lower().endswith((".html", ".htm")):
@@ -189,7 +213,14 @@ def extract_text_from_document(file_content: bytes, filename: str, content_type:
             html_text = file_content.decode("utf-8", errors="ignore").strip()
             if not html_text:
                 raise ValueError(f"The file {filename} appears to be empty.")
-            return _clean_html_to_text(html_text)
+            if debug_settings.debug_ingestion:
+                logger.info(
+                    f"FORMAT_CONVERSION | filename={filename} | from=HTML | to=text | input_length={len(html_text)}"
+                )
+            extracted = _clean_html_to_text(html_text)
+            if debug_settings.debug_ingestion:
+                logger.info(f"FORMAT_CONVERSION_RESULT | filename={filename} | output_length={len(extracted)}")
+            return extracted
 
         # Text files (markdown, txt, etc.)
         elif content_type.startswith("text/") or filename.lower().endswith((

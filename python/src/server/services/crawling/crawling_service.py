@@ -509,6 +509,18 @@ class CrawlingService:
             # Check for cancellation before document processing
             self._check_cancellation()
 
+            # Apply MAX_CRAWL_PAGES limit if debug mode is enabled
+            from ...config.debug_ingestion import get_debug_settings
+
+            debug_settings = get_debug_settings()
+            if debug_settings.max_crawl_pages and len(crawl_results) > debug_settings.max_crawl_pages:
+                original_count = len(crawl_results)
+                crawl_results = crawl_results[: debug_settings.max_crawl_pages]
+                safe_logfire_info(
+                    f"DEBUG_CRAWL_LIMIT | max_pages={debug_settings.max_crawl_pages} | "
+                    f"original_count={original_count} | limited_to={len(crawl_results)}"
+                )
+
             # Calculate total work units for accurate progress tracking
             total_pages = len(crawl_results)
 
