@@ -12,6 +12,58 @@ A complete end-to-end debug system has been implemented for Archon's documentati
 
 ## Quick Start
 
+### Prerequisites
+
+Before running tests or enabling debug mode, ensure your environment is configured:
+
+#### 1. Supabase Database Connection
+
+The ingestion pipeline requires a Supabase database connection. Configure in your `.env` file:
+
+```bash
+# Required - Supabase connection
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-key-here
+
+# For local Supabase instance
+# SUPABASE_URL=http://localhost:8000
+# SUPABASE_SERVICE_KEY=your-local-service-key
+```
+
+**Common Setup Issues**:
+- **Connection Error**: `Name or service not known` when connecting to `host.docker.internal:8000`
+  - **Cause**: Supabase URL not configured or incorrect
+  - **Fix**: Set `SUPABASE_URL` in `.env` to your actual Supabase instance URL
+  - **Note**: The test requires a running database; it will fail without proper credentials
+
+#### 2. OpenAI API Key
+
+Required for embedding generation:
+
+```bash
+OPENAI_API_KEY=sk-your-api-key-here
+```
+
+#### 3. Playwright Browsers (for Crawl4AI)
+
+Install Chromium browser for web crawling:
+
+```bash
+cd python
+uv run playwright install chromium
+```
+
+**Error if missing**: `Executable doesn't exist at /home/user/.cache/ms-playwright/chromium-*/chrome-linux/chrome`
+
+#### 4. Python Dependencies
+
+Install all required packages:
+
+```bash
+cd python
+uv sync --group all
+```
+
 ### Enable Debug Mode
 
 ```bash
@@ -30,6 +82,8 @@ cd python
 # Test with custom URL
 ./test_golden_path.sh https://docs.python.org/3/library/asyncio.html
 ```
+
+**Note**: The test will fail if Supabase credentials are not configured. You'll see all stages fail with database connection errors.
 
 ### Check Logs
 
@@ -376,6 +430,57 @@ if debug_settings.debug_ingestion:
    - Check embeddings: `grep "EMBEDDING_RESULT" logs.txt`
    - Check DB write: `grep "DB_WRITE_BATCH_SUCCESS" logs.txt`
    - Check for zero vectors: `grep "zero_embedding" logs.txt`
+
+### Problem: Database connection errors
+
+**Symptom**:
+```
+ConnectError(gaierror(-2, 'Name or service not known'))
+Exception: Failed to create source record after 3 attempts
+```
+
+**Cause**: Supabase credentials not configured or incorrect
+
+**Debug steps**:
+1. Verify environment variables are set:
+   ```bash
+   echo $SUPABASE_URL
+   echo $SUPABASE_SERVICE_KEY
+   ```
+2. Check `.env` file exists in `python/` directory:
+   ```bash
+   ls -la python/.env
+   cat python/.env | grep SUPABASE
+   ```
+3. Verify Supabase instance is accessible:
+   ```bash
+   curl -I $SUPABASE_URL/rest/v1/
+   ```
+4. Test database connection:
+   ```bash
+   cd python
+   uv run python -c "from src.server.config.supabase import get_supabase_client; client = get_supabase_client(); print('✅ Connected')"
+   ```
+
+**Fix**:
+- For Supabase Cloud: Set `SUPABASE_URL=https://your-project.supabase.co`
+- For Local Supabase: Set `SUPABASE_URL=http://localhost:8000`
+- Ensure `SUPABASE_SERVICE_KEY` matches your instance
+
+### Problem: Playwright browser not found
+
+**Symptom**:
+```
+Executable doesn't exist at /home/user/.cache/ms-playwright/chromium-1169/chrome-linux/chrome
+```
+
+**Cause**: Chromium browser not installed for Playwright
+
+**Fix**:
+```bash
+cd python
+uv run playwright install chromium
+```
 
 ---
 

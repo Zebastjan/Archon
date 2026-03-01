@@ -16,6 +16,108 @@ An automated end-to-end test script has been created to validate the entire inge
    - Colored output for better readability
    - Handles environment setup automatically
 
+## First-Time Setup Guide
+
+If this is your first time running the test, follow these steps:
+
+### Step 1: Create Environment File
+
+```bash
+cd python
+cp .env.example .env
+```
+
+Edit `.env` and add your credentials:
+```bash
+# Required credentials
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-key-here
+OPENAI_API_KEY=sk-your-api-key-here
+```
+
+### Step 2: Install Dependencies
+
+```bash
+# Install Python packages
+uv sync --group all
+
+# Install Playwright browser
+uv run playwright install chromium
+```
+
+### Step 3: Verify Setup
+
+```bash
+# Test database connection
+uv run python -c "from src.server.config.supabase import get_supabase_client; client = get_supabase_client(); print('✅ Database connected')"
+
+# Test OpenAI API key
+uv run python -c "import openai; import os; openai.api_key = os.getenv('OPENAI_API_KEY'); print('✅ OpenAI configured')"
+```
+
+### Step 4: Run Test
+
+```bash
+./test_golden_path.sh
+```
+
+**Expected**: All 6 stages should pass ✅
+
+---
+
+## Prerequisites
+
+Before running the golden path test, ensure your environment is properly configured:
+
+### 1. Required Environment Variables
+
+Create or update `python/.env` with:
+
+```bash
+# Required - Supabase database connection
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-key-here
+
+# Required - OpenAI for embeddings
+OPENAI_API_KEY=sk-your-api-key-here
+
+# Optional - Override defaults
+DEBUG_INGESTION=true  # Auto-set by test
+MAX_CRAWL_PAGES=1     # Auto-set by test
+```
+
+### 2. Install Playwright Browsers
+
+The test uses Crawl4AI which requires Chromium:
+
+```bash
+cd python
+uv run playwright install chromium
+```
+
+### 3. Install Python Dependencies
+
+```bash
+cd python
+uv sync --group all
+```
+
+### 4. Verify Database Connection
+
+Test your Supabase connection before running the full test:
+
+```bash
+cd python
+uv run python -c "from src.server.config.supabase import get_supabase_client; client = get_supabase_client(); print('✅ Database connected')"
+```
+
+**Expected output**: `✅ Database connected`
+
+**If you see errors**:
+- `Name or service not known` → Check `SUPABASE_URL` is correct
+- `Authentication failed` → Check `SUPABASE_SERVICE_KEY` is valid
+- `Connection refused` → Ensure Supabase instance is running
+
 ## Running the Test
 
 ### Quick Start (Default URL)
@@ -27,6 +129,8 @@ An automated end-to-end test script has been created to validate the entire inge
 # Or directly with Python
 uv run python tests/test_golden_path_ingestion.py
 ```
+
+**Note**: The test requires a properly configured Supabase database. Without valid credentials, all stages will fail with connection errors.
 
 ### Custom URL
 
@@ -143,6 +247,64 @@ Failed: 0
 - **0** - All stages passed ✅
 - **1** - One or more stages failed ❌
 - **2** - Script execution error (e.g., crawler failed to initialize) 🔥
+
+## Expected Test Behavior
+
+### With Proper Configuration (All Prerequisites Met)
+
+When database credentials, API keys, and browsers are properly configured:
+
+```
+✅ All 5 pipeline stages pass
+✅ No error markers appear
+✅ Test completes in 15-30 seconds
+✅ Exit code: 0
+```
+
+**Log markers you should see**:
+- `CRAWL_FETCH_START`, `CRAWL_FETCH_SUCCESS` (Stage 1)
+- `PREPROCESS_RAWDOC`, `CHUNKING_COMPLETE` (Stage 2)
+- `EMBEDDING_START`, `EMBEDDING_RESULT` (Stage 3)
+- `DB_WRITE_START`, `DB_WRITE_BATCH_SUCCESS` (Stage 4)
+- `LITERAL_TEXT_SEARCH_VERIFICATION_PASS` (Stage 5)
+
+### Without Database Configuration (Missing Credentials)
+
+When Supabase credentials are not configured:
+
+```
+❌ All 5 pipeline stages fail
+❌ Connection errors appear in logs
+❌ No log markers found
+❌ Exit code: 1
+```
+
+**Error you'll see**:
+```
+connect_tcp.failed exception=ConnectError(gaierror(-2, 'Name or service not known'))
+Async crawl orchestration failed
+Exception: Failed to create source record after 3 attempts
+❌ FAIL: Expected 1+ occurrences of 'CRAWL_FETCH_START', found 0
+```
+
+**Fix**: Configure Supabase credentials in `.env` (see Prerequisites section)
+
+### Without Playwright Browsers
+
+When Chromium is not installed:
+
+```
+❌ Test fails during crawler initialization
+❌ Error about missing browser executable
+❌ Exit code: 2
+```
+
+**Error you'll see**:
+```
+Executable doesn't exist at /home/user/.cache/ms-playwright/chromium-1169/chrome-linux/chrome
+```
+
+**Fix**: Run `uv run playwright install chromium`
 
 ## Example Output
 
@@ -280,6 +442,58 @@ Failed: 3
 
 ## Troubleshooting
 
+### Database Connection Failures (Most Common)
+
+**Symptom**: All stages fail immediately with connection errors:
+```
+connect_tcp.failed exception=ConnectError(gaierror(-2, 'Name or service not known'))
+Exception: Failed to create source record after 3 attempts
+❌ FAIL: Expected 1+ occurrences of 'CRAWL_FETCH_START', found 0
+```
+
+**Cause**: Supabase credentials not configured or incorrect
+
+**Fix**:
+1. Verify `.env` file exists in `python/` directory:
+   ```bash
+   ls -la python/.env
+   ```
+2. Check required variables are set:
+   ```bash
+   cat python/.env | grep -E "SUPABASE_URL|SUPABASE_SERVICE_KEY|OPENAI_API_KEY"
+   ```
+3. Verify Supabase URL format:
+   - Cloud: `https://your-project.supabase.co` (NOT `http://host.docker.internal:8000`)
+   - Local: `http://localhost:8000` or your local Supabase instance URL
+4. Test connection directly:
+   ```bash
+   cd python
+   uv run python -c "from src.server.config.supabase import get_supabase_client; client = get_supabase_client(); print('✅ Connected')"
+   ```
+
+**Expected behavior**: With valid credentials, the test should show `CRAWL_FETCH_START` and proceed through all stages.
+
+### Playwright Browser Missing
+
+**Symptom**:
+```
+Executable doesn't exist at /home/user/.cache/ms-playwright/chromium-1169/chrome-linux/chrome
+```
+
+**Cause**: Chromium browser not installed
+
+**Fix**:
+```bash
+cd python
+uv run playwright install chromium
+```
+
+**Verification**:
+```bash
+# Should show installed browser path
+uv run playwright --version
+```
+
 ### Test Hangs or Takes Too Long
 
 **Symptom**: Test runs for more than 30 seconds
@@ -295,11 +509,12 @@ Failed: 3
 # Reinstall dependencies
 cd python
 uv sync --group all
+uv run playwright install chromium
 ```
 
-### All Stages Fail
+### All Stages Fail (No Connection Errors)
 
-**Symptom**: No log markers found for any stage
+**Symptom**: No log markers found for any stage, but no connection errors
 **Cause**: Debug logging not enabled or logs not being captured
 **Fix**: Verify `DEBUG_INGESTION=true` is set in environment
 
