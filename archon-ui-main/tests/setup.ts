@@ -68,6 +68,18 @@ vi.mock('lucide-react', () => ({
   Pin: () => 'Pin',
   PinOff: () => 'PinOff',
   Clipboard: () => 'Clipboard',
+  // Git integration icons
+  GitBranch: () => 'GitBranch',
+  GitCommit: () => 'GitCommit',
+  RefreshCw: () => 'RefreshCw',
+  Calendar: () => 'Calendar',
+  User: () => 'User',
+  Folder: () => 'Folder',
+  FolderOpen: () => 'FolderOpen',
+  File: () => 'File',
+  FileCode: () => 'FileCode',
+  FileText: () => 'FileText',
+  Copy: () => 'Copy',
   // Add more icons as needed
 }))
 
