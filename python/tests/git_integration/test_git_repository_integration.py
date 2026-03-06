@@ -149,7 +149,16 @@ class FakeSupabaseTable:
                         existing = stored
                         break
                 if existing is not None:
-                    existing.update(row)
+                    # Special handling for branches array - merge instead of replace
+                    if "branches" in row and "branches" in existing:
+                        merged_branches = list(set(existing["branches"] + row["branches"]))
+                        existing["branches"] = merged_branches
+                        # Update other fields normally
+                        for field_key, value in row.items():
+                            if field_key != "branches":
+                                existing[field_key] = value
+                    else:
+                        existing.update(row)
                     rows.append(dict(existing))
                     continue
             row.setdefault("id", str(uuid.uuid4()))
@@ -267,3 +276,54 @@ def test_get_file_tree_includes_binary_flags(
     text_entry = next(file for file in files if file["file_path"] == "src/app.py")
     assert text_entry["is_binary"] is False
     assert text_entry["language"] == "Python"
+
+
+def test_sync_commits_merges_branches_on_upsert(
+    tmp_path: Path, git_service: GitRepositoryService, supabase_client: FakeSupabaseClient
+) -> None:
+    """Test that syncing from multiple branches merges the branches array."""
+    repo_path = _init_git_repository(tmp_path / "multi-branch-repo")
+
+    # Create a second commit on main
+    (repo_path / "feature.txt").write_text("Feature implementation\n", encoding="utf-8")
+    _run_git(repo_path, "add", "feature.txt")
+    _run_git(repo_path, "commit", "-m", "Add feature")
+
+    # Register repository
+    success, result = git_service.register_repository(str(repo_path), source_id="source-multi")
+    assert success is True
+    repo_id = result["repo_id"]
+
+    # Sync from main branch
+    sync_success, sync_result = git_service.sync_commits(repo_id, "main", max_commits=10)
+    assert sync_success is True
+    assert sync_result["commit_count"] >= 2
+
+    # Get the first commit SHA (shared between main and develop)
+    commits_table = supabase_client.table("archon_git_commits")
+    initial_commits = [row for row in commits_table.rows if row.get("repo_id") == repo_id]
+    assert len(initial_commits) >= 2
+    # Get the oldest commit (should be shared across branches)
+    test_commit = min(initial_commits, key=lambda c: c["commit_date"])
+    test_commit_sha = test_commit["commit_sha"]
+    assert test_commit["branches"] == ["main"]
+
+    # Create develop branch from main (shares commits)
+    _run_git(repo_path, "checkout", "-b", "develop")
+
+    # Sync from develop branch
+    sync_success_dev, sync_result_dev = git_service.sync_commits(repo_id, "develop", max_commits=10)
+    assert sync_success_dev is True
+
+    # Verify shared commit now has both branches
+    commits_after = [row for row in commits_table.rows if row.get("commit_sha") == test_commit_sha]
+    assert len(commits_after) == 1
+    assert set(commits_after[0]["branches"]) == {"main", "develop"}
+
+    # Verify querying for main still returns commits
+    main_commits = [row for row in commits_table.rows if "main" in row.get("branches", [])]
+    assert len(main_commits) >= 2
+
+    # Verify querying for develop returns commits
+    develop_commits = [row for row in commits_table.rows if "develop" in row.get("branches", [])]
+    assert len(develop_commits) >= 2

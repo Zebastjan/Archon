@@ -627,22 +627,36 @@ class GitRepositoryService:
 
                 commit_records.append(commit_data)
 
-            # Batch insert commits in chunks (prevents payload limit errors)
+            # Use RPC function to upsert commits with branch array merging
             if commit_records:
                 BATCH_SIZE = 500
                 inserted_count = 0
 
-                # Chunk commit_records into batches
+                # Process commits in batches
                 for i in range(0, len(commit_records), BATCH_SIZE):
                     batch = commit_records[i : i + BATCH_SIZE]
-                    response = (
-                        self.supabase_client.table("archon_git_commits")
-                        .upsert(batch, on_conflict="repo_id,commit_sha")
-                        .execute()
-                    )
-                    batch_count = len(response.data) if response.data else 0
-                    inserted_count += batch_count
-                    logger.debug(f"Synced batch {i // BATCH_SIZE + 1}: {batch_count} commits")
+
+                    # Call RPC function for each commit to properly merge branches array
+                    for commit_data in batch:
+                        try:
+                            self.supabase_client.rpc(
+                                "upsert_git_commit_with_branch_merge",
+                                {
+                                    "p_repo_id": commit_data["repo_id"],
+                                    "p_commit_sha": commit_data["commit_sha"],
+                                    "p_author_name": commit_data["author_name"],
+                                    "p_author_email": commit_data["author_email"],
+                                    "p_commit_date": commit_data["commit_date"],
+                                    "p_message": commit_data["message"],
+                                    "p_branches": commit_data["branches"],
+                                },
+                            ).execute()
+                            inserted_count += 1
+                        except Exception as e:
+                            logger.error(f"Failed to upsert commit {commit_data['commit_sha']}: {e}")
+                            continue
+
+                    logger.debug(f"Upserted batch {i // BATCH_SIZE + 1}: {len(batch)} commits with branch merging")
 
                 logger.info(f"Synced {inserted_count} commits for branch '{branch_name}'")
             else:

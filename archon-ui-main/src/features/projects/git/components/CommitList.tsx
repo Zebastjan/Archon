@@ -3,9 +3,9 @@
  * Displays commit history in a scrollable list
  */
 
-import { GitCommit, Search } from "lucide-react";
-import { useState } from "react";
-import { Input } from "@/features/ui/primitives";
+import { GitCommit, Search, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Input, Button } from "@/features/ui/primitives";
 import { useRepositoryCommits } from "../hooks";
 import type { Commit } from "../types";
 import { CommitCard } from "./CommitCard";
@@ -19,14 +19,31 @@ interface CommitListProps {
 
 export const CommitList = ({ projectId, branch, selectedCommitSha, onSelectCommit }: CommitListProps) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [allCommits, setAllCommits] = useState<Commit[]>([]);
+  const COMMITS_PER_PAGE = 50;
+
+  // Reset offset and accumulated commits when branch changes
+  useEffect(() => {
+    setOffset(0);
+    setAllCommits([]);
+  }, [branch]);
 
   // Fetch commits
-  const { data, isLoading } = useRepositoryCommits(projectId, {
+  const { data, isLoading, isFetching } = useRepositoryCommits(projectId, {
     branch_name: branch,
-    limit: 50,
+    limit: COMMITS_PER_PAGE,
+    offset: offset,
   });
 
-  const commits = data?.commits || [];
+  // Accumulate commits as pages load
+  useEffect(() => {
+    if (data?.commits) {
+      setAllCommits((prev) => (offset === 0 ? data.commits : [...prev, ...data.commits]));
+    }
+  }, [data, offset]);
+
+  const commits = allCommits;
   const filteredCommits = commits.filter((commit: Commit) =>
     searchQuery
       ? commit.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -42,7 +59,9 @@ export const CommitList = ({ projectId, branch, selectedCommitSha, onSelectCommi
         <div className="mb-3 flex items-center gap-2">
           <GitCommit className="h-5 w-5 text-cyan-400" />
           <h3 className="font-medium text-white">Commits</h3>
-          <span className="ml-auto text-sm text-zinc-400">{commits.length}</span>
+          <span className="ml-auto text-sm text-zinc-400">
+            {data?.pagination?.total || 0} commits
+          </span>
         </div>
 
         {/* Search */}
@@ -84,6 +103,28 @@ export const CommitList = ({ projectId, branch, selectedCommitSha, onSelectCommi
                 onClick={() => onSelectCommit(commit.commit_sha)}
               />
             ))}
+          </div>
+        )}
+
+        {/* Load More button */}
+        {data?.pagination?.has_more && !isLoading && (
+          <div className="mt-3 px-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setOffset(offset + COMMITS_PER_PAGE)}
+              disabled={isFetching}
+              className="w-full border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+            >
+              {isFetching ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                `Load More (${(data.pagination.total || 0) - commits.length} remaining)`
+              )}
+            </Button>
           </div>
         )}
       </div>
