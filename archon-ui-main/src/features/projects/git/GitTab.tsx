@@ -5,11 +5,12 @@
 
 import { GitBranch } from "lucide-react";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { InitializeRepositoryModal } from "./components/InitializeRepositoryModal";
 import { CommitList } from "./components/CommitList";
 import { FileTreeViewer } from "./components/FileTreeViewer";
 import { RepositoryHeader } from "./components/RepositoryHeader";
-import { useProjectRepository } from "./hooks";
+import { useProjectRepository, repositoryKeys } from "./hooks";
 
 interface GitTabProps {
   project?: {
@@ -20,6 +21,7 @@ interface GitTabProps {
 
 export const GitTab = ({ project }: GitTabProps) => {
   const projectId = project?.id || "";
+  const queryClient = useQueryClient();
 
   // Fetch repository metadata
   const { data: repository, isLoading } = useProjectRepository(projectId);
@@ -64,7 +66,11 @@ export const GitTab = ({ project }: GitTabProps) => {
           <InitializeRepositoryModal
             projectId={projectId}
             onClose={() => setShowInitModal(false)}
-            onSuccess={(metadata) => {
+            onSuccess={async (metadata) => {
+              // Wait for query to refetch before closing modal
+              await queryClient.refetchQueries({
+                queryKey: repositoryKeys.byProject(projectId)
+              });
               setSelectedBranch(metadata.default_branch);
               setShowInitModal(false);
             }}

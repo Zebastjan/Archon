@@ -8,20 +8,24 @@ Handles:
 - HTTP polling for progress updates
 """
 
+import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from email.utils import format_datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from fastapi import status as http_status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Removed direct logging import - using unified config
 # Set up standard logger for background tasks
 from ..config.logfire_config import get_logger, logfire
 from ..utils import get_supabase_client
 from ..utils.etag_utils import check_etag, generate_etag
+from ..utils.git_utils import initialize_git_repository
 
 logger = get_logger(__name__)
 
@@ -34,6 +38,7 @@ from ..services.projects import (
 )
 from ..services.projects.document_service import DocumentService
 from ..services.projects.versioning_service import VersioningService
+from ..services.git.git_repository_service import GitRepositoryService
 
 # Using HTTP polling for real-time updates
 
@@ -73,6 +78,25 @@ class CreateTaskRequest(BaseModel):
     task_order: int | None = 0
     priority: str | None = "medium"
     feature: str | None = None
+
+
+class InitializeRepositoryRequest(BaseModel):
+    repo_path: str = Field(..., min_length=1)
+    branch_name: str | None = None
+    config: dict | None = None
+    # Git repository creation options
+    initialize_if_needed: bool = False
+    create_initial_commit: bool = False
+    initial_commit_message: str | None = "Initial commit"
+    git_author_name: str | None = None
+    git_author_email: str | None = None
+
+
+class RepositoryMetadata(BaseModel):
+    repo_id: str  # UUID from database
+    repo_name: str
+    default_branch: str
+    current_head_sha: str
 
 
 @router.get("/projects")
@@ -515,6 +539,528 @@ async def delete_project(project_id: str):
         raise
     except Exception as e:
         logfire.error(f"Failed to delete project | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.post("/projects/{project_id}/repository")
+async def initialize_repository(
+    project_id: str,
+    request: InitializeRepositoryRequest,
+) -> RepositoryMetadata:
+    """
+    Initialize a Git repository for a project.
+
+    Creates a new source entry and registers the repository.
+    Returns repository metadata for UI display.
+    """
+    try:
+        logfire.info(
+            f"Initializing repository | project_id={project_id} | repo_path={request.repo_path}"
+        )
+
+        # Check if Git repository exists
+        git_dir = os.path.join(request.repo_path, ".git")
+        is_git_repo = os.path.isdir(git_dir)
+
+        # If not a Git repo and user wants to initialize
+        if not is_git_repo and request.initialize_if_needed:
+            logfire.info(f"Initializing new Git repository | repo_path={request.repo_path}")
+            init_success, init_error = initialize_git_repository(
+                repo_path=request.repo_path,
+                create_commit=request.create_initial_commit,
+                commit_message=request.initial_commit_message or "Initial commit",
+                author_name=request.git_author_name,
+                author_email=request.git_author_email,
+            )
+            if not init_success:
+                logfire.error(f"Git initialization failed | error={init_error}")
+                raise HTTPException(status_code=400, detail=init_error)
+        elif not is_git_repo:
+            logfire.warning(f"Not a Git repository | repo_path={request.repo_path}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Not a Git repository: {request.repo_path}. Enable 'Initialize as new repository' to create one.",
+            )
+
+        # Validate repository path exists and is accessible
+        if not os.path.exists(request.repo_path):
+            raise HTTPException(
+                status_code=400, detail=f"Repository path does not exist: {request.repo_path}"
+            )
+
+        if not os.path.isdir(request.repo_path):
+            raise HTTPException(
+                status_code=400, detail=f"Repository path is not a directory: {request.repo_path}"
+            )
+
+        # Generate source_id from repo_path hash (16-char SHA256)
+        source_id = hashlib.sha256(request.repo_path.encode()).hexdigest()[:16]
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Create archon_sources entry
+        source_data = {
+            "source_id": source_id,
+            "source_url": request.repo_path,
+            "source_display_name": Path(request.repo_path).name,
+            "title": f"Git: {Path(request.repo_path).name}",
+            "metadata": {"type": "git", "project_id": project_id},
+        }
+
+        try:
+            source_response = supabase.table("archon_sources").insert(source_data).execute()
+            logfire.info(f"Source entry created | source_id={source_id}")
+        except Exception as e:
+            # Check if it's a duplicate source_id error
+            if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+                logfire.warning(f"Source already exists | source_id={source_id}")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Repository already registered: {request.repo_path}",
+                )
+            else:
+                logfire.error(f"Failed to create source entry | error={str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to create source: {str(e)}")
+
+        # Register repository with GitRepositoryService
+        try:
+            git_service = GitRepositoryService()
+            success, result = git_service.register_repository(
+                repo_path=request.repo_path,
+                source_id=source_id,
+                config=request.config or {},
+            )
+
+            if not success:
+                # Clean up source entry
+                supabase.table("archon_sources").delete().eq("source_id", source_id).execute()
+                logfire.error(f"Repository registration failed | error={result.get('error')}")
+                raise HTTPException(status_code=400, detail=result.get("error"))
+
+            logfire.info(
+                f"Repository registered successfully | repo_id={result.get('repo_id')} | repo_name={result.get('repo_name')}"
+            )
+
+            # Return metadata
+            return RepositoryMetadata(
+                repo_id=result["repo_id"],
+                repo_name=result["repo_name"],
+                default_branch=result["default_branch"],
+                current_head_sha=result["current_head_sha"],
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Clean up source entry on any error
+            try:
+                supabase.table("archon_sources").delete().eq("source_id", source_id).execute()
+            except Exception:
+                pass  # Ignore cleanup errors
+            logfire.error(f"Repository registration failed | error={str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to register repository: {str(e)}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(
+            f"Failed to initialize repository | error={str(e)} | project_id={project_id}"
+        )
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/projects/{project_id}/repository")
+async def get_repository(project_id: str):
+    """
+    Get repository metadata for a project.
+
+    Returns repository data if one is linked to the project, otherwise returns null.
+    """
+    try:
+        logfire.info(f"Getting repository | project_id={project_id}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source entry for this project with type='git'
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            logfire.info(f"No repository found | project_id={project_id}")
+            return None
+
+        # Get the first git source (there should only be one per project)
+        source = source_response.data[0]
+        source_id = source["source_id"]
+
+        # Get repository from archon_git_repositories
+        repo_response = supabase.table("archon_git_repositories").select("*").eq("source_id", source_id).execute()
+
+        if not repo_response.data:
+            logfire.warning(f"Source exists but no repository entry | source_id={source_id}")
+            return None
+
+        repo = repo_response.data[0]
+
+        logfire.info(f"Repository retrieved | repo_id={repo['id']} | repo_name={repo['repo_name']}")
+
+        # Return repository data matching the Repository TypeScript interface
+        return {
+            "id": repo["id"],
+            "source_id": repo["source_id"],
+            "repo_url": repo["repo_url"],
+            "repo_name": repo["repo_name"],
+            "owner": repo.get("owner"),
+            "default_branch": repo["default_branch"],
+            "current_head_sha": repo["current_head_sha"],
+            "last_crawled_at": repo.get("last_crawled_at"),
+            "crawl_status": repo.get("crawl_status", "pending"),
+            "crawl_error": repo.get("crawl_error"),
+            "config": repo.get("config"),
+            "created_at": repo["created_at"],
+            "updated_at": repo["updated_at"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to get repository | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.delete("/projects/{project_id}/repository")
+async def delete_repository(project_id: str):
+    """
+    Delete repository and all associated data for a project.
+
+    Removes source entry, repository record, commits, and files.
+    """
+    try:
+        logfire.info(f"Deleting repository | project_id={project_id}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source entry for this project
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            logfire.warning(f"No repository found to delete | project_id={project_id}")
+            return {"message": "No repository found"}
+
+        source = source_response.data[0]
+        source_id = source["source_id"]
+
+        # Get repository to find repo_id
+        repo_response = supabase.table("archon_git_repositories").select("id").eq("source_id", source_id).execute()
+
+        if repo_response.data:
+            repo_id = repo_response.data[0]["id"]
+
+            # Delete commits (cascades to files via FK)
+            supabase.table("archon_git_commits").delete().eq("repo_id", repo_id).execute()
+            logfire.info(f"Deleted commits | repo_id={repo_id}")
+
+            # Delete repository
+            supabase.table("archon_git_repositories").delete().eq("id", repo_id).execute()
+            logfire.info(f"Deleted repository | repo_id={repo_id}")
+
+        # Delete source entry
+        supabase.table("archon_sources").delete().eq("source_id", source_id).execute()
+        logfire.info(f"Deleted source | source_id={source_id}")
+
+        return {"message": "Repository deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to delete repository | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/projects/{project_id}/repository/branches")
+async def get_repository_branches(project_id: str):
+    """
+    Get list of branches that have synced commits.
+
+    Returns unique branch names from the commits table.
+    """
+    try:
+        logfire.info(f"Getting branches | project_id={project_id}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source and repository
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        source_id = source_response.data[0]["source_id"]
+        repo_response = supabase.table("archon_git_repositories").select("*").eq("source_id", source_id).execute()
+
+        if not repo_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        repo_id = repo_response.data[0]["id"]
+
+        # Get all commits and extract unique branches
+        commits_response = supabase.table("archon_git_commits").select("branches").eq("repo_id", repo_id).execute()
+
+        branches_set = set()
+        for commit in commits_response.data:
+            if commit.get("branches"):
+                branches_set.update(commit["branches"])
+
+        branches = sorted(list(branches_set))
+
+        logfire.info(f"Retrieved branches | count={len(branches)}")
+
+        return {"branches": branches}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to get branches | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/projects/{project_id}/repository/commits")
+async def get_repository_commits(
+    project_id: str,
+    branch_name: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """
+    Get commit history for a repository.
+
+    Returns paginated list of commits for the specified branch.
+    """
+    try:
+        logfire.info(f"Getting commits | project_id={project_id} | branch={branch_name} | limit={limit} | offset={offset}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source and repository
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        source_id = source_response.data[0]["source_id"]
+        repo_response = supabase.table("archon_git_repositories").select("*").eq("source_id", source_id).execute()
+
+        if not repo_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        repo = repo_response.data[0]
+        repo_id = repo["id"]
+        target_branch = branch_name or repo["default_branch"]
+
+        # Build query for commits
+        query = supabase.table("archon_git_commits").select("*", count="exact").eq("repo_id", repo_id)
+
+        # Filter by branch if provided (commits.branches is a JSONB array)
+        if target_branch:
+            query = query.contains("branches", [target_branch])
+
+        # Get total count
+        count_response = query.execute()
+        total_count = count_response.count or 0
+
+        # Get paginated commits (ordered by commit_date desc)
+        commits_response = (
+            query.order("commit_date", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+
+        commits = commits_response.data or []
+
+        logfire.info(f"Retrieved commits | count={len(commits)} | total={total_count}")
+
+        return {
+            "commits": commits,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total_count,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to get commits | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.post("/projects/{project_id}/repository/sync")
+async def sync_repository_commits(
+    project_id: str,
+    request: dict[str, Any] | None = None,
+):
+    """
+    Sync commits from git repository to database.
+
+    Reads git log and populates archon_git_commits table.
+    """
+    try:
+        branch_name = request.get("branch_name") if request else None
+        max_commits = request.get("max_commits") if request else None
+
+        logfire.info(f"Syncing commits | project_id={project_id} | branch={branch_name} | max={max_commits}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source and repository
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        source_id = source_response.data[0]["source_id"]
+        repo_response = supabase.table("archon_git_repositories").select("*").eq("source_id", source_id).execute()
+
+        if not repo_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        repo = repo_response.data[0]
+        repo_id = repo["id"]
+        target_branch = branch_name or repo["default_branch"]
+
+        # Use GitRepositoryService to sync commits
+        git_service = GitRepositoryService()
+        success, result = git_service.sync_commits(repo_id, target_branch, max_commits)
+
+        if not success:
+            logfire.error(f"Commit sync failed | error={result.get('error')}")
+            raise HTTPException(status_code=400, detail=result.get("error"))
+
+        commit_count = result.get("commit_count", 0)
+        logfire.info(f"Commits synced successfully | count={commit_count} | branch={target_branch}")
+
+        # Update repository's last_crawled_at
+        supabase.table("archon_git_repositories").update({
+            "last_crawled_at": datetime.now(UTC).isoformat(),
+            "crawl_status": "completed",
+        }).eq("id", repo_id).execute()
+
+        return {
+            "commit_count": commit_count,
+            "branch": target_branch,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to sync commits | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/projects/{project_id}/repository/tree")
+async def get_file_tree(
+    project_id: str,
+    commit_sha: str,
+    path_prefix: str = "",
+):
+    """
+    Get file tree at a specific commit.
+
+    Returns list of files in the repository at the given commit.
+    """
+    try:
+        logfire.info(f"Getting file tree | project_id={project_id} | commit={commit_sha} | prefix={path_prefix}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source and repository
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        source_id = source_response.data[0]["source_id"]
+        repo_response = supabase.table("archon_git_repositories").select("*").eq("source_id", source_id).execute()
+
+        if not repo_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        repo_id = repo_response.data[0]["id"]
+
+        # Use GitRepositoryService to get file tree
+        git_service = GitRepositoryService()
+        success, result = git_service.get_file_tree(repo_id, commit_sha, path_prefix)
+
+        if not success:
+            logfire.error(f"Failed to get file tree | error={result.get('error')}")
+            raise HTTPException(status_code=400, detail=result.get("error"))
+
+        logfire.info(f"File tree retrieved | file_count={result.get('file_count', 0)}")
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to get file tree | error={str(e)} | project_id={project_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/projects/{project_id}/repository/file")
+async def get_file_content(
+    project_id: str,
+    commit_sha: str,
+    file_path: str,
+):
+    """
+    Get file content at a specific commit.
+
+    Returns file content and metadata.
+    """
+    try:
+        logfire.info(f"Getting file content | project_id={project_id} | commit={commit_sha} | file={file_path}")
+
+        # Get Supabase client
+        supabase = get_supabase_client()
+
+        # Find source and repository
+        source_response = supabase.table("archon_sources").select("*").eq("metadata->>project_id", project_id).execute()
+
+        if not source_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        source_id = source_response.data[0]["source_id"]
+        repo_response = supabase.table("archon_git_repositories").select("*").eq("source_id", source_id).execute()
+
+        if not repo_response.data:
+            raise HTTPException(status_code=404, detail="Repository not found")
+
+        repo_id = repo_response.data[0]["id"]
+
+        # Use GitRepositoryService to get file content
+        git_service = GitRepositoryService()
+        success, result = git_service.get_file_content(repo_id, commit_sha, file_path)
+
+        if not success:
+            logfire.error(f"Failed to get file content | error={result.get('error')}")
+            raise HTTPException(status_code=400, detail=result.get("error"))
+
+        logfire.info(f"File content retrieved | size={result.get('file_size', 0)}")
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Failed to get file content | error={str(e)} | project_id={project_id}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 

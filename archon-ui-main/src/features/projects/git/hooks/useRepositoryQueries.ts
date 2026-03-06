@@ -117,7 +117,11 @@ export function useInitializeRepository(projectId: string) {
       repositoryService.initializeRepository(projectId, request),
     onSuccess: (data: RepositoryMetadata) => {
       // Invalidate repository query to refetch metadata
-      queryClient.invalidateQueries({ queryKey: repositoryKeys.byProject(projectId) });
+      // Use refetchType: 'all' to ensure refetch happens even if no active observer
+      queryClient.invalidateQueries({
+        queryKey: repositoryKeys.byProject(projectId),
+        refetchType: 'all'
+      });
       showToast(`Repository "${data.repo_name}" initialized successfully!`, "success");
     },
     onError: (error: Error) => {
