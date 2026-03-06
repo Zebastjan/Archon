@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any
 import pytest
 
 from src.server.services.git.git_repository_service import GitRepositoryService
+from tests.git_integration.fixtures.generator import generate_fixture, get_fixture_path
 
 
 def _run_git(repo_path: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -21,9 +23,7 @@ def _run_git(repo_path: Path, *args: str, check: bool = True) -> subprocess.Comp
         text=True,
     )
     if check and result.returncode != 0:
-        raise RuntimeError(
-            f"git {' '.join(args)} failed: {result.stderr.strip() or result.stdout.strip()}"
-        )
+        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip() or result.stdout.strip()}")
     return result
 
 
@@ -51,6 +51,12 @@ def _init_git_repository(base_path: Path) -> Path:
 @dataclass
 class FakeQueryResponse:
     data: list[dict[str, Any]]
+
+    def __init__(self, data: list[dict[str, Any]]) -> None:
+        self.data = data
+
+    def execute(self) -> FakeQueryResponse:
+        return self
 
 
 class FakeSupabaseQuery:
@@ -122,9 +128,7 @@ class FakeSupabaseTable:
                 results.append(dict(row))
         return results
 
-    def insert_rows(
-        self, payload: dict[str, Any] | list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def insert_rows(self, payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         for record in self._ensure_list(payload):
             row = dict(record)
@@ -187,6 +191,39 @@ class FakeSupabaseClient:
         if name not in self.tables:
             self.tables[name] = FakeSupabaseTable(name)
         return self.tables[name]
+
+    def rpc(self, function_name: str, params: dict[str, Any]) -> FakeQueryResponse:
+        """Mock RPC function - returns success for branch merge upserts."""
+        if function_name == "upsert_git_commit_with_branch_merge":
+            commits_table = self.table("archon_git_commits")
+            existing = None
+            p_branches = params.get("p_branches", [])
+            for row in commits_table.rows:
+                if row.get("repo_id") == params.get("p_repo_id") and row.get("commit_sha") == params.get(
+                    "p_commit_sha"
+                ):
+                    existing = row
+                    break
+            if existing:
+                # Merge branches
+                existing_branches = existing.get("branches", [])
+                if isinstance(existing_branches, list):
+                    existing["branches"] = list(set(existing_branches + p_branches))
+            else:
+                commits_table.rows.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "repo_id": params.get("p_repo_id"),
+                        "commit_sha": params.get("p_commit_sha"),
+                        "author_name": params.get("p_author_name"),
+                        "author_email": params.get("p_author_email"),
+                        "commit_date": params.get("p_commit_date"),
+                        "message": params.get("p_message"),
+                        "branches": p_branches,
+                    }
+                )
+            return FakeQueryResponse([{"success": True}])
+        return FakeQueryResponse([{"success": False}])
 
 
 @pytest.fixture
@@ -327,3 +364,135 @@ def test_sync_commits_merges_branches_on_upsert(
     # Verify querying for develop returns commits
     develop_commits = [row for row in commits_table.rows if "develop" in row.get("branches", [])]
     assert len(develop_commits) >= 2
+
+
+@pytest.fixture
+def fixture_repo_simple_commits(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    """Load the simple-commits fixture and return repo path and expected data."""
+    fixture_path = get_fixture_path("simple-commits")
+    repo_path = generate_fixture(fixture_path, tmp_path / "fixtures")
+
+    expected_path = fixture_path / "EXPECTED.json"
+    with open(expected_path) as f:
+        expected = json.load(f)
+
+    return repo_path, expected
+
+
+@pytest.fixture
+def fixture_repo_multi_branch(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    """Load the multi-branch fixture and return repo path and expected data."""
+    fixture_path = get_fixture_path("multi-branch")
+    repo_path = generate_fixture(fixture_path, tmp_path / "fixtures")
+
+    expected_path = fixture_path / "EXPECTED.json"
+    with open(expected_path) as f:
+        expected = json.load(f)
+
+    return repo_path, expected
+
+
+@pytest.fixture
+def fixture_repo_file_structure(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    """Load the file-structure fixture and return repo path and expected data."""
+    fixture_path = get_fixture_path("file-structure")
+    repo_path = generate_fixture(fixture_path, tmp_path / "fixtures")
+
+    expected_path = fixture_path / "EXPECTED.json"
+    with open(expected_path) as f:
+        expected = json.load(f)
+
+    return repo_path, expected
+
+
+def test_fixture_simple_commits_matches_expected(
+    fixture_repo_simple_commits: tuple[Path, dict[str, Any]],
+    git_service: GitRepositoryService,
+    supabase_client: FakeSupabaseClient,
+) -> None:
+    """Test that simple-commits fixture matches expected data."""
+    repo_path, expected = fixture_repo_simple_commits
+
+    # Register repository
+    success, result = git_service.register_repository(str(repo_path), source_id="source-simple")
+    assert success is True
+    assert result["default_branch"] == expected["default_branch"]
+
+    # Sync commits
+    repo_id = result["repo_id"]
+    sync_success, sync_result = git_service.sync_commits(repo_id, "main", max_commits=10)
+    assert sync_success is True
+    assert sync_result["commit_count"] == len(expected["commits"])
+
+    # Verify commit count matches expected
+    commit_rows = supabase_client.table("archon_git_commits").rows
+    assert len(commit_rows) == len(expected["commits"])
+
+
+def test_fixture_multi_branch_has_correct_branches(
+    fixture_repo_multi_branch: tuple[Path, dict[str, Any]],
+    git_service: GitRepositoryService,
+    supabase_client: FakeSupabaseClient,
+) -> None:
+    """Test that multi-branch fixture correctly captures branches."""
+    repo_path, expected = fixture_repo_multi_branch
+
+    # Register and sync main branch
+    success, result = git_service.register_repository(str(repo_path), source_id="source-multi")
+    assert success is True
+
+    repo_id = result["repo_id"]
+    sync_success, _ = git_service.sync_commits(repo_id, "main", max_commits=10)
+    assert sync_success is True
+
+    # Verify all expected branches exist in the repo
+    branch_result = subprocess.run(
+        ["git", "branch", "--format=%(refname:short)"],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+    )
+    actual_branches = [b.strip() for b in branch_result.stdout.strip().split("\n") if b.strip()]
+    assert set(actual_branches) == set(expected["branches"])
+
+
+def test_fixture_file_structure_binary_detection(
+    fixture_repo_file_structure: tuple[Path, dict[str, Any]],
+    git_service: GitRepositoryService,
+    supabase_client: FakeSupabaseClient,
+) -> None:
+    """Test that file-structure fixture correctly detects binary files."""
+    repo_path, expected = fixture_repo_file_structure
+
+    # Register and sync
+    success, result = git_service.register_repository(str(repo_path), source_id="source-files")
+    assert success is True
+
+    repo_id = result["repo_id"]
+    head_sha = result["current_head_sha"]
+
+    # Get file tree
+    tree_success, tree_result = git_service.get_file_tree(repo_id, head_sha)
+    assert tree_success is True
+
+    files = tree_result["files"]
+    expected_files = {f["path"]: f for f in expected["files"]}
+
+    # Verify binary detection
+    for file in files:
+        expected_file = expected_files.get(file["file_path"])
+        if expected_file:
+            assert file["is_binary"] == expected_file["is_binary"], (
+                f"Binary mismatch for {file['file_path']}: "
+                f"got {file['is_binary']}, expected {expected_file['is_binary']}"
+            )
+
+    # Verify binary files are correctly identified
+    binary_files = [f for f in files if f["is_binary"]]
+    expected_binary = [f for f in expected["files"] if f["is_binary"]]
+    assert len(binary_files) == len(expected_binary)
+
+    # Check specific binary files
+    binary_paths = {f["file_path"] for f in binary_files}
+    expected_binary_paths = {f["path"] for f in expected_binary}
+    assert binary_paths == expected_binary_paths

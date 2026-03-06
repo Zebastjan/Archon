@@ -1,0 +1,75 @@
+name: multi-branch
+description: Repository with multiple branches for testing branch operations and merge detection
+initialization:
+  steps:
+    - name: Create README
+      type: new-file
+      filename: README.md
+      contents: |
+        # Multi-Branch Test Repository
+        
+        Testing branch operations.
+    - name: Add README
+      type: add
+      files: [README.md]
+    - name: Initial commit
+      type: commit
+      message: Initial commit on main
+      id: initial-commit
+    - name: Create feature file
+      type: new-file
+      filename: feature.txt
+      contents: |
+        Main branch feature
+    - name: Add feature file
+      type: add
+      files: [feature.txt]
+    - name: Second commit on main
+      type: commit
+      message: Add feature file on main
+    - name: Create develop branch
+      type: branch
+      branch-name: develop
+    - name: Switch to develop
+      type: checkout
+      branch-name: develop
+    - name: Develop feature
+      type: new-file
+      filename: develop-feature.txt
+      contents: |
+        Development branch work
+    - name: Add develop file
+      type: add
+      files: [develop-feature.txt]
+    - name: Commit on develop
+      type: commit
+      message: Add develop feature file
+      id: develop-commit
+    - name: Switch back to main
+      type: checkout
+      branch-name: main
+    - name: Create feature branch
+      type: branch
+      branch-name: feature/login
+    - name: Switch to feature branch
+      type: checkout
+      branch-name: feature/login
+    - name: Login feature
+      type: new-file
+      filename: login.py
+      contents: |
+        def login(username, password):
+            return True
+    - name: Add login file
+      type: add
+      files: [login.py]
+    - name: Commit on feature branch
+      type: commit
+      message: Add login functionality
+    - name: Merge develop into main
+      type: checkout
+      branch-name: main
+    - name: Merge develop
+      type: merge
+      branch-name: develop
+      no-ff: true

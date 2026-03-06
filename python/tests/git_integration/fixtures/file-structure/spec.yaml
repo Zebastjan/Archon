@@ -1,0 +1,121 @@
+name: file-structure
+description: Repository with complex file structure for testing file tree and binary detection
+initialization:
+  steps:
+    - name: Create README
+      type: new-file
+      filename: README.md
+      contents: |
+        # File Structure Test Repository
+        
+        Testing various file types and binary detection.
+    - name: Add README
+      type: add
+      files: [README.md]
+    - name: Initial commit
+      type: commit
+      message: Initial commit
+      id: initial-commit
+    - name: Create src directory files
+      type: new-file
+      filename: src/main.py
+      contents: |
+        from typing import List
+        
+        def process(items: List[str]) -> List[str]:
+            return [item.upper() for item in items]
+    - name: Create utils
+      type: new-file
+      filename: src/utils.py
+      contents: |
+        import json
+        
+        def load_config(path: str) -> dict:
+            with open(path) as f:
+                return json.load(f)
+    - name: Create module init
+      type: new-file
+      filename: src/__init__.py
+      contents: |
+        """Source package"""
+    - name: Create TypeScript
+      type: new-file
+      filename: src/index.ts
+      contents: |
+        export const greet = (name: string): string => {
+          return `Hello, ${name}!`;
+        };
+    - name: Create components
+      type: new-file
+      filename: src/components/Button.tsx
+      contents: |
+        import React from 'react';
+        
+        export const Button: React.FC<{children: React.ReactNode}> = ({children}) => {
+          return <button>{children}</button>;
+        };
+    - name: Create component directory init
+      type: new-file
+      filename: src/components/__init__.py
+      contents: |
+    - name: Create text file
+      type: new-file
+      filename: docs/notes.txt
+      contents: |
+        These are some notes.
+        Plain text format.
+    - name: Create markdown
+      type: new-file
+      filename: docs/guide.md
+      contents: |
+        # User Guide
+        
+        ## Getting Started
+        
+        Follow these steps to get started.
+    - name: Create JSON config
+      type: new-file
+      filename: config/settings.json
+      contents: |
+        {
+            "debug": true,
+            "theme": "dark"
+        }
+    - name: Create YAML
+      type: new-file
+      filename: config/app.yaml
+      contents: |
+        app:
+          name: test
+          port: 8080
+    - name: Add all new files
+      type: add
+      files:
+        - src/main.py
+        - src/utils.py
+        - src/__init__.py
+        - src/index.ts
+        - src/components/Button.tsx
+        - src/components/__init__.py
+        - docs/notes.txt
+        - docs/guide.md
+        - config/settings.json
+        - config/app.yaml
+    - name: Commit files
+      type: commit
+      message: Add source code and config files
+      id: add-files
+    - name: Create binary placeholder
+      type: bash
+      runs: |
+        mkdir -p assets/images
+        echo -n -e '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde' > assets/images/logo.png
+        echo -n -e 'GIF89a\x01\x00\x01\x00\x80\x01\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;' > assets/images/animated.gif
+    - name: Add binary files
+      type: add
+      files:
+        - assets/images/logo.png
+        - assets/images/animated.gif
+    - name: Commit binary files
+      type: commit
+      message: Add binary asset files

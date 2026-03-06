@@ -1,0 +1,57 @@
+name: simple-commits
+description: Basic repository with 3 commits on main branch for testing commit history
+initialization:
+  steps:
+    - name: Create README
+      type: new-file
+      filename: README.md
+      contents: |
+        # Simple Test Repository
+        
+        This is a test repository for Archon Git integration testing.
+    - name: Add README
+      type: add
+      files: [README.md]
+    - name: Initial commit
+      type: commit
+      message: Initial commit - add README
+      id: initial-commit
+    - name: Create Python file
+      type: new-file
+      filename: src/app.py
+      contents: |
+        def hello():
+            return "Hello, World!"
+    - name: Create config
+      type: new-file
+      filename: config.json
+      contents: |
+        {
+            "name": "test-app",
+            "version": "1.0.0"
+        }
+    - name: Add files
+      type: add
+      files: [src/app.py, config.json]
+    - name: Second commit
+      type: commit
+      message: Add application code and config
+      id: second-commit
+    - name: Update README
+      type: edit-file
+      filename: README.md
+      contents: |
+        # Simple Test Repository
+        
+        This is a test repository for Archon Git integration testing.
+        
+        ## Features
+        - Python application
+        - JSON configuration
+    - name: Add README
+      type: add
+      files: [README.md]
+    - name: Third commit
+      type: commit
+      message: Update README with features list
+      id: third-commit
