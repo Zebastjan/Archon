@@ -9,6 +9,7 @@ export {
   useFileTree,
   useInitializeRepository,
   useProjectRepository,
+  useRepositoryBranches,
   useRepositoryCommits,
   useSyncCommits,
 } from "./useRepositoryQueries";

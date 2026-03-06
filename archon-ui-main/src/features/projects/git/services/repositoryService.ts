@@ -5,6 +5,7 @@
 
 import { callAPIWithETag } from "../../../shared/api/apiClient";
 import type {
+  BranchesResponse,
   CommitsPaginationResponse,
   FileContentResponse,
   FileTreeResponse,
@@ -158,6 +159,21 @@ export const repositoryService = {
       return response;
     } catch (error) {
       console.error(`Failed to get file content for project ${projectId}:`, error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get all branches in the repository
+   */
+  async getBranches(projectId: string): Promise<BranchesResponse> {
+    try {
+      const response = await callAPIWithETag<BranchesResponse>(
+        `/api/projects/${projectId}/repository/branches`,
+      );
+      return response;
+    } catch (error) {
+      console.error(`Failed to get branches for project ${projectId}:`, error);
       throw error;
     }
   },

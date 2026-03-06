@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from ..config.logfire_config import get_logger, logfire
 from ..utils import get_supabase_client
 from ..utils.etag_utils import check_etag, generate_etag
-from ..utils.git_utils import initialize_git_repository
+from ..utils.git_utils import get_repository_branches, initialize_git_repository
 
 logger = get_logger(__name__)
 
@@ -780,11 +780,11 @@ async def delete_repository(project_id: str):
 
 
 @router.get("/projects/{project_id}/repository/branches")
-async def get_repository_branches(project_id: str):
+async def get_repository_branches_endpoint(project_id: str):
     """
-    Get list of branches that have synced commits.
+    Get list of all branches in the git repository.
 
-    Returns unique branch names from the commits table.
+    Returns all local branch names from the git repository on disk.
     """
     try:
         logfire.info(f"Getting branches | project_id={project_id}")
@@ -804,19 +804,12 @@ async def get_repository_branches(project_id: str):
         if not repo_response.data:
             raise HTTPException(status_code=404, detail="Repository not found")
 
-        repo_id = repo_response.data[0]["id"]
+        repo_url = repo_response.data[0]["repo_url"]
 
-        # Get all commits and extract unique branches
-        commits_response = supabase.table("archon_git_commits").select("branches").eq("repo_id", repo_id).execute()
+        # Get branches directly from the git repository
+        branches = get_repository_branches(repo_url)
 
-        branches_set = set()
-        for commit in commits_response.data:
-            if commit.get("branches"):
-                branches_set.update(commit["branches"])
-
-        branches = sorted(list(branches_set))
-
-        logfire.info(f"Retrieved branches | count={len(branches)}")
+        logfire.info(f"Retrieved branches from git repo | count={len(branches)}")
 
         return {"branches": branches}
 

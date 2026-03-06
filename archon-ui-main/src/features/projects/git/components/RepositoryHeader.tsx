@@ -5,8 +5,8 @@
 
 import { GitBranch, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/features/ui/primitives";
-import { useDeleteRepository, useSyncCommits } from "../hooks";
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/features/ui/primitives";
+import { useDeleteRepository, useRepositoryBranches, useSyncCommits } from "../hooks";
 import type { Repository } from "../types";
 
 interface RepositoryHeaderProps {
@@ -26,6 +26,9 @@ export const RepositoryHeader = ({
 
   const syncMutation = useSyncCommits(projectId);
   const deleteMutation = useDeleteRepository(projectId);
+  const { data: branchesData } = useRepositoryBranches(projectId);
+
+  const branches = branchesData?.branches || [selectedBranch];
 
   const handleSync = () => {
     syncMutation.mutate({ branch_name: selectedBranch });
@@ -57,13 +60,20 @@ export const RepositoryHeader = ({
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          {/* Branch selector - simplified for now */}
-          <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-            <div className="flex items-center gap-2">
-              <GitBranch className="h-4 w-4 text-cyan-400" />
-              <span className="text-sm text-white">{selectedBranch}</span>
-            </div>
-          </div>
+          {/* Branch selector */}
+          <Select value={selectedBranch} onValueChange={onBranchChange}>
+            <SelectTrigger className="w-[200px]" color="cyan">
+              <GitBranch className="mr-2 h-4 w-4 text-cyan-400" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent color="cyan">
+              {branches.map((branch: string) => (
+                <SelectItem key={branch} value={branch} color="cyan">
+                  {branch}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {/* Sync button */}
           <Button

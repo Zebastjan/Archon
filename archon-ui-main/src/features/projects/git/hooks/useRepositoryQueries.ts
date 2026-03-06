@@ -8,6 +8,7 @@ import { DISABLED_QUERY_KEY, STALE_TIMES } from "@/features/shared/config/queryP
 import { useToast } from "@/features/shared/hooks/useToast";
 import { repositoryService } from "../services";
 import type {
+  BranchesResponse,
   CommitsPaginationResponse,
   FileContentResponse,
   FileTreeResponse,
@@ -21,6 +22,7 @@ import type {
 export const repositoryKeys = {
   all: ["repository"] as const,
   byProject: (projectId: string) => ["projects", projectId, "repository"] as const,
+  branches: (projectId: string) => ["projects", projectId, "repository", "branches"] as const,
   commits: (projectId: string, branch?: string) =>
     ["projects", projectId, "repository", "commits", branch] as const,
   tree: (projectId: string, commitSha: string, pathPrefix?: string) =>
@@ -36,6 +38,18 @@ export function useProjectRepository(projectId: string | undefined) {
   return useQuery<Repository | null>({
     queryKey: projectId ? repositoryKeys.byProject(projectId) : DISABLED_QUERY_KEY,
     queryFn: () => (projectId ? repositoryService.getRepository(projectId) : Promise.reject("No project ID")),
+    enabled: !!projectId,
+    staleTime: STALE_TIMES.normal,
+  });
+}
+
+/**
+ * Get all branches in the repository
+ */
+export function useRepositoryBranches(projectId: string | undefined) {
+  return useQuery<BranchesResponse>({
+    queryKey: projectId ? repositoryKeys.branches(projectId) : DISABLED_QUERY_KEY,
+    queryFn: () => (projectId ? repositoryService.getBranches(projectId) : Promise.reject("No project ID")),
     enabled: !!projectId,
     staleTime: STALE_TIMES.normal,
   });

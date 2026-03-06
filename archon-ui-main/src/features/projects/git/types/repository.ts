@@ -95,3 +95,7 @@ export interface RepositoryMetadata {
   default_branch: string;
   current_head_sha: string;
 }
+
+export interface BranchesResponse {
+  branches: string[];
+}
