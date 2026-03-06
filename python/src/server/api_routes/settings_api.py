@@ -5,9 +5,12 @@ Handles:
 - OpenAI API key management
 - Other credentials and configuration
 - Settings storage and retrieval
+- Dev/test utilities (git test fixtures)
 """
 
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -54,9 +57,7 @@ async def list_credentials(category: str | None = None):
             credentials = [cred for cred in credentials if cred.category == category]
 
         result_count = len(credentials)
-        logfire.info(
-            f"Credentials listed successfully | count={result_count} | category={category}"
-        )
+        logfire.info(f"Credentials listed successfully | count={result_count} | category={category}")
 
         return [
             {
@@ -81,15 +82,11 @@ async def get_credentials_by_category(category: str):
         logfire.info(f"Getting credentials by category | category={category}")
         credentials = await credential_service.get_credentials_by_category(category)
 
-        logfire.info(
-            f"Credentials retrieved by category | category={category} | count={len(credentials)}"
-        )
+        logfire.info(f"Credentials retrieved by category | category={category} | count={len(credentials)}")
 
         return {"credentials": credentials}
     except Exception as e:
-        logfire.error(
-            f"Error getting credentials by category | category={category} | error={str(e)}"
-        )
+        logfire.error(f"Error getting credentials by category | category={category} | error={str(e)}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
@@ -110,9 +107,7 @@ async def create_credential(request: CredentialRequest):
         )
 
         if success:
-            logfire.info(
-                f"Credential saved successfully | key={request.key} | is_encrypted={request.is_encrypted}"
-            )
+            logfire.info(f"Credential saved successfully | key={request.key} | is_encrypted={request.is_encrypted}")
 
             return {
                 "success": True,
@@ -229,9 +224,7 @@ async def update_credential(key: str, request: dict[str, Any]):
         )
 
         if success:
-            logfire.info(
-                f"Credential updated successfully | key={key} | is_encrypted={is_encrypted}"
-            )
+            logfire.info(f"Credential updated successfully | key={key} | is_encrypted={is_encrypted}")
 
             return {"success": True, "message": f"Credential {key} updated successfully"}
         else:
@@ -289,37 +282,23 @@ async def database_metrics():
         tables_info = {}
 
         # Get projects count
-        projects_response = (
-            supabase_client.table("archon_projects").select("id", count="exact").execute()
-        )
-        tables_info["projects"] = (
-            projects_response.count if projects_response.count is not None else 0
-        )
+        projects_response = supabase_client.table("archon_projects").select("id", count="exact").execute()
+        tables_info["projects"] = projects_response.count if projects_response.count is not None else 0
 
         # Get tasks count
         tasks_response = supabase_client.table("archon_tasks").select("id", count="exact").execute()
         tables_info["tasks"] = tasks_response.count if tasks_response.count is not None else 0
 
         # Get crawled pages count
-        pages_response = (
-            supabase_client.table("archon_crawled_pages").select("id", count="exact").execute()
-        )
-        tables_info["crawled_pages"] = (
-            pages_response.count if pages_response.count is not None else 0
-        )
+        pages_response = supabase_client.table("archon_crawled_pages").select("id", count="exact").execute()
+        tables_info["crawled_pages"] = pages_response.count if pages_response.count is not None else 0
 
         # Get settings count
-        settings_response = (
-            supabase_client.table("archon_settings").select("id", count="exact").execute()
-        )
-        tables_info["settings"] = (
-            settings_response.count if settings_response.count is not None else 0
-        )
+        settings_response = supabase_client.table("archon_settings").select("id", count="exact").execute()
+        tables_info["settings"] = settings_response.count if settings_response.count is not None else 0
 
         total_records = sum(tables_info.values())
-        logfire.info(
-            f"Database metrics retrieved | total_records={total_records} | tables={tables_info}"
-        )
+        logfire.info(f"Database metrics retrieved | total_records={total_records} | tables={tables_info}")
 
         return {
             "status": "healthy",
@@ -346,7 +325,7 @@ async def settings_health():
 @router.post("/credentials/status-check")
 async def check_credential_status(request: dict[str, list[str]]):
     """Check status of API credentials by actually decrypting and validating them.
-    
+
     This endpoint is specifically for frontend status indicators and returns
     decrypted credential values for connectivity testing.
     """
@@ -362,30 +341,133 @@ async def check_credential_status(request: dict[str, list[str]]):
                 decrypted_value = await credential_service.get_credential(key, decrypt=True)
 
                 if decrypted_value and isinstance(decrypted_value, str) and decrypted_value.strip():
-                    result[key] = {
-                        "key": key,
-                        "value": decrypted_value,
-                        "has_value": True
-                    }
+                    result[key] = {"key": key, "value": decrypted_value, "has_value": True}
                 else:
-                    result[key] = {
-                        "key": key,
-                        "value": None,
-                        "has_value": False
-                    }
+                    result[key] = {"key": key, "value": None, "has_value": False}
 
             except Exception as e:
                 logfire.warning(f"Failed to get credential for status check: {key} | error={str(e)}")
-                result[key] = {
-                    "key": key,
-                    "value": None,
-                    "has_value": False,
-                    "error": str(e)
-                }
+                result[key] = {"key": key, "value": None, "has_value": False, "error": str(e)}
 
-        logfire.info(f"Credential status check completed | checked={len(credential_keys)} | found={len([k for k, v in result.items() if v.get('has_value')])}")
+        logfire.info(
+            f"Credential status check completed | checked={len(credential_keys)} | found={len([k for k, v in result.items() if v.get('has_value')])}"
+        )
         return result
 
     except Exception as e:
         logfire.error(f"Error in credential status check | error={str(e)}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "tests" / "git_integration" / "fixtures"
+
+
+class GitTestFixtureInfo(BaseModel):
+    name: str
+    path: str
+    commit_count: int
+    branch_count: int
+    file_count: int
+    has_binary_files: bool
+
+
+class GitTestFixtureDetails(BaseModel):
+    name: str
+    branches: list[str]
+    commits: list[dict[str, Any]]
+    files: list[dict[str, Any]]
+    default_branch: str
+
+
+@router.get("/dev/git-test-fixtures", response_model=list[GitTestFixtureInfo])
+async def list_git_test_fixtures():
+    """
+    List all available git test fixtures.
+
+    These fixtures are used for testing git integration functionality
+    and can be used to verify backend/frontend test alignment.
+    """
+    try:
+        logfire.info("Listing git test fixtures")
+
+        if not FIXTURES_DIR.exists():
+            logfire.warning(f"Fixtures directory not found: {FIXTURES_DIR}")
+            return []
+
+        fixtures = []
+
+        for fixture_path in FIXTURES_DIR.iterdir():
+            if not fixture_path.is_dir():
+                continue
+
+            expected_file = fixture_path / "EXPECTED.json"
+            if not expected_file.exists():
+                continue
+
+            try:
+                with open(expected_file) as f:
+                    expected = json.load(f)
+
+                branches = expected.get("branches", [])
+                commits = expected.get("commits", [])
+                files = expected.get("files", [])
+                has_binary = any(f.get("is_binary", False) for f in files)
+
+                fixtures.append(
+                    GitTestFixtureInfo(
+                        name=fixture_path.name,
+                        path=str(fixture_path),
+                        commit_count=len(commits),
+                        branch_count=len(branches),
+                        file_count=len(files),
+                        has_binary_files=has_binary,
+                    )
+                )
+            except Exception as e:
+                logfire.warning(f"Failed to parse fixture {fixture_path.name}: {e}")
+                continue
+
+        logfire.info(f"Found {len(fixtures)} git test fixtures")
+        return fixtures
+
+    except Exception as e:
+        logfire.error(f"Error listing git test fixtures: {e}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/dev/git-test-fixtures/{fixture_name}", response_model=GitTestFixtureDetails)
+async def get_git_test_fixture(fixture_name: str):
+    """
+    Get details of a specific git test fixture.
+
+    Returns the full EXPECTED.json content for the fixture,
+    including commits, branches, and files with metadata.
+    """
+    try:
+        logfire.info(f"Getting git test fixture: {fixture_name}")
+
+        fixture_path = FIXTURES_DIR / fixture_name
+        expected_file = fixture_path / "EXPECTED.json"
+
+        if not fixture_path.exists():
+            raise HTTPException(status_code=404, detail=f"Fixture '{fixture_name}' not found")
+
+        if not expected_file.exists():
+            raise HTTPException(status_code=404, detail=f"EXPECTED.json not found for '{fixture_name}'")
+
+        with open(expected_file) as f:
+            expected = json.load(f)
+
+        return GitTestFixtureDetails(
+            name=fixture_name,
+            branches=expected.get("branches", []),
+            commits=expected.get("commits", []),
+            files=expected.get("files", []),
+            default_branch=expected.get("default_branch", "main"),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logfire.error(f"Error getting git test fixture {fixture_name}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})

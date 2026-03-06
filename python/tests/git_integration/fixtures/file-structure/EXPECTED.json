@@ -1,0 +1,124 @@
+{
+  "name": ".repo",
+  "branches": [
+    "main"
+  ],
+  "commits": [
+    {
+      "sha": "d2629d2e850eb33b15dd161b66d43845b6cfc225",
+      "author_name": "Archon Test",
+      "author_email": "archon-tests@example.com",
+      "date": "2026-03-06 02:26:51 -0500",
+      "message": "Add binary asset files"
+    },
+    {
+      "sha": "aa7023ae22aec05adf7ae096d1ec527bb44cd5a0",
+      "author_name": "Archon Test",
+      "author_email": "archon-tests@example.com",
+      "date": "2026-03-06 02:26:51 -0500",
+      "message": "Add source code and config files"
+    },
+    {
+      "sha": "5fef5a2593947396cb26bdd4e34dfebfc2b7e8a0",
+      "author_name": "Archon Test",
+      "author_email": "archon-tests@example.com",
+      "date": "2026-03-06 02:26:51 -0500",
+      "message": "Initial commit"
+    }
+  ],
+  "tags": [],
+  "files": [
+    {
+      "path": "README.md",
+      "sha": "10a660493ad1585da272a4a44f237313d1cb34c3",
+      "size": 83,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "assets/images/animated.gif",
+      "sha": "e6f16566400d177e78a38798ae107e681998d509",
+      "size": 43,
+      "type": "blob",
+      "is_binary": true
+    },
+    {
+      "path": "assets/images/logo.png",
+      "sha": "cebdfae071f98f2e8027564db5535f7de910da5d",
+      "size": 33,
+      "type": "blob",
+      "is_binary": true
+    },
+    {
+      "path": "config/app.yaml",
+      "sha": "3b1feaa479dd2315b7a8facdc0b6f5fb74fd31d2",
+      "size": 31,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "config/settings.json",
+      "sha": "51ffceb0aba8500fabf096d714fef8812244e451",
+      "size": 43,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "docs/guide.md",
+      "sha": "761850a32f5950bec7a9132c2fbb70ab5d94d74d",
+      "size": 69,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "docs/notes.txt",
+      "sha": "8417b9e8f63c4904408633d80ecfc8abe02e0c1d",
+      "size": 41,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "src/__init__.py",
+      "sha": "5793f35b2cd78da2708d00018389032e872652a5",
+      "size": 21,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "src/components/Button.tsx",
+      "sha": "c4b800ea416626007d2f98da32d84ac1efe02b31",
+      "size": 148,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "src/components/__init__.py",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "src/index.ts",
+      "sha": "7914f42c1e86ed6a259996be48cc22c74b443d67",
+      "size": 80,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "src/main.py",
+      "sha": "742ef5f276dbb5fbb2f420ef15b6f5c8adba1e19",
+      "size": 113,
+      "type": "blob",
+      "is_binary": false
+    },
+    {
+      "path": "src/utils.py",
+      "sha": "47ff405dda646bb40f3ec1ad616ea6cc3b72f11f",
+      "size": 103,
+      "type": "blob",
+      "is_binary": false
+    }
+  ],
+  "default_branch": "main"
+}

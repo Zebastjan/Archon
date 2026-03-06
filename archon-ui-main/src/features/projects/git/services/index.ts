@@ -2,4 +2,8 @@
  * Git Services Barrel Export
  */
 
-export { repositoryService } from "./repositoryService";
+export {
+  repositoryService,
+  type GitTestFixtureDetails,
+  type GitTestFixtureInfo,
+} from "./repositoryService";

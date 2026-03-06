@@ -14,6 +14,39 @@ import type {
   SyncCommitsRequest,
 } from "../types";
 
+export interface GitTestFixtureInfo {
+  name: string;
+  path: string;
+  commit_count: number;
+  branch_count: number;
+  file_count: number;
+  has_binary_files: boolean;
+}
+
+export interface GitTestFixtureCommit {
+  sha: string;
+  author_name: string;
+  author_email: string;
+  date: string;
+  message: string;
+}
+
+export interface GitTestFixtureFile {
+  path: string;
+  sha: string;
+  size: number;
+  type: string;
+  is_binary: boolean;
+}
+
+export interface GitTestFixtureDetails {
+  name: string;
+  branches: string[];
+  commits: GitTestFixtureCommit[];
+  files: GitTestFixtureFile[];
+  default_branch: string;
+}
+
 export const repositoryService = {
   /**
    * Initialize a git repository for a project
@@ -158,6 +191,36 @@ export const repositoryService = {
       return response;
     } catch (error) {
       console.error(`Failed to get file content for project ${projectId}:`, error);
+      throw error;
+    }
+  },
+
+  /**
+   * List all available git test fixtures
+   */
+  async listGitTestFixtures(): Promise<GitTestFixtureInfo[]> {
+    try {
+      const response = await callAPIWithETag<GitTestFixtureInfo[]>(
+        "/api/dev/git-test-fixtures",
+      );
+      return response;
+    } catch (error) {
+      console.error("Failed to list git test fixtures:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get details of a specific git test fixture
+   */
+  async getGitTestFixture(fixtureName: string): Promise<GitTestFixtureDetails> {
+    try {
+      const response = await callAPIWithETag<GitTestFixtureDetails>(
+        `/api/dev/git-test-fixtures/${fixtureName}`,
+      );
+      return response;
+    } catch (error) {
+      console.error(`Failed to get git test fixture ${fixtureName}:`, error);
       throw error;
     }
   },
