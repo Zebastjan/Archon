@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from server.utils import get_supabase_client
@@ -100,7 +101,7 @@ def inspect_sources(operations):
         # Cross-reference with operations
         if source_id in op_by_source:
             op = op_by_source[source_id]
-            print(f"     ⚠️  LINKED OPERATION:")
+            print("     ⚠️  LINKED OPERATION:")
             print(f"         Progress ID: {op.get('progress_id')}")
             print(f"         Operation Status: {op.get('status')}")
             print(f"         Operation Progress: {op.get('progress')}%")
@@ -166,7 +167,7 @@ def analyze_zombie_crawls(operations):
             issues.append("Should have been marked as 'paused' on restart")
 
         if issues:
-            print(f"     ⚠️  Issues:")
+            print("     ⚠️  Issues:")
             for issue in issues:
                 print(f"         - {issue}")
 
