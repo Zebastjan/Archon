@@ -2,7 +2,6 @@
 Tests for base provider interface and error classes
 """
 
-import pytest
 
 from src.server.services.crawling.providers.base_provider import (
     CrawlCapability,

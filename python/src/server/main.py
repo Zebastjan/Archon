@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
                             try:
                                 # Check if table exists by querying it
                                 supabase.table("archon_operation_progress").select("id").limit(1).execute()
-                                api_logger.info(f"Table archon_operation_progress already exists")
+                                api_logger.info("Table archon_operation_progress already exists")
                             except Exception:
                                 # Table doesn't exist - we need to create it
                                 # Use the storage API to create table or skip for now

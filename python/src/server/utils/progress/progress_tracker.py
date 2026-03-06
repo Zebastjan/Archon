@@ -213,7 +213,7 @@ class ProgressTracker:
                 operation_type = record.get("operation_type", "crawl")
 
                 if not progress_id:
-                    safe_logfire_error(f"Auto-resume skipped: missing progress_id")
+                    safe_logfire_error("Auto-resume skipped: missing progress_id")
                     continue
 
                 if not source_id:
@@ -267,8 +267,8 @@ class ProgressTracker:
 
                     # Restart the crawl operation
                     if operation_type == "crawl":
-                        from ...services.crawling.crawling_service import CrawlingService
                         from ...services.crawler_manager import get_crawler
+                        from ...services.crawling.crawling_service import CrawlingService
 
                         source_url = source_result.data[0].get("source_url")
                         metadata = source_result.data[0].get("metadata", {})

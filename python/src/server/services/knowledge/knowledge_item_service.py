@@ -94,7 +94,7 @@ class KnowledgeItemService:
             chunk_counts = {}
 
             if source_ids:
-                # Batch fetch first URLs
+                # Batch fetch first URLs from archon_crawled_pages (legacy)
                 urls_result = (
                     self.supabase.from_("archon_crawled_pages")
                     .select("source_id, url")
@@ -107,8 +107,23 @@ class KnowledgeItemService:
                     if item["source_id"] not in first_urls:
                         first_urls[item["source_id"]] = item["url"]
 
-                # Get code example counts per source - NO CONTENT, just counts!
-                # Fetch counts individually for each source
+                # Fallback: Get URLs from archon_document_blobs for new pipeline data
+                if len(first_urls) < len(source_ids):
+                    blobs_result = (
+                        self.supabase.from_("archon_document_blobs")
+                        .select("source_id")
+                        .in_("source_id", source_ids)
+                        .execute()
+                    )
+                    # For sources without URLs, derive from source_url field
+                    for source in sources:
+                        sid = source["source_id"]
+                        if sid not in first_urls:
+                            # Use the source_url from the source record
+                            if source.get("source_url"):
+                                first_urls[sid] = source["source_url"]
+
+                # Get code example counts per source
                 for source_id in source_ids:
                     count_result = (
                         self.supabase.from_("archon_code_examples")
@@ -118,11 +133,46 @@ class KnowledgeItemService:
                     )
                     code_example_counts[source_id] = count_result.count if hasattr(count_result, "count") else 0
 
-                # Ensure all sources have a count (default to 0)
+                # Get chunk counts from archon_chunks (new pipeline)
+                if source_ids:
+                    chunks_result = (
+                        self.supabase.from_("archon_chunks")
+                        .select("blob_id")
+                        .in_(
+                            "blob_id",
+                            [
+                                s["id"]
+                                for s in self.supabase.from_("archon_document_blobs")
+                                .select("id")
+                                .in_("source_id", source_ids)
+                                .execute()
+                                .data
+                            ]
+                            or ["empty"],
+                        )
+                        .execute()
+                    )
+                    # Group by source_id
+                    blob_to_source = {
+                        s["id"]: s["source_id"]
+                        for s in self.supabase.from_("archon_document_blobs")
+                        .select("id, source_id")
+                        .in_("source_id", source_ids)
+                        .execute()
+                        .data
+                    }
+                    for chunk in chunks_result.data or []:
+                        blob_id = chunk.get("blob_id")
+                        if blob_id in blob_to_source:
+                            sid = blob_to_source[blob_id]
+                            chunk_counts[sid] = chunk_counts.get(sid, 0) + 1
+
+                # Ensure all sources have a count
                 for source_id in source_ids:
                     if source_id not in code_example_counts:
                         code_example_counts[source_id] = 0
-                    chunk_counts[source_id] = 0  # Default to 0 to avoid timeout
+                    if source_id not in chunk_counts:
+                        chunk_counts[source_id] = 0
 
                 safe_logfire_info(f"Code example counts: {code_example_counts}")
 

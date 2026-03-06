@@ -30,14 +30,14 @@ from .helpers.site_config import SiteConfig
 from .helpers.url_handler import URLHandler
 from .page_storage_operations import PageStorageOperations
 from .progress_mapper import ProgressMapper
-from .strategies.batch import BatchCrawlStrategy
-from .strategies.recursive import RecursiveCrawlStrategy
-from .strategies.single_page import SinglePageCrawlStrategy
-from .strategies.sitemap import SitemapCrawlStrategy
 
 # Import provider factory for multi-provider support
 from .provider_factory import CrawlProviderFactory
 from .providers.base_provider import CrawlProviderError, CrawlResult
+from .strategies.batch import BatchCrawlStrategy
+from .strategies.recursive import RecursiveCrawlStrategy
+from .strategies.single_page import SinglePageCrawlStrategy
+from .strategies.sitemap import SitemapCrawlStrategy
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,7 @@ class CancellationReason(Enum):
     NONE = "none"  # Not cancelled
     PAUSED = "paused"  # User paused for later resume
     STOPPED = "stopped"  # User explicitly stopped/cancelled
+
 
 # Global registry to track active orchestration services for cancellation support
 _active_orchestrations: dict[str, "CrawlingService"] = {}
@@ -364,6 +365,13 @@ class CrawlingService:
                 last_heartbeat = current_time
 
         try:
+            from ...config.debug_ingestion import get_debug_settings
+
+            debug_settings = get_debug_settings()
+            print(
+                f"[DEBUG_INGESTION] Settings loaded: debug={debug_settings.debug_ingestion}, max_pages={debug_settings.max_crawl_pages}, disable_length={debug_settings.disable_length_filtering}"
+            )
+
             url = str(request.get("url", ""))
             safe_logfire_info(f"Starting async crawl orchestration | url={url} | task_id={task_id}")
 
@@ -830,6 +838,18 @@ class CrawlingService:
                 # Send heartbeat after code extraction
                 await send_heartbeat_if_needed()
 
+                # Update source record with code_examples_count
+                if code_examples_count > 0 and storage_results.get("source_id"):
+                    try:
+                        self.supabase_client.table("archon_sources").update(
+                            {"code_examples_count": code_examples_count}
+                        ).eq("source_id", storage_results["source_id"]).execute()
+                        safe_logfire_info(
+                            f"Updated source with code_examples_count | source_id={storage_results['source_id']} | count={code_examples_count}"
+                        )
+                    except Exception as e:
+                        safe_logfire_error(f"Failed to update code_examples_count in source: {e}")
+
             # Finalization
             await update_mapped_progress(
                 "finalization",
@@ -1267,21 +1287,33 @@ class CrawlingService:
                                     linked_files=extracted_urls,
                                 )
 
-                                # Crawl all same-domain links from llms.txt (no recursion, just one level)
-                                batch_results = await self.crawl_batch_with_progress(
-                                    extracted_urls,
-                                    max_concurrent=request.get("max_concurrent"),
-                                    progress_callback=await self._create_crawl_progress_callback("crawling"),
-                                    link_text_fallbacks=url_to_link_text,
+                            # Apply debug max_crawl_pages limit BEFORE crawling
+                            from ...config.debug_ingestion import get_debug_settings
+
+                            debug_settings = get_debug_settings()
+                            crawl_urls = extracted_urls
+                            if debug_settings.max_crawl_pages:
+                                crawl_urls = extracted_urls[: debug_settings.max_crawl_pages]
+                                safe_logfire_info(
+                                    f"DEBUG_CRAWL_LIMIT | max_pages={debug_settings.max_crawl_pages} | "
+                                    f"original_count={len(extracted_urls)} | limited_to={len(crawl_urls)}"
                                 )
 
-                                # Combine original llms.txt with linked pages
-                                crawl_results.extend(batch_results)
-                                crawl_type = "llms_txt_with_linked_pages"
-                                logger.info(
-                                    f"llms.txt crawling completed: {len(crawl_results)} total pages (1 llms.txt + {len(batch_results)} linked pages)"
-                                )
-                                return crawl_results, crawl_type
+                            # Crawl all same-domain links from llms.txt (no recursion, just one level)
+                            batch_results = await self.crawl_batch_with_progress(
+                                crawl_urls,
+                                max_concurrent=request.get("max_concurrent"),
+                                progress_callback=await self._create_crawl_progress_callback("crawling"),
+                                link_text_fallbacks=url_to_link_text,
+                            )
+
+                            # Combine original llms.txt with linked pages
+                            crawl_results.extend(batch_results)
+                            crawl_type = "llms_txt_with_linked_pages"
+                            logger.info(
+                                f"llms.txt crawling completed: {len(crawl_results)} total pages (1 llms.txt + {len(batch_results)} linked pages)"
+                            )
+                            return crawl_results, crawl_type
 
                         # For non-llms.txt discovery targets (sitemaps, robots.txt), keep single-file mode
                         logger.info(f"Discovery single-file mode: skipping link extraction for {url}")

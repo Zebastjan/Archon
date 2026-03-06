@@ -8,7 +8,7 @@ These tests cover the complete lifecycle of pause/resume operations:
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -371,7 +371,6 @@ class TestSourceCreationRetry:
 
         This is a simpler unit test that verifies the retry logic without full orchestration.
         """
-        import asyncio
         from src.server.services.crawling.crawling_service import CrawlingService
 
         # Track retry attempts

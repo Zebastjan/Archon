@@ -6,7 +6,7 @@ Uses adapter pattern to convert existing code to match the BaseWebCrawlProvider 
 """
 
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from ....config.logfire_config import get_logger
 from ..helpers.site_config import SiteConfig
@@ -60,8 +60,8 @@ class Crawl4aiProvider(BaseWebCrawlProvider):
         self,
         url: str,
         max_depth: int = 2,
-        progress_callback: Optional[Callable] = None,
-        cancellation_check: Optional[Callable] = None,
+        progress_callback: Callable | None = None,
+        cancellation_check: Callable | None = None,
         **kwargs,
     ) -> list[CrawlResult]:
         """
@@ -115,7 +115,7 @@ class Crawl4aiProvider(BaseWebCrawlProvider):
             CrawlCapability.PAUSE_RESUME,
         }
 
-    async def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    async def validate_configuration(self) -> tuple[bool, str | None]:
         """
         Validate Crawl4AI configuration.
 
@@ -130,11 +130,11 @@ class Crawl4aiProvider(BaseWebCrawlProvider):
         self,
         url: str,
         request: dict[str, Any],
-        source_id: Optional[str],
+        source_id: str | None,
         has_existing_state: bool,
-        progress_callback: Optional[Callable],
-        cancellation_check: Optional[Callable],
-    ) -> tuple[list[dict[str, Any]], Optional[str]]:
+        progress_callback: Callable | None,
+        cancellation_check: Callable | None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         """
         Detect URL type and perform appropriate crawling.
 

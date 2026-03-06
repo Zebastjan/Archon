@@ -8,7 +8,7 @@ Tavily provides a specialized web crawling service optimized for modern websites
 import asyncio
 import re
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from ....config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info, safe_logfire_warning
 from .base_provider import (
@@ -69,8 +69,8 @@ class TavilyProvider(BaseWebCrawlProvider):
         self,
         url: str,
         max_depth: int = 2,
-        progress_callback: Optional[Callable] = None,
-        cancellation_check: Optional[Callable] = None,
+        progress_callback: Callable | None = None,
+        cancellation_check: Callable | None = None,
         **kwargs,
     ) -> list[CrawlResult]:
         """
@@ -195,7 +195,7 @@ class TavilyProvider(BaseWebCrawlProvider):
             # NOTE: No PROGRESS_TRACKING (simulated), no PAUSE_RESUME (stateless)
         }
 
-    async def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    async def validate_configuration(self) -> tuple[bool, str | None]:
         """
         Validate Tavily API key.
 
@@ -261,7 +261,7 @@ class TavilyProvider(BaseWebCrawlProvider):
 
         return results
 
-    def _extract_title_from_markdown(self, markdown: str) -> Optional[str]:
+    def _extract_title_from_markdown(self, markdown: str) -> str | None:
         """
         Extract title from markdown content.
 

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from tree_sitter import Language, Parser, Query, QueryCursor
-
 import tree_sitter_javascript
 import tree_sitter_python
 import tree_sitter_typescript
+from tree_sitter import Language, Parser, Query, QueryCursor
 
 
 @pytest.fixture(scope="module")

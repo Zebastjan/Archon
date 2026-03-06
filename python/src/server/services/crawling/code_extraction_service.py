@@ -160,6 +160,7 @@ class CodeExtractionService:
         # Phase 1: Extract code blocks (0-20% of overall code_extraction progress)
         extraction_callback = None
         if progress_callback:
+
             async def extraction_progress(data: dict):
                 # Scale progress to 0-20% range with normalization similar to later phases
                 raw = data.get("progress", data.get("percentage", 0))
@@ -173,6 +174,7 @@ class CodeExtractionService:
                 scaled_progress = min(20, max(0, int(raw_num * 0.2)))
                 data["progress"] = scaled_progress
                 await progress_callback(data)
+
             extraction_callback = extraction_progress
 
         # Extract code blocks from all documents
@@ -184,14 +186,16 @@ class CodeExtractionService:
             safe_logfire_info("No code examples found in any crawled documents")
             # Still report completion when no code examples found
             if progress_callback:
-                await progress_callback({
-                    "status": "code_extraction",
-                    "progress": 100,
-                    "log": "No code examples found to extract",
-                    "code_blocks_found": 0,
-                    "completed_documents": len(crawl_results),
-                    "total_documents": len(crawl_results),
-                })
+                await progress_callback(
+                    {
+                        "status": "code_extraction",
+                        "progress": 100,
+                        "log": "No code examples found to extract",
+                        "code_blocks_found": 0,
+                        "completed_documents": len(crawl_results),
+                        "total_documents": len(crawl_results),
+                    }
+                )
             return 0
 
         # Log what we found
@@ -205,6 +209,7 @@ class CodeExtractionService:
         # Phase 2: Generate summaries (20-90% of overall progress - this is the slowest part!)
         summary_callback = None
         if progress_callback:
+
             async def summary_progress(data: dict):
                 # Scale progress to 20-90% range
                 raw = data.get("progress", data.get("percentage", 0))
@@ -218,6 +223,7 @@ class CodeExtractionService:
                 scaled_progress = min(90, max(20, 20 + int(raw_num * 0.7)))
                 data["progress"] = scaled_progress
                 await progress_callback(data)
+
             summary_callback = summary_progress
 
         # Generate summaries for code blocks
@@ -231,6 +237,7 @@ class CodeExtractionService:
         # Phase 3: Store in database (90-100% of overall progress)
         storage_callback = None
         if progress_callback:
+
             async def storage_progress(data: dict):
                 # Scale progress to 90-100% range
                 raw = data.get("progress", data.get("percentage", 0))
@@ -244,6 +251,7 @@ class CodeExtractionService:
                 scaled_progress = min(100, max(90, 90 + int(raw_num * 0.1)))
                 data["progress"] = scaled_progress
                 await progress_callback(data)
+
             storage_callback = storage_progress
 
         # Store code examples in database
@@ -285,11 +293,13 @@ class CodeExtractionService:
                     cancellation_check()
                 except asyncio.CancelledError:
                     if progress_callback:
-                        await progress_callback({
-                            "status": "cancelled",
-                            "progress": 99,
-                            "message": f"Code extraction cancelled at document {completed_docs + 1}/{total_docs}"
-                        })
+                        await progress_callback(
+                            {
+                                "status": "cancelled",
+                                "progress": 99,
+                                "message": f"Code extraction cancelled at document {completed_docs + 1}/{total_docs}",
+                            }
+                        )
                     raise
 
             try:
@@ -321,34 +331,34 @@ class CodeExtractionService:
                 code_blocks = []
 
                 # Check if this is a text file (e.g., .txt, .md, .html after cleaning) or PDF
-                is_text_file = source_url.endswith((
-                    ".txt",
-                    ".text",
-                    ".md",
-                    ".html",
-                    ".htm",
-                )) or "text/plain" in doc.get("content_type", "") or "text/markdown" in doc.get("content_type", "")
+                is_text_file = (
+                    source_url.endswith(
+                        (
+                            ".txt",
+                            ".text",
+                            ".md",
+                            ".html",
+                            ".htm",
+                        )
+                    )
+                    or "text/plain" in doc.get("content_type", "")
+                    or "text/markdown" in doc.get("content_type", "")
+                )
 
                 is_pdf_file = source_url.endswith(".pdf") or "application/pdf" in doc.get("content_type", "")
 
                 if is_text_file:
                     # For text files, use specialized text extraction
                     safe_logfire_info(f"🎯 TEXT FILE DETECTED | url={source_url}")
-                    safe_logfire_info(
-                        f"📊 Content types - has_html={bool(html_content)}, has_md={bool(md)}"
-                    )
+                    safe_logfire_info(f"📊 Content types - has_html={bool(html_content)}, has_md={bool(md)}")
                     # For text files, the HTML content should be the raw text (not wrapped in <pre>)
                     text_content = html_content if html_content else md
                     if text_content:
                         safe_logfire_info(
                             f"📝 Using {'HTML' if html_content else 'MARKDOWN'} content for text extraction"
                         )
-                        safe_logfire_info(
-                            f"🔍 Content preview (first 500 chars): {repr(text_content[:500])}..."
-                        )
-                        code_blocks = await self._extract_text_file_code_blocks(
-                            text_content, source_url
-                        )
+                        safe_logfire_info(f"🔍 Content preview (first 500 chars): {repr(text_content[:500])}...")
+                        code_blocks = await self._extract_text_file_code_blocks(text_content, source_url)
                         safe_logfire_info(
                             f"📦 Text extraction complete | found={len(code_blocks)} blocks | url={source_url}"
                         )
@@ -361,9 +371,13 @@ class CodeExtractionService:
                     # For PDFs, use the content that should be PDF-extracted text
                     pdf_content = html_content if html_content else md
                     if pdf_content:
-                        safe_logfire_info(f"📝 Using {'HTML' if html_content else 'MARKDOWN'} content for PDF extraction")
+                        safe_logfire_info(
+                            f"📝 Using {'HTML' if html_content else 'MARKDOWN'} content for PDF extraction"
+                        )
                         code_blocks = await self._extract_pdf_code_blocks(pdf_content, source_url)
-                        safe_logfire_info(f"📦 PDF extraction complete | found={len(code_blocks)} blocks | url={source_url}")
+                        safe_logfire_info(
+                            f"📦 PDF extraction complete | found={len(code_blocks)} blocks | url={source_url}"
+                        )
                     else:
                         safe_logfire_info(f"⚠️ NO CONTENT for PDF file | url={source_url}")
 
@@ -375,51 +389,47 @@ class CodeExtractionService:
                     html_code_blocks = await self._extract_html_code_blocks(html_content)
                     if html_code_blocks:
                         code_blocks = html_code_blocks
-                        safe_logfire_info(
-                            f"Found {len(code_blocks)} code blocks from HTML | url={source_url}"
-                        )
+                        safe_logfire_info(f"Found {len(code_blocks)} code blocks from HTML | url={source_url}")
 
                 # If still no code blocks, try markdown extraction as fallback
                 if len(code_blocks) == 0 and md and "```" in md:
-                    safe_logfire_info(
-                        f"No code blocks from HTML, trying markdown extraction | url={source_url}"
-                    )
+                    safe_logfire_info(f"No code blocks from HTML, trying markdown extraction | url={source_url}")
                     from ..storage.code_storage_service import extract_code_blocks
 
                     # Use dynamic minimum for markdown extraction
                     base_min_length = 250  # Default for markdown
                     code_blocks = extract_code_blocks(md, min_length=base_min_length)
-                    safe_logfire_info(
-                        f"Found {len(code_blocks)} code blocks from markdown | url={source_url}"
-                    )
+                    safe_logfire_info(f"Found {len(code_blocks)} code blocks from markdown | url={source_url}")
 
                 if code_blocks:
                     # Use the provided source_id for all code blocks
                     for block in code_blocks:
-                        all_code_blocks.append({
-                            "block": block,
-                            "source_url": source_url,
-                            "source_id": source_id,
-                        })
+                        all_code_blocks.append(
+                            {
+                                "block": block,
+                                "source_url": source_url,
+                                "source_id": source_id,
+                            }
+                        )
 
                 # Update progress only after completing document extraction
                 completed_docs += 1
                 if progress_callback and total_docs > 0:
                     # Report raw progress (0-100) for this extraction phase
                     raw_progress = int((completed_docs / total_docs) * 100)
-                    await progress_callback({
-                        "status": "code_extraction",
-                        "progress": raw_progress,
-                        "log": f"Extracted code from {completed_docs}/{total_docs} documents ({len(all_code_blocks)} code blocks found)",
-                        "completed_documents": completed_docs,
-                        "total_documents": total_docs,
-                        "code_blocks_found": len(all_code_blocks),
-                    })
+                    await progress_callback(
+                        {
+                            "status": "code_extraction",
+                            "progress": raw_progress,
+                            "log": f"Extracted code from {completed_docs}/{total_docs} documents ({len(all_code_blocks)} code blocks found)",
+                            "completed_documents": completed_docs,
+                            "total_documents": total_docs,
+                            "code_blocks_found": len(all_code_blocks),
+                        }
+                    )
 
             except Exception as e:
-                safe_logfire_error(
-                    f"Error processing code from document | url={doc.get('url')} | error={str(e)}"
-                )
+                safe_logfire_error(f"Error processing code from document | url={doc.get('url')} | error={str(e)}")
 
         return all_code_blocks
 
@@ -442,9 +452,7 @@ class CodeExtractionService:
 
         # Check if we have actual content
         if len(content) < 1000:
-            safe_logfire_info(
-                f"Warning: HTML content seems too short, first 500 chars: {repr(content[:500])}"
-            )
+            safe_logfire_info(f"Warning: HTML content seems too short, first 500 chars: {repr(content[:500])}")
 
         # Look for specific indicators of code blocks
         has_prism = "prism" in content.lower()
@@ -596,9 +604,7 @@ class CodeExtractionService:
 
             # Log pattern matches for Milkdown patterns and CodeMirror
             if matches and (
-                "milkdown" in source_type
-                or "codemirror" in source_type
-                or "milkdown" in content[:1000].lower()
+                "milkdown" in source_type or "codemirror" in source_type or "milkdown" in content[:1000].lower()
             ):
                 safe_logfire_info(f"Pattern {source_type} found {len(matches)} matches")
 
@@ -679,9 +685,7 @@ class CodeExtractionService:
                 # Extract position info for deduplication
                 start_pos = match.start()
                 end_pos = (
-                    match.end()
-                    if len(code_content) <= len(match.group(0))
-                    else code_start_pos + len(code_content)
+                    match.end() if len(code_content) <= len(match.group(0)) else code_start_pos + len(code_content)
                 )
 
                 # Check if we've already extracted code from this position
@@ -710,14 +714,16 @@ class CodeExtractionService:
                             f"Extracted code block | source_type={source_type} | language={language} | min_length={min_length} | original_length={len(code_content)} | cleaned_length={len(cleaned_code)}"
                         )
 
-                        code_blocks.append({
-                            "code": cleaned_code,
-                            "language": language,
-                            "context_before": context_before,
-                            "context_after": context_after,
-                            "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
-                            "source_type": source_type,  # Track which pattern matched
-                        })
+                        code_blocks.append(
+                            {
+                                "code": cleaned_code,
+                                "language": language,
+                                "context_before": context_before,
+                                "context_after": context_after,
+                                "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
+                                "source_type": source_type,  # Track which pattern matched
+                            }
+                        )
                     else:
                         safe_logfire_info(
                             f"Code block failed validation | source_type={source_type} | language={language} | length={len(cleaned_code)}"
@@ -742,17 +748,17 @@ class CodeExtractionService:
                         context_before = content[max(0, start_pos - 1000) : start_pos].strip()
                         context_after = content[end_pos : min(len(content), end_pos + 1000)].strip()
 
-                        code_blocks.append({
-                            "code": cleaned_code,
-                            "language": "",
-                            "context_before": context_before,
-                            "context_after": context_after,
-                            "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
-                        })
-                    else:
-                        safe_logfire_info(
-                            f"Standalone code block failed validation | length={len(cleaned_code)}"
+                        code_blocks.append(
+                            {
+                                "code": cleaned_code,
+                                "language": "",
+                                "context_before": context_before,
+                                "context_after": context_after,
+                                "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
+                            }
                         )
+                    else:
+                        safe_logfire_info(f"Standalone code block failed validation | length={len(cleaned_code)}")
 
         return code_blocks
 
@@ -777,9 +783,7 @@ class CodeExtractionService:
         """
         import re
 
-        safe_logfire_info(
-            f"🔍 TEXT FILE EXTRACTION START | url={url} | content_length={len(content)}"
-        )
+        safe_logfire_info(f"🔍 TEXT FILE EXTRACTION START | url={url} | content_length={len(content)}")
         safe_logfire_info(f"📄 First 1000 chars: {repr(content[:1000])}...")
         safe_logfire_info(
             f"📄 Sample showing backticks: {repr(content[5000:6000])}..."
@@ -800,9 +804,7 @@ class CodeExtractionService:
             code_content = match.group(2).strip()
 
             # Log match info without including the actual content that might break formatting
-            safe_logfire_info(
-                f"🔎 Match {i + 1}: language='{language}', raw_length={len(code_content)}"
-            )
+            safe_logfire_info(f"🔎 Match {i + 1}: language='{language}', raw_length={len(code_content)}")
 
             # Get position info first
             start_pos = match.start()
@@ -828,22 +830,20 @@ class CodeExtractionService:
                     safe_logfire_info(
                         f"✅ VALID backtick code block | language={language} | length={len(cleaned_code)}"
                     )
-                    code_blocks.append({
-                        "code": cleaned_code,
-                        "language": language,
-                        "context_before": context_before,
-                        "context_after": context_after,
-                        "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
-                        "source_type": "text_backticks",
-                    })
-                else:
-                    safe_logfire_info(
-                        f"❌ INVALID code block failed validation | language={language}"
+                    code_blocks.append(
+                        {
+                            "code": cleaned_code,
+                            "language": language,
+                            "context_before": context_before,
+                            "context_after": context_after,
+                            "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
+                            "source_type": "text_backticks",
+                        }
                     )
+                else:
+                    safe_logfire_info(f"❌ INVALID code block failed validation | language={language}")
             else:
-                safe_logfire_info(
-                    f"❌ Code block too short: {len(code_content)} < {actual_min_length}"
-                )
+                safe_logfire_info(f"❌ Code block too short: {len(code_content)} < {actual_min_length}")
 
         # Method 2: Look for language-labeled code blocks (e.g., "TypeScript:" or "Python example:")
         language_pattern = r"(?:^|\n)((?:typescript|javascript|python|java|c\+\+|rust|go|ruby|php|swift|kotlin|scala|r|matlab|julia|dart|elixir|erlang|haskell|clojure|lua|perl|shell|bash|sql|html|css|xml|json|yaml|toml|ini|dockerfile|makefile|cmake|gradle|maven|npm|yarn|pip|cargo|gem|pod|composer|nuget|apt|yum|brew|choco|snap|flatpak|appimage|msi|exe|dmg|pkg|deb|rpm|tar|zip|7z|rar|gz|bz2|xz|zst|lz4|lzo|lzma|lzip|lzop|compress|uncompress|gzip|gunzip|bzip2|bunzip2|xz|unxz|zstd|unzstd|lz4|unlz4|lzo|unlzo|lzma|unlzma|lzip|lunzip|lzop|unlzop)\s*(?:code|example|snippet)?)[:\s]*\n((?:(?:^[ \t]+.*\n?)+)|(?:.*\n)+?)(?=\n(?:[A-Z][a-z]+\s*:|^\s*$|\n#|\n\*|\n-|\n\d+\.))"
@@ -852,18 +852,12 @@ class CodeExtractionService:
         for match in matches:
             language_info = match.group(1).lower()
             # Extract just the language name
-            language = (
-                re.match(r"(\w+)", language_info).group(1)
-                if re.match(r"(\w+)", language_info)
-                else ""
-            )
+            language = re.match(r"(\w+)", language_info).group(1) if re.match(r"(\w+)", language_info) else ""
             code_content = match.group(2).strip()
 
             # Calculate dynamic minimum length for language-labeled blocks
             if min_length is None:
-                actual_min_length_lang = await self._calculate_min_length(
-                    language, code_content[:500]
-                )
+                actual_min_length_lang = await self._calculate_min_length(language, code_content[:500])
             else:
                 actual_min_length_lang = min_length
 
@@ -880,14 +874,16 @@ class CodeExtractionService:
                     safe_logfire_info(
                         f"Found language-labeled code block | language={language} | length={len(cleaned_code)}"
                     )
-                    code_blocks.append({
-                        "code": cleaned_code,
-                        "language": language,
-                        "context_before": context_before,
-                        "context_after": context_after,
-                        "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
-                        "source_type": "text_language_label",
-                    })
+                    code_blocks.append(
+                        {
+                            "code": cleaned_code,
+                            "language": language,
+                            "context_before": context_before,
+                            "context_after": context_after,
+                            "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
+                            "source_type": "text_language_label",
+                        }
+                    )
 
         # Method 3: Look for consistently indented blocks (at least 4 spaces or 1 tab)
         # This is more heuristic and should be used carefully
@@ -910,11 +906,7 @@ class CodeExtractionService:
                     current_block.append(line)
                 elif current_block:
                     block_text = "\n".join(current_block)
-                    threshold = (
-                        min_length
-                        if min_length is not None
-                        else await self._get_min_code_length()
-                    )
+                    threshold = min_length if min_length is not None else await self._get_min_code_length()
                     if len(block_text) < threshold:
                         current_block = []
                         current_indent = None
@@ -938,14 +930,16 @@ class CodeExtractionService:
                         safe_logfire_info(
                             f"Found indented code block | language={language} | length={len(cleaned_code)}"
                         )
-                        code_blocks.append({
-                            "code": cleaned_code,
-                            "language": language,
-                            "context_before": context_before,
-                            "context_after": context_after,
-                            "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
-                            "source_type": "text_indented",
-                        })
+                        code_blocks.append(
+                            {
+                                "code": cleaned_code,
+                                "language": language,
+                                "context_before": context_before,
+                                "context_after": context_after,
+                                "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
+                                "source_type": "text_indented",
+                            }
+                        )
 
                     # Reset for next block
                     current_block = []
@@ -959,22 +953,18 @@ class CodeExtractionService:
                         current_block = []
                         current_indent = None
 
-        safe_logfire_info(
-            f"📊 TEXT FILE EXTRACTION COMPLETE | total_blocks={len(code_blocks)} | url={url}"
-        )
+        safe_logfire_info(f"📊 TEXT FILE EXTRACTION COMPLETE | total_blocks={len(code_blocks)} | url={url}")
         for i, block in enumerate(code_blocks[:3]):  # Log first 3 blocks
             safe_logfire_info(
                 f"📦 Block {i + 1} summary: language='{block.get('language', '')}', source_type='{block.get('source_type', '')}', length={len(block.get('code', ''))}"
             )
         return code_blocks
 
-    async def _extract_pdf_code_blocks(
-        self, content: str, url: str
-    ) -> list[dict[str, Any]]:
+    async def _extract_pdf_code_blocks(self, content: str, url: str) -> list[dict[str, Any]]:
         """
         Extract code blocks from PDF-extracted text that lacks markdown formatting.
         PDFs lose markdown delimiters, so we need to detect code patterns in plain text.
-        
+
         This uses a much simpler approach - look for distinct code segments separated by prose.
         """
         import re
@@ -986,7 +976,7 @@ class CodeExtractionService:
 
         # Split content into paragraphs/sections
         # Use double newlines and page breaks as natural boundaries
-        sections = re.split(r'\n\n+|--- Page \d+ ---', content)
+        sections = re.split(r"\n\n+|--- Page \d+ ---", content)
 
         safe_logfire_info(f"📄 Split PDF into {len(sections)} sections")
 
@@ -1010,18 +1000,20 @@ class CodeExtractionService:
                     # Validate quality
                     if await self._validate_code_quality(cleaned_code, language):
                         # Get context from adjacent sections
-                        context_before = sections[i-1].strip() if i > 0 else ""
-                        context_after = sections[i+1].strip() if i < len(sections)-1 else ""
+                        context_before = sections[i - 1].strip() if i > 0 else ""
+                        context_after = sections[i + 1].strip() if i < len(sections) - 1 else ""
 
                         safe_logfire_info(f"✅ PDF code section | language={language} | length={len(cleaned_code)}")
-                        code_blocks.append({
-                            "code": cleaned_code,
-                            "language": language,
-                            "context_before": context_before,
-                            "context_after": context_after,
-                            "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
-                            "source_type": "pdf_section",
-                        })
+                        code_blocks.append(
+                            {
+                                "code": cleaned_code,
+                                "language": language,
+                                "context_before": context_before,
+                                "context_after": context_after,
+                                "full_context": f"{context_before}\n\n{cleaned_code}\n\n{context_after}",
+                                "source_type": "pdf_section",
+                            }
+                        )
                     else:
                         safe_logfire_info(f"❌ PDF section failed validation | language={language}")
                 else:
@@ -1044,27 +1036,27 @@ class CodeExtractionService:
 
         # Code indicators (higher weight for stronger indicators)
         code_patterns = [
-            (r'\bfrom \w+(?:\.\w+)* import\b', 3),  # Python imports (strong)
-            (r'\bdef \w+\s*\(', 3),  # Function definitions (strong)
-            (r'\bclass \w+\s*[\(:]', 3),  # Class definitions (strong)
-            (r'\w+\s*=\s*\w+\(', 2),  # Function calls assigned (medium)
-            (r'\w+\s*=\s*\[.*\]', 2),  # List assignments (medium)
-            (r'\w+\.\w+\(', 2),  # Method calls (medium)
-            (r'^\s*#[^#]', 1),  # Single-line comments (weak)
-            (r'\bpip install\b', 2),  # Package management (medium)
-            (r'\bpytest\b', 2),  # Testing commands (medium)
-            (r'\bgit clone\b', 2),  # Git commands (medium)
-            (r':\s*\n\s+\w+:', 2),  # YAML structure (medium)
-            (r'\blambda\s+\w+:', 2),  # Lambda functions (medium)
+            (r"\bfrom \w+(?:\.\w+)* import\b", 3),  # Python imports (strong)
+            (r"\bdef \w+\s*\(", 3),  # Function definitions (strong)
+            (r"\bclass \w+\s*[\(:]", 3),  # Class definitions (strong)
+            (r"\w+\s*=\s*\w+\(", 2),  # Function calls assigned (medium)
+            (r"\w+\s*=\s*\[.*\]", 2),  # List assignments (medium)
+            (r"\w+\.\w+\(", 2),  # Method calls (medium)
+            (r"^\s*#[^#]", 1),  # Single-line comments (weak)
+            (r"\bpip install\b", 2),  # Package management (medium)
+            (r"\bpytest\b", 2),  # Testing commands (medium)
+            (r"\bgit clone\b", 2),  # Git commands (medium)
+            (r":\s*\n\s+\w+:", 2),  # YAML structure (medium)
+            (r"\blambda\s+\w+:", 2),  # Lambda functions (medium)
         ]
 
         # Prose indicators
         prose_patterns = [
-            (r'\b(the|this|that|these|those|are|is|was|were|will|would|should|could|have|has|had)\b', 1),
-            (r'[.!?]\s+[A-Z]', 2),  # Sentence endings
-            (r'\b(however|therefore|furthermore|moreover|additionally|specifically)\b', 2),
-            (r'\bTable of Contents\b', 3),
-            (r'\bAPI Reference\b', 2),
+            (r"\b(the|this|that|these|those|are|is|was|were|will|would|should|could|have|has|had)\b", 1),
+            (r"[.!?]\s+[A-Z]", 2),  # Sentence endings
+            (r"\b(however|therefore|furthermore|moreover|additionally|specifically)\b", 2),
+            (r"\bTable of Contents\b", 3),
+            (r"\bAPI Reference\b", 2),
         ]
 
         # Count patterns
@@ -1077,7 +1069,7 @@ class CodeExtractionService:
             prose_score += matches * weight
 
         # Additional checks
-        lines = section.split('\n')
+        lines = section.split("\n")
         non_empty_lines = [line.strip() for line in lines if line.strip()]
 
         if not non_empty_lines:
@@ -1089,7 +1081,7 @@ class CodeExtractionService:
             prose_score += 3
 
         # If section has common code structure indicators
-        if any('(' in line and ')' in line for line in non_empty_lines[:5]):
+        if any("(" in line and ")" in line for line in non_empty_lines[:5]):
             code_score += 2
 
         safe_logfire_info(f"📊 Section scoring: code_score={code_score}, prose_score={prose_score}")
@@ -1340,6 +1332,8 @@ class CodeExtractionService:
         """
         import re
 
+        safe_logfire_info(f"🧹 CLEANING CODE | original_length={len(code)} | preview={repr(code[:100])}")
+
         # First apply HTML entity decoding and tag cleaning
         code = self._decode_html_entities(code)
 
@@ -1367,6 +1361,8 @@ class CodeExtractionService:
         for pattern, replacement in spacing_fixes:
             code = re.sub(pattern, replacement, code)
 
+        safe_logfire_info(f"🧹 AFTER SPACING FIXES | length={len(code)} | preview={repr(code[:100])}")
+
         # Fix specific patterns for different languages
         if language.lower() in ["python", "py"]:
             # Fix Python-specific issues
@@ -1387,6 +1383,24 @@ class CodeExtractionService:
                 code = "\n".join(lines[1:-1])
         elif code.startswith("`") and code.endswith("`"):
             code = code[1:-1]
+
+        # Fix llms.txt format line numbers: "1\n\n\ncode\n\n\n2\n\n\nmore code"
+        # This pattern has line numbers on their own lines with empty lines between them
+        lines = code.split("\n")
+        cleaned_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            # Check if this line is a standalone number (llms.txt line number format)
+            if line and line.isdigit():
+                # Skip this line number and any empty lines that follow
+                i += 1
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+                continue
+            cleaned_lines.append(lines[i])
+            i += 1
+        code = "\n".join(cleaned_lines)
 
         # Final cleanup
         # Remove any remaining excessive spaces while preserving indentation
@@ -1497,9 +1511,7 @@ class CodeExtractionService:
 
         # Allow up to 70% comments (documentation is important)
         if non_empty_lines and comment_lines / len(non_empty_lines) > 0.7:
-            safe_logfire_info(
-                f"Code is mostly comments: {comment_lines}/{len(non_empty_lines)} lines"
-            )
+            safe_logfire_info(f"Code is mostly comments: {comment_lines}/{len(non_empty_lines)} lines")
             return False
 
         # Language-specific validation
@@ -1508,14 +1520,10 @@ class CodeExtractionService:
             min_indicators = lang_info.get("min_indicators", [])
 
             # Check for language-specific indicators
-            found_lang_indicators = sum(
-                1 for indicator in min_indicators if indicator in code.lower()
-            )
+            found_lang_indicators = sum(1 for indicator in min_indicators if indicator in code.lower())
 
             if found_lang_indicators < 2:  # Need at least 2 language-specific indicators
-                safe_logfire_info(
-                    f"Code lacks {language} indicators: only {found_lang_indicators} found"
-                )
+                safe_logfire_info(f"Code lacks {language} indicators: only {found_lang_indicators} found")
                 return False
 
         # Check for reasonable structure
@@ -1547,9 +1555,7 @@ class CodeExtractionService:
         if await self._is_prose_filtering_enabled():
             max_prose_ratio = await self._get_max_prose_ratio()
             if word_count > 0 and prose_score / word_count > max_prose_ratio:
-                safe_logfire_info(
-                    f"Code appears to be prose: prose_score={prose_score}, word_count={word_count}"
-                )
+                safe_logfire_info(f"Code appears to be prose: prose_score={prose_score}, word_count={word_count}")
                 return False
 
         # Passed all checks
@@ -1579,18 +1585,22 @@ class CodeExtractionService:
             for item in all_code_blocks:
                 block = item["block"]
                 language = block.get("language", "")
-                default_summaries.append({
-                    "example_name": f"Code Example{f' ({language})' if language else ''}",
-                    "summary": "Code example for demonstration purposes.",
-                })
+                default_summaries.append(
+                    {
+                        "example_name": f"Code Example{f' ({language})' if language else ''}",
+                        "summary": "Code example for demonstration purposes.",
+                    }
+                )
 
             # Report progress for skipped summaries
             if progress_callback:
-                await progress_callback({
-                    "status": "code_extraction",
-                    "progress": 100,
-                    "log": f"Skipped AI summary generation (disabled). Using default summaries for {len(all_code_blocks)} code blocks.",
-                })
+                await progress_callback(
+                    {
+                        "status": "code_extraction",
+                        "progress": 100,
+                        "log": f"Skipped AI summary generation (disabled). Using default summaries for {len(all_code_blocks)} code blocks.",
+                    }
+                )
 
             return default_summaries
 
@@ -1638,10 +1648,9 @@ class CodeExtractionService:
                     validated_results.append(result)
                 else:
                     # Handle non-dict results (CancelledError, etc.)
-                    validated_results.append({
-                        "example_name": "Code Example",
-                        "summary": "Code example for demonstration purposes."
-                    })
+                    validated_results.append(
+                        {"example_name": "Code Example", "summary": "Code example for demonstration purposes."}
+                    )
 
             return validated_results
         except asyncio.CancelledError:
@@ -1765,13 +1774,15 @@ class CodeExtractionService:
 
             # Report completion of code extraction/storage phase
             if progress_callback:
-                await progress_callback({
-                    "status": "code_extraction",
-                    "progress": 100,
-                    "log": f"Code extraction completed. Stored {len(storage_data['examples'])} code examples.",
-                    "code_blocks_found": len(storage_data['examples']),
-                    "code_examples_stored": len(storage_data['examples']),
-                })
+                await progress_callback(
+                    {
+                        "status": "code_extraction",
+                        "progress": 100,
+                        "log": f"Code extraction completed. Stored {len(storage_data['examples'])} code examples.",
+                        "code_blocks_found": len(storage_data["examples"]),
+                        "code_examples_stored": len(storage_data["examples"]),
+                    }
+                )
 
             safe_logfire_info(f"Successfully stored {len(storage_data['examples'])} code examples")
             return len(storage_data["examples"])

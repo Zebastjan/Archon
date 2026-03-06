@@ -193,7 +193,7 @@ async def run_golden_path_test(test_url: str, expected_word: str | None = None) 
         True if all stages passed, False otherwise
     """
     print(f"\n{'#'*80}")
-    print(f"# Golden Path Ingestion Test")
+    print("# Golden Path Ingestion Test")
     print(f"# Started: {datetime.now().isoformat()}")
     print(f"# Test URL: {test_url}")
     print(f"# Expected Word: {expected_word or 'auto-detect'}")
@@ -360,7 +360,7 @@ async def run_golden_path_test(test_url: str, expected_word: str | None = None) 
         return all_passed
 
     except Exception as e:
-        print(f"\n❌ CRITICAL ERROR during test execution:")
+        print("\n❌ CRITICAL ERROR during test execution:")
         print(f"   {type(e).__name__}: {str(e)}")
         import traceback
 

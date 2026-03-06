@@ -1227,6 +1227,7 @@ async def add_code_examples_to_supabase(
         # Create combined texts for embedding (code + summary)
         combined_texts = []
         original_indices: list[int] = []
+        cleaned_codes: list[str] = []  # Track cleaned code for each index
         for j in range(i, batch_end):
             # Validate inputs
             code = code_examples[j] if isinstance(code_examples[j], str) else str(code_examples[j])
@@ -1236,9 +1237,47 @@ async def add_code_examples_to_supabase(
                 search_logger.warning(f"Empty code at index {j}, skipping...")
                 continue
 
-            combined_text = f"{code}\n\nSummary: {summary}"
+            # Clean llms.txt format line numbers: "1\n\n\n# Correct\n\n\n2\n\n\ncode"
+            # This pattern has line numbers on their own lines with empty lines between them
+            code_lines = code.split("\n")
+            cleaned_code_lines = []
+            k = 0
+            prev_was_empty = True  # Start True to skip leading empty lines
+
+            while k < len(code_lines):
+                stripped = code_lines[k].strip()
+
+                # Check if this line is a standalone number (llms.txt line number format)
+                if stripped and stripped.isdigit():
+                    # Skip this line number - don't add anything
+                    k += 1
+                    prev_was_empty = True  # Treat as empty for next iteration
+                    continue
+
+                # Skip empty lines (compress multiple newlines to one, remove leading/trailing)
+                if not stripped:
+                    # Only add one empty line between code blocks, not multiple
+                    if not prev_was_empty and cleaned_code_lines:
+                        cleaned_code_lines.append("")
+                        prev_was_empty = True
+                    k += 1
+                    continue
+
+                # This is actual code content - keep it as-is (preserve original indentation)
+                cleaned_code_lines.append(code_lines[k])
+                prev_was_empty = False
+                k += 1
+
+            # Remove trailing empty lines and join
+            while cleaned_code_lines and not cleaned_code_lines[-1].strip():
+                cleaned_code_lines.pop()
+
+            cleaned_code = "\n".join(cleaned_code_lines)
+
+            combined_text = f"{cleaned_code}\n\nSummary: {summary}"
             combined_texts.append(combined_text)
             original_indices.append(j)
+            cleaned_codes.append(cleaned_code)
 
         # Apply contextual embeddings if enabled
         if use_contextual_embeddings and url_to_full_document:
@@ -1350,11 +1389,14 @@ async def add_code_examples_to_supabase(
                 )
                 continue
 
+            # Extract code from combined text (before "\n\nSummary: ")
+            code_content = text.split("\n\nSummary: ")[0] if "\n\nSummary: " in text else text
+
             batch_data.append(
                 {
                     "url": urls[idx],
                     "chunk_number": chunk_numbers[idx],
-                    "content": code_examples[idx],
+                    "content": code_content,  # Extract cleaned code from combined text
                     "summary": summaries[idx],
                     "metadata": metadatas[idx],  # Store as JSON object, not string
                     "source_id": source_id,

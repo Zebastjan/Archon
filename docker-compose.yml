@@ -30,6 +30,11 @@ services:
       - AGENT_WORK_ORDERS_PORT=${AGENT_WORK_ORDERS_PORT:-8053}
       - AGENTS_ENABLED=${AGENTS_ENABLED:-false}
       - ARCHON_HOST=${HOST:-localhost}
+      - DEBUG_INGESTION=${DEBUG_INGESTION:-false}
+      - MAX_CRAWL_PAGES=${MAX_CRAWL_PAGES:-}
+      - DISABLE_KEYWORD_FILTERING=${DISABLE_KEYWORD_FILTERING:-false}
+      - DISABLE_LENGTH_FILTERING=${DISABLE_LENGTH_FILTERING:-false}
+      - USE_CONTEXTUAL_EMBEDDINGS=${USE_CONTEXTUAL_EMBEDDINGS:-false}
     networks:
       - app-network
     volumes:
@@ -42,6 +47,7 @@ services:
       - ./python/src:/app/src # Mount source code for hot reload
       - ./python/tests:/app/tests # Mount tests for UI test execution
       - ./migration:/app/migration # Mount migration files for version tracking
+      - /home/zebastjan/dev:/repos:ro # Read-only access to local Git repositories
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:

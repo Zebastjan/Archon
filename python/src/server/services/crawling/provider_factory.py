@@ -5,7 +5,6 @@ Creates and configures crawl providers based on user preferences and configurati
 Handles fallback logic when preferred provider is unavailable or fails.
 """
 
-from typing import Optional
 
 from ...config.logfire_config import get_logger, safe_logfire_info, safe_logfire_warning
 from ...utils import get_supabase_client
@@ -26,7 +25,7 @@ class CrawlProviderFactory:
 
     @staticmethod
     async def get_provider(
-        provider_name: Optional[str] = None,
+        provider_name: str | None = None,
         fallback_on_error: bool = True,
         crawler=None,
         supabase_client=None,

@@ -2,7 +2,6 @@
 Simple tests for provider abstraction - directly test the files without full import chain
 """
 
-import pytest
 import sys
 from pathlib import Path
 

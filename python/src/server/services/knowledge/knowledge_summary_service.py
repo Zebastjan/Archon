@@ -34,18 +34,18 @@ class KnowledgeSummaryService:
     ) -> dict[str, Any]:
         """
         Get lightweight summaries of knowledge items.
-        
+
         Returns only essential data needed for card displays:
         - Basic metadata (title, url, type, tags)
         - Counts only (no actual content)
         - Minimal processing overhead
-        
+
         Args:
             page: Page number (1-based)
             per_page: Items per page
             knowledge_type: Optional filter by knowledge type
             search: Optional search term
-            
+
         Returns:
             Dict with minimal item summaries and pagination info
         """
@@ -63,23 +63,17 @@ class KnowledgeSummaryService:
 
             if search:
                 search_pattern = f"%{search}%"
-                query = query.or_(
-                    f"title.ilike.{search_pattern},summary.ilike.{search_pattern}"
-                )
+                query = query.or_(f"title.ilike.{search_pattern},summary.ilike.{search_pattern}")
 
             # Get total count
-            count_query = self.supabase.from_("archon_sources").select(
-                "*", count="exact", head=True
-            )
+            count_query = self.supabase.from_("archon_sources").select("*", count="exact", head=True)
 
             if knowledge_type:
                 count_query = count_query.contains("metadata", {"knowledge_type": knowledge_type})
 
             if search:
                 search_pattern = f"%{search}%"
-                count_query = count_query.or_(
-                    f"title.ilike.{search_pattern},summary.ilike.{search_pattern}"
-                )
+                count_query = count_query.or_(f"title.ilike.{search_pattern},summary.ilike.{search_pattern}")
 
             count_result = count_query.execute()
             total = count_result.count if hasattr(count_result, "count") else 0
@@ -130,7 +124,9 @@ class KnowledgeSummaryService:
                     if not knowledge_type:
                         # Fallback: If not in metadata, default to "technical" for now
                         # This handles legacy data that might not have knowledge_type set
-                        safe_logfire_info(f"Knowledge type not found in metadata for {source_id}, defaulting to technical")
+                        safe_logfire_info(
+                            f"Knowledge type not found in metadata for {source_id}, defaulting to technical"
+                        )
                         knowledge_type = "technical"
 
                     summary = {
@@ -148,9 +144,7 @@ class KnowledgeSummaryService:
                     }
                     summaries.append(summary)
 
-            safe_logfire_info(
-                f"Knowledge summaries fetched | count={len(summaries)} | total={total}"
-            )
+            safe_logfire_info(f"Knowledge summaries fetched | count={len(summaries)} | total={total}")
 
             return {
                 "items": summaries,
@@ -167,19 +161,17 @@ class KnowledgeSummaryService:
     async def _get_document_counts_batch(self, source_ids: list[str]) -> dict[str, int]:
         """
         Get document counts for multiple sources in a single query.
-        
+
         Args:
             source_ids: List of source IDs
-            
+
         Returns:
             Dict mapping source_id to document count
         """
         try:
-            # Use a raw SQL query for efficient counting
-            # Group by source_id and count
             counts = {}
 
-            # For now, use individual queries but optimize later with raw SQL
+            # First check archon_crawled_pages (legacy)
             for source_id in source_ids:
                 result = (
                     self.supabase.from_("archon_crawled_pages")
@@ -188,6 +180,35 @@ class KnowledgeSummaryService:
                     .execute()
                 )
                 counts[source_id] = result.count if hasattr(result, "count") else 0
+
+            # Also check archon_chunks via archon_document_blobs (new pipeline)
+            if source_ids:
+                blobs_result = (
+                    self.supabase.from_("archon_document_blobs")
+                    .select("id, source_id")
+                    .in_("source_id", source_ids)
+                    .execute()
+                )
+
+                if blobs_result.data:
+                    blob_ids = [b["id"] for b in blobs_result.data]
+                    blob_to_source = {b["id"]: b["source_id"] for b in blobs_result.data}
+
+                    chunks_result = (
+                        self.supabase.from_("archon_chunks").select("blob_id").in_("blob_id", blob_ids).execute()
+                    )
+
+                    # Count chunks per source
+                    source_chunk_counts = {}
+                    for chunk in chunks_result.data:
+                        blob_id = chunk.get("blob_id")
+                        if blob_id in blob_to_source:
+                            sid = blob_to_source[blob_id]
+                            source_chunk_counts[sid] = source_chunk_counts.get(sid, 0) + 1
+
+                    # Add new pipeline counts to existing
+                    for sid, cnt in source_chunk_counts.items():
+                        counts[sid] = counts.get(sid, 0) + cnt
 
             return counts
 
@@ -198,10 +219,10 @@ class KnowledgeSummaryService:
     async def _get_code_example_counts_batch(self, source_ids: list[str]) -> dict[str, int]:
         """
         Get code example counts for multiple sources efficiently.
-        
+
         Args:
             source_ids: List of source IDs
-            
+
         Returns:
             Dict mapping source_id to code example count
         """
@@ -227,10 +248,10 @@ class KnowledgeSummaryService:
     async def _get_first_urls_batch(self, source_ids: list[str]) -> dict[str, str]:
         """
         Get first URL for each source in a batch.
-        
+
         Args:
             source_ids: List of source IDs
-            
+
         Returns:
             Dict mapping source_id to first URL
         """

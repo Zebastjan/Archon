@@ -30,6 +30,7 @@ CRAWLING_SERVICE_PATH = "src.server.api_routes.knowledge_api.CrawlingService"
 def client():
     """Create a test client for knowledge API."""
     from fastapi import FastAPI
+
     from src.server.api_routes.knowledge_api import router
 
     app = FastAPI()

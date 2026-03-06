@@ -20,7 +20,7 @@ from pydantic import BaseModel, field_validator
 
 # Basic validation - simplified inline version
 # Import unified logging
-from ..config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info, safe_logfire_warning
+from ..config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..services.crawler_manager import get_crawler
 from ..services.crawling import CrawlingService
 from ..services.credential_service import credential_service
@@ -397,70 +397,113 @@ async def get_knowledge_item_chunks(source_id: str, domain_filter: str | None = 
 
         supabase = get_supabase_client()
 
-        # First get total count
-        count_query = supabase.from_("archon_crawled_pages").select("id", count="exact", head=True)
-        count_query = count_query.eq("source_id", source_id)
+        # Check new pipeline first (archon_chunks + archon_document_blobs)
+        blobs_result = (
+            supabase.from_("archon_document_blobs")
+            .select("id, source_id, blob_uri")
+            .eq("source_id", source_id)
+            .execute()
+        )
+        blob_ids = [b["id"] for b in blobs_result.data] if blobs_result.data else []
 
-        if domain_filter:
-            count_query = count_query.ilike("url", f"%{domain_filter}%")
+        if blob_ids:
+            # New pipeline: read from archon_chunks
+            count_query = supabase.from_("archon_chunks").select("id", count="exact", head=True)
+            count_query = count_query.in_("blob_id", blob_ids)
+            count_result = count_query.execute()
+            total = count_result.count if hasattr(count_result, "count") else 0
 
-        count_result = count_query.execute()
-        total = count_result.count if hasattr(count_result, "count") else 0
+            # Build the main query with pagination
+            query = supabase.from_("archon_chunks").select(
+                "id, blob_id, content, section_path, section_title, page_number, element_type, order_index, metadata"
+            )
+            query = query.in_("blob_id", blob_ids)
+            query = query.order("chunk_index", desc=False)
+            query = query.range(offset, offset + limit - 1)
+            result = query.execute()
+            chunks_raw = result.data if result.data else []
 
-        # Build the main query with pagination
-        query = supabase.from_("archon_crawled_pages").select("id, source_id, content, metadata, url")
-        query = query.eq("source_id", source_id)
+            # Transform new pipeline format to match expected response format
+            chunks = []
+            for chunk in chunks_raw:
+                chunks.append(
+                    {
+                        "id": str(chunk.get("id", "")),
+                        "source_id": source_id,
+                        "content": chunk.get("content", ""),
+                        "metadata": chunk.get("metadata", {}) or {},
+                        "url": blobs_result.data[0]["blob_uri"] if blobs_result.data else "",
+                        "title": chunk.get("section_title") or "",
+                        "section": " > ".join(chunk.get("section_path", [])) if chunk.get("section_path") else None,
+                        "source_type": "url",
+                        "knowledge_type": "technical",
+                    }
+                )
+        else:
+            # Fallback to old pipeline (archon_crawled_pages)
+            count_query = supabase.from_("archon_crawled_pages").select("id", count="exact", head=True)
+            count_query = count_query.eq("source_id", source_id)
 
-        # Apply domain filtering if provided
-        if domain_filter:
-            query = query.ilike("url", f"%{domain_filter}%")
+            if domain_filter:
+                count_query = count_query.ilike("url", f"%{domain_filter}%")
 
-        # Deterministic ordering (URL then id)
-        query = query.order("url", desc=False).order("id", desc=False)
+            count_result = count_query.execute()
+            total = count_result.count if hasattr(count_result, "count") else 0
 
-        # Apply pagination
-        query = query.range(offset, offset + limit - 1)
+            # Build the main query with pagination
+            query = supabase.from_("archon_crawled_pages").select("id, source_id, content, metadata, url")
+            query = query.eq("source_id", source_id)
 
-        result = query.execute()
-        # Check for error more explicitly to work with mocks
-        if hasattr(result, "error") and result.error is not None:
-            safe_logfire_error(f"Supabase query error | source_id={source_id} | error={result.error}")
-            raise HTTPException(status_code=500, detail={"error": str(result.error)})
+            # Apply domain filtering if provided
+            if domain_filter:
+                query = query.ilike("url", f"%{domain_filter}%")
 
-        chunks = result.data if result.data else []
+            # Deterministic ordering (URL then id)
+            query = query.order("url", desc=False).order("id", desc=False)
 
-        # Extract useful fields from metadata to top level for frontend
-        # This ensures the API response matches the TypeScript DocumentChunk interface
-        for chunk in chunks:
-            metadata = chunk.get("metadata", {}) or {}
+            # Apply pagination
+            query = query.range(offset, offset + limit - 1)
 
-            # Generate meaningful titles from available data
-            title = None
+            result = query.execute()
+            # Check for error more explicitly to work with mocks
+            if hasattr(result, "error") and result.error is not None:
+                safe_logfire_error(f"Supabase query error | source_id={source_id} | error={result.error}")
+                raise HTTPException(status_code=500, detail={"error": str(result.error)})
 
-            # Try to get title from various metadata fields
-            if metadata.get("filename"):
-                title = metadata.get("filename")
-            elif metadata.get("headers"):
-                title = metadata.get("headers").split(";")[0].strip("# ")
-            elif metadata.get("title") and metadata.get("title").strip():
-                title = metadata.get("title").strip()
-            else:
-                # Try to extract from content first for more specific titles
-                if chunk.get("content"):
-                    content = chunk.get("content", "").strip()
-                    # Look for markdown headers at the start
-                    lines = content.split("\n")[:5]
-                    for line in lines:
-                        line = line.strip()
-                        if line.startswith("# "):
-                            title = line[2:].strip()
-                            break
-                        elif line.startswith("## "):
-                            title = line[3:].strip()
-                            break
-                        elif line.startswith("### "):
-                            title = line[4:].strip()
-                            break
+            chunks = result.data if result.data else []
+
+            # Extract useful fields from metadata to top level for frontend
+            # This ensures the API response matches the TypeScript DocumentChunk interface
+            for chunk in chunks:
+                metadata = chunk.get("metadata", {}) or {}
+
+                # Generate meaningful titles from available data
+                title = None
+
+                # Try to get title from various metadata fields
+                if metadata.get("filename"):
+                    title = metadata.get("filename")
+                elif metadata.get("headers"):
+                    title = metadata.get("headers").split(";")[0].strip("# ")
+                elif metadata.get("title") and metadata.get("title").strip():
+                    title = metadata.get("title").strip()
+                else:
+                    # Try to extract from content first for more specific titles
+                    if chunk.get("content"):
+                        content = chunk.get("content", "").strip()
+                        # Look for markdown headers at the start
+                        lines = content.split("\n")[:5]
+                        for line in lines:
+                            line = line.strip()
+                            if line.startswith("# "):
+                                title = line[2:].strip()
+                                break
+                            elif line.startswith("## "):
+                                title = line[3:].strip()
+                                break
+                            elif line.startswith("### "):
+                                title = line[4:].strip()
+                                break
 
                     # Fallback: use first meaningful line that looks like a title
                     if not title:
@@ -697,12 +740,13 @@ async def refresh_knowledge_item(source_id: str):
             except Exception as e:
                 # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
                 error_message = f"Critical refresh failure: {str(e)}"
-                logger.error(f"=== BACKGROUND TASK EXCEPTION (REFRESH) ===")
+                logger.error("=== BACKGROUND TASK EXCEPTION (REFRESH) ===")
                 logger.error(f"Progress ID: {progress_id}")
                 logger.error(f"Source ID: {source_id}")
                 logger.error(f"Error: {error_message}")
                 logger.error(f"Exception Type: {type(e).__name__}")
                 import traceback
+
                 logger.error(f"Traceback:\n{traceback.format_exc()}")
                 logger.error("=== END BACKGROUND TASK EXCEPTION ===")
                 safe_logfire_error(f"Background refresh task failed | progress_id={progress_id} | error={str(e)}")
@@ -819,7 +863,11 @@ async def _perform_revectorize_with_progress(progress_id: str, source_id: str, p
                 use_hybrid = await credential_service.get_credential("USE_HYBRID_SEARCH", True)
                 chunk_size = await credential_service.get_credential("CHUNK_SIZE", 512)
 
-                vectorizer_settings = {"use_contextual": use_contextual, "use_hybrid": use_hybrid, "chunk_size": chunk_size}
+                vectorizer_settings = {
+                    "use_contextual": use_contextual,
+                    "use_hybrid": use_hybrid,
+                    "chunk_size": chunk_size,
+                }
 
                 # Process documents in batches
                 batch_size = 100
@@ -908,12 +956,13 @@ async def _perform_revectorize_with_progress(progress_id: str, source_id: str, p
     except Exception as e:
         # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
         error_message = f"Critical re-vectorize failure: {str(e)}"
-        logger.error(f"=== BACKGROUND TASK EXCEPTION (RE-VECTORIZE) ===")
+        logger.error("=== BACKGROUND TASK EXCEPTION (RE-VECTORIZE) ===")
         logger.error(f"Progress ID: {progress_id}")
         logger.error(f"Source ID: {source_id}")
         logger.error(f"Error: {error_message}")
         logger.error(f"Exception Type: {type(e).__name__}")
         import traceback
+
         logger.error(f"Traceback:\n{traceback.format_exc()}")
         logger.error("=== END BACKGROUND TASK EXCEPTION ===")
         safe_logfire_error(f"Background re-vectorize task failed | progress_id={progress_id} | error={str(e)}")
@@ -1079,12 +1128,13 @@ async def _perform_resummarize_with_progress(progress_id: str, source_id: str, t
     except Exception as e:
         # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
         error_message = f"Critical re-summarize failure: {str(e)}"
-        logger.error(f"=== BACKGROUND TASK EXCEPTION (RE-SUMMARIZE) ===")
+        logger.error("=== BACKGROUND TASK EXCEPTION (RE-SUMMARIZE) ===")
         logger.error(f"Progress ID: {progress_id}")
         logger.error(f"Source ID: {source_id}")
         logger.error(f"Error: {error_message}")
         logger.error(f"Exception Type: {type(e).__name__}")
         import traceback
+
         logger.error(f"Traceback:\n{traceback.format_exc()}")
         logger.error("=== END BACKGROUND TASK EXCEPTION ===")
         safe_logfire_error(f"Background re-summarize task failed | progress_id={progress_id} | error={str(e)}")
@@ -1253,12 +1303,13 @@ async def _perform_crawl_with_progress(progress_id: str, request: KnowledgeItemR
     except Exception as e:
         # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
         error_message = f"Critical crawl failure: {str(e)}"
-        logger.error(f"=== BACKGROUND TASK EXCEPTION (CRAWL) ===")
+        logger.error("=== BACKGROUND TASK EXCEPTION (CRAWL) ===")
         logger.error(f"Progress ID: {progress_id}")
         logger.error(f"URL: {str(request.url)}")
         logger.error(f"Error: {error_message}")
         logger.error(f"Exception Type: {type(e).__name__}")
         import traceback
+
         logger.error(f"Traceback:\n{traceback.format_exc()}")
         logger.error("=== END BACKGROUND TASK EXCEPTION ===")
         safe_logfire_error(f"Background crawl task failed | progress_id={progress_id} | error={str(e)}")
@@ -1784,7 +1835,9 @@ async def resume_operation(progress_id: str):
         if not source_id:
             raise HTTPException(
                 status_code=400,
-                detail={"error": "Cannot resume operation: missing source_id. Operation may have been interrupted too early."}
+                detail={
+                    "error": "Cannot resume operation: missing source_id. Operation may have been interrupted too early."
+                },
             )
 
         # Restart the actual operation based on type
@@ -1804,7 +1857,7 @@ async def resume_operation(progress_id: str):
                     status_code=404,
                     detail={
                         "error": f"Cannot resume operation: source record not found (source_id: {source_id}). Operation may have been interrupted too early."
-                    }
+                    },
                 )
 
             source_url = source_result.data[0].get("source_url")
@@ -1858,12 +1911,13 @@ async def resume_operation(progress_id: str):
                 except Exception as e:
                     # TOP-LEVEL EXCEPTION HANDLER FOR BACKGROUND TASK
                     error_message = f"Critical resume failure: {str(e)}"
-                    logger.error(f"=== BACKGROUND TASK EXCEPTION (RESUME) ===")
+                    logger.error("=== BACKGROUND TASK EXCEPTION (RESUME) ===")
                     logger.error(f"Progress ID: {progress_id}")
                     logger.error(f"Source ID: {source_id}")
                     logger.error(f"Error: {error_message}")
                     logger.error(f"Exception Type: {type(e).__name__}")
                     import traceback
+
                     logger.error(f"Traceback:\n{traceback.format_exc()}")
                     logger.error("=== END BACKGROUND TASK EXCEPTION ===")
                     safe_logfire_error(f"Background resume task failed | progress_id={progress_id} | error={str(e)}")
@@ -1871,6 +1925,7 @@ async def resume_operation(progress_id: str):
                     # Update progress tracker (best effort)
                     try:
                         from ..utils.progress.progress_tracker import ProgressTracker
+
                         tracker = ProgressTracker(progress_id, operation_type="crawl")
                         await tracker.error(error_message)
                     except Exception:
@@ -1879,9 +1934,7 @@ async def resume_operation(progress_id: str):
             # Start the wrapper task in background
             asyncio.create_task(_perform_resume_with_semaphore())
 
-            safe_logfire_info(
-                f"Restarted crawl | progress_id={progress_id} | source_id={source_id} | url={source_url}"
-            )
+            safe_logfire_info(f"Restarted crawl | progress_id={progress_id} | source_id={source_id} | url={source_url}")
 
         safe_logfire_info(f"Operation resumed | progress_id={progress_id} | source_id={source_id}")
         return {

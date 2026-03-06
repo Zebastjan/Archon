@@ -1,8 +1,8 @@
 """Tests for Docling chunkers."""
 
-import pytest
 from pathlib import Path
 
+import pytest
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "docling"
 
@@ -10,10 +10,8 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "docling"
 def check_docling_available():
     """Check if docling and its dependencies are available."""
     try:
-        import torch
-        import torchvision
-        from docling.document_converter import DocumentConverter
         from docling.chunking import HybridChunker
+        from docling.document_converter import DocumentConverter
 
         converter = DocumentConverter()
         chunker = HybridChunker()

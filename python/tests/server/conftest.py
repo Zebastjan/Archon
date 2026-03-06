@@ -5,7 +5,6 @@ import types
 
 import pytest
 
-
 # Prevent pytest from importing the repository-wide tests.conftest module.
 sys.modules.setdefault("tests.conftest", types.ModuleType("tests.conftest"))
 

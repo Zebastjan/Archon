@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class CrawlProviderType(Enum):
@@ -42,7 +42,7 @@ class CrawlResult:
 
     url: str  # URL that was crawled
     markdown: str  # Markdown content extracted from the page
-    title: Optional[str]  # Page title (extracted from H1/metadata)
+    title: str | None  # Page title (extracted from H1/metadata)
     metadata: dict[str, Any]  # Provider-specific metadata
 
 
@@ -66,8 +66,8 @@ class BaseWebCrawlProvider(ABC):
         self,
         url: str,
         max_depth: int = 2,
-        progress_callback: Optional[Callable] = None,
-        cancellation_check: Optional[Callable] = None,
+        progress_callback: Callable | None = None,
+        cancellation_check: Callable | None = None,
         **kwargs,
     ) -> list[CrawlResult]:
         """
@@ -102,7 +102,7 @@ class BaseWebCrawlProvider(ABC):
         pass
 
     @abstractmethod
-    async def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    async def validate_configuration(self) -> tuple[bool, str | None]:
         """
         Check if provider is properly configured (API keys, etc.).
 
@@ -125,7 +125,7 @@ class CrawlProviderError(Exception):
     """
 
     def __init__(
-        self, message: str, fallback_available: bool = True, original_error: Optional[Exception] = None
+        self, message: str, fallback_available: bool = True, original_error: Exception | None = None
     ):
         super().__init__(message)
         self.message = message
@@ -137,7 +137,7 @@ class TavilyRateLimitError(CrawlProviderError):
     """Tavily API rate limit exceeded"""
 
     def __init__(
-        self, message: str = "Tavily API rate limit exceeded", original_error: Optional[Exception] = None
+        self, message: str = "Tavily API rate limit exceeded", original_error: Exception | None = None
     ):
         super().__init__(message, fallback_available=True, original_error=original_error)
 
@@ -146,7 +146,7 @@ class TavilyAPIError(CrawlProviderError):
     """Tavily API error (4xx/5xx)"""
 
     def __init__(
-        self, message: str, status_code: Optional[int] = None, original_error: Optional[Exception] = None
+        self, message: str, status_code: int | None = None, original_error: Exception | None = None
     ):
         super().__init__(message, fallback_available=True, original_error=original_error)
         self.status_code = status_code

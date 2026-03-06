@@ -5,8 +5,9 @@ Uses mocks to avoid burning API credits during tests.
 """
 
 import asyncio
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.server.services.crawling.providers.base_provider import (
     CrawlCapability,
