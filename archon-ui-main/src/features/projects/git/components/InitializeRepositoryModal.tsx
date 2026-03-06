@@ -20,8 +20,15 @@ export const InitializeRepositoryModal = ({
   onClose,
   onSuccess,
 }: InitializeRepositoryModalProps) => {
-  const [repoPath, setRepoPath] = useState("");
-  const [branchName, setbranchName] = useState("");
+  const [formData, setFormData] = useState({
+    repoPath: "",
+    branchName: "",
+    initializeIfNeeded: false,
+    createInitialCommit: false,
+    initialCommitMessage: "Initial commit",
+    gitAuthorName: "",
+    gitAuthorEmail: "",
+  });
   const [error, setError] = useState<string | null>(null);
 
   const initializeMutation = useInitializeRepository(projectId);
@@ -30,15 +37,20 @@ export const InitializeRepositoryModal = ({
     e.preventDefault();
     setError(null);
 
-    if (!repoPath.trim()) {
+    if (!formData.repoPath.trim()) {
       setError("Repository path is required");
       return;
     }
 
     try {
       const metadata = await initializeMutation.mutateAsync({
-        repo_path: repoPath.trim(),
-        branch_name: branchName.trim() || undefined,
+        repo_path: formData.repoPath.trim(),
+        branch_name: formData.branchName.trim() || undefined,
+        initialize_if_needed: formData.initializeIfNeeded,
+        create_initial_commit: formData.createInitialCommit,
+        initial_commit_message: formData.initialCommitMessage.trim() || undefined,
+        git_author_name: formData.gitAuthorName.trim() || undefined,
+        git_author_email: formData.gitAuthorEmail.trim() || undefined,
       });
       onSuccess(metadata);
     } catch (err) {
@@ -79,13 +91,15 @@ export const InitializeRepositoryModal = ({
             <Input
               id="repo-path"
               type="text"
-              value={repoPath}
-              onChange={(e) => setRepoPath(e.target.value)}
-              placeholder="/path/to/your/repository"
-              className="w-full"
+              value={formData.repoPath}
+              onChange={(e) => setFormData((prev) => ({ ...prev, repoPath: e.target.value }))}
+              placeholder="/repos/your-repo-name"
+              className="w-full font-mono"
             />
-            <p className="mt-1 text-xs text-zinc-500">
-              Full path to an existing Git repository on your filesystem
+            <p className="mt-1.5 text-xs text-gray-400">
+              Enter container path (e.g., <code className="text-cyan-400">/repos/syllablaze</code>).
+              Your <code className="text-gray-300">~/dev</code> directory is mounted at{" "}
+              <code className="text-gray-300">/repos</code> in the container.
             </p>
           </div>
 
@@ -96,13 +110,104 @@ export const InitializeRepositoryModal = ({
             <Input
               id="branch-name"
               type="text"
-              value={branchName}
-              onChange={(e) => setbranchName(e.target.value)}
+              value={formData.branchName}
+              onChange={(e) => setFormData((prev) => ({ ...prev, branchName: e.target.value }))}
               placeholder="main"
               className="w-full"
             />
             <p className="mt-1 text-xs text-zinc-500">Leave empty to auto-detect default branch</p>
           </div>
+
+          {/* Git initialization checkbox */}
+          <div className="flex items-center space-x-2 mt-3">
+            <input
+              type="checkbox"
+              id="initializeIfNeeded"
+              checked={formData.initializeIfNeeded}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, initializeIfNeeded: e.target.checked }))
+              }
+              className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
+            />
+            <label htmlFor="initializeIfNeeded" className="text-sm text-gray-300">
+              Initialize as new Git repository if not already one
+            </label>
+          </div>
+
+          {/* Conditional: Show commit options if initializing */}
+          {formData.initializeIfNeeded && (
+            <div className="mt-4 p-4 border border-gray-700 rounded-lg bg-gray-800/50">
+              <p className="text-sm text-gray-300 font-medium mb-3">
+                Initial Commit Options (Optional)
+              </p>
+
+              {/* Create initial commit toggle */}
+              <div className="flex items-center space-x-2 mb-3">
+                <input
+                  type="checkbox"
+                  id="createInitialCommit"
+                  checked={formData.createInitialCommit}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, createInitialCommit: e.target.checked }))
+                  }
+                  className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
+                />
+                <label htmlFor="createInitialCommit" className="text-sm text-gray-400">
+                  Create initial commit
+                </label>
+              </div>
+
+              {/* Commit configuration (only if creating commit) */}
+              {formData.createInitialCommit && (
+                <div className="space-y-3 pl-6">
+                  <div>
+                    <label htmlFor="commitMessage" className="block text-sm text-gray-400 mb-1">
+                      Commit Message
+                    </label>
+                    <Input
+                      id="commitMessage"
+                      value={formData.initialCommitMessage}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, initialCommitMessage: e.target.value }))
+                      }
+                      placeholder="Initial commit"
+                      className="text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="authorName" className="block text-sm text-gray-400 mb-1">
+                      Author Name (optional)
+                    </label>
+                    <Input
+                      id="authorName"
+                      value={formData.gitAuthorName}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, gitAuthorName: e.target.value }))
+                      }
+                      placeholder="Uses git config default"
+                      className="text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="authorEmail" className="block text-sm text-gray-400 mb-1">
+                      Author Email (optional)
+                    </label>
+                    <Input
+                      id="authorEmail"
+                      value={formData.gitAuthorEmail}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, gitAuthorEmail: e.target.value }))
+                      }
+                      placeholder="Uses git config default"
+                      className="text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Error message */}
           {error && (
