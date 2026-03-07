@@ -4,12 +4,14 @@ import { Activity, CheckCircle2, FileText, GitBranch, List, ListTodo, Pin } from
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useStaggeredEntrance } from "../../../hooks/useStaggeredEntrance";
+import { useSettings } from "../../../contexts/SettingsContext";
 import { isOptimistic } from "../../shared/utils/optimistic";
 import { DeleteConfirmModal } from "../../ui/components/DeleteConfirmModal";
 import { Button, PillNavigation, SelectableCard } from "../../ui/primitives";
 import { OptimisticIndicator } from "../../ui/primitives/OptimisticIndicator";
 import { StatPill } from "../../ui/primitives/pill";
 import { cn } from "../../ui/primitives/styles";
+import { GitTestProjectCard } from "../components/GitTestProjectCard";
 import { NewProjectModal } from "../components/NewProjectModal";
 import { ProjectHeader } from "../components/ProjectHeader";
 import { ProjectList } from "../components/ProjectList";
@@ -59,6 +61,9 @@ export function ProjectsView({ className = "", "data-id": dataId }: ProjectsView
     id: string;
     title: string;
   } | null>(null);
+
+  // Settings hook
+  const { gitTestFixturesEnabled } = useSettings();
 
   // React Query hooks
   const { data: projects = [], isLoading: isLoadingProjects, error: projectsError } = useProjects();
@@ -193,6 +198,21 @@ export function ProjectsView({ className = "", "data-id": dataId }: ProjectsView
 
       {layoutMode === "horizontal" ? (
         <>
+          {/* Git Test Fixtures Card - shown when enabled */}
+          {gitTestFixturesEnabled && (
+            <motion.div 
+              variants={itemVariants} 
+              className="mb-4"
+            >
+              <GitTestProjectCard 
+                onInitialize={() => {
+                  // Refresh projects after initialization
+                  queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+                }}
+              />
+            </motion.div>
+          )}
+
           <ProjectList
             projects={sortedProjects}
             selectedProject={selectedProject}

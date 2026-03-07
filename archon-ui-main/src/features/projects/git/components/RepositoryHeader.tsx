@@ -3,7 +3,7 @@
  * Shows repository metadata with branch selector and sync button
  */
 
-import { GitBranch, RefreshCw, Trash2 } from "lucide-react";
+import { GitBranch, RefreshCw, Trash2, FlaskConical } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/features/ui/primitives";
 import { useDeleteRepository, useSyncCommits } from "../hooks";
@@ -52,6 +52,14 @@ export const RepositoryHeader = ({
           <div>
             <h2 className="font-medium text-white">{repository.repo_name}</h2>
             <p className="text-sm text-zinc-400">{repository.repo_url}</p>
+            {repository.metadata?.is_test_fixture && (
+              <div className="mt-1 flex items-center gap-1">
+                <span className="inline-flex items-center rounded-full bg-purple-500/20 px-2 py-0.5 text-xs font-medium text-purple-300">
+                  <FlaskConical className="mr-1 h-3 w-3" />
+                  Test Fixture: {repository.metadata.fixture_name}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

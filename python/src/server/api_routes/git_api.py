@@ -76,9 +76,7 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
         HTTPException 500: If database operation fails
     """
     try:
-        logfire.info(
-            f"Initializing git repository for project {project_id} | path={request.repo_path}"
-        )
+        logfire.info(f"Initializing git repository for project {project_id} | path={request.repo_path}")
 
         # Check for submodules (explicitly not supported)
         if _check_for_submodules(request.repo_path):
@@ -100,9 +98,7 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
         supabase_client = get_supabase_client()
 
         # Verify project exists
-        project_response = (
-            supabase_client.table("archon_projects").select("id").eq("id", project_id).execute()
-        )
+        project_response = supabase_client.table("archon_projects").select("id").eq("id", project_id).execute()
 
         if not project_response.data:
             raise HTTPException(
@@ -112,10 +108,7 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
 
         # Check if repository already exists for this project
         existing_repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id")
-            .eq("source_id", project_id)
-            .execute()
+            supabase_client.table("archon_git_repositories").select("id").eq("source_id", project_id).execute()
         )
 
         if existing_repo_response.data:
@@ -128,14 +121,13 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
         repo_name = Path(request.repo_path).name
         source_data = {
             "source_type": "git_repository",
-            "url": request.repo_path,
-            "name": repo_name,
+            "source_url": request.repo_path,
+            "source_display_name": repo_name,
+            "title": repo_name,
             "status": "pending",
         }
 
-        source_response = (
-            supabase_client.table("archon_sources").insert(source_data).execute()
-        )
+        source_response = supabase_client.table("archon_sources").insert(source_data).execute()
 
         if not source_response.data:
             raise HTTPException(
@@ -162,9 +154,7 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
                 detail=result.get("error", "Failed to register repository"),
             )
 
-        logger.info(
-            f"Successfully initialized repository for project {project_id} | repo_id={result['repo_id']}"
-        )
+        logger.info(f"Successfully initialized repository for project {project_id} | repo_id={result['repo_id']}")
 
         return {
             "repo_id": result["repo_id"],
@@ -214,10 +204,7 @@ async def get_repository(project_id: str):
 
         # Get repository by source_id (which links to project)
         repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("*")
-            .eq("source_id", project_id)
-            .execute()
+            supabase_client.table("archon_git_repositories").select("*").eq("source_id", project_id).execute()
         )
 
         if not repo_response.data:
@@ -349,29 +336,17 @@ async def get_commits(
             branch_name = default_branch
 
         # Query commits
-        query = (
-            supabase_client.table("archon_git_commits")
-            .select("*")
-            .eq("repo_id", repo_id)
-        )
+        query = supabase_client.table("archon_git_commits").select("*").eq("repo_id", repo_id)
 
         # Filter by branch if specified
         if branch_name:
             query = query.contains("branches", [branch_name])
 
         # Apply pagination and ordering
-        commits_response = (
-            query.order("commit_date", desc=True)
-            .range(offset, offset + limit - 1)
-            .execute()
-        )
+        commits_response = query.order("commit_date", desc=True).range(offset, offset + limit - 1).execute()
 
         # Get total count (for pagination metadata)
-        count_query = (
-            supabase_client.table("archon_git_commits")
-            .select("id", count="exact")
-            .eq("repo_id", repo_id)
-        )
+        count_query = supabase_client.table("archon_git_commits").select("id", count="exact").eq("repo_id", repo_id)
 
         if branch_name:
             count_query = count_query.contains("branches", [branch_name])
@@ -463,9 +438,7 @@ async def sync_commits(project_id: str, request: SyncCommitsRequest | None = Non
                 detail=result.get("error", "Failed to sync commits"),
             )
 
-        logger.info(
-            f"Successfully synced {result['commit_count']} commits for project {project_id}"
-        )
+        logger.info(f"Successfully synced {result['commit_count']} commits for project {project_id}")
 
         return result
 
@@ -511,9 +484,7 @@ async def get_file_tree(
         HTTPException 500: If tree retrieval fails
     """
     try:
-        logfire.debug(
-            f"Getting file tree for project {project_id} | commit={commit_sha}, path_prefix={path_prefix}"
-        )
+        logfire.debug(f"Getting file tree for project {project_id} | commit={commit_sha}, path_prefix={path_prefix}")
 
         supabase_client = get_supabase_client()
 
@@ -597,9 +568,7 @@ async def get_file_content(
         HTTPException 500: If content retrieval fails
     """
     try:
-        logfire.debug(
-            f"Getting file content for project {project_id} | commit={commit_sha}, file_path={file_path}"
-        )
+        logfire.debug(f"Getting file content for project {project_id} | commit={commit_sha}, file_path={file_path}")
 
         supabase_client = get_supabase_client()
 

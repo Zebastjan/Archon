@@ -224,4 +224,64 @@ export const repositoryService = {
       throw error;
     }
   },
+
+  /**
+   * Initialize a test fixture as the repository for a project
+   */
+  async initializeTestFixture(
+    projectId: string,
+    fixtureName: string,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    repo_id: string | null;
+    repo_name: string | null;
+  }> {
+    try {
+      const response = await callAPIWithETag<{
+        success: boolean;
+        message: string;
+        repo_id: string | null;
+        repo_name: string | null;
+      }>(`/api/projects/${projectId}/test-fixtures/initialize`, {
+        method: "POST",
+        body: JSON.stringify({ fixture_name: fixtureName }),
+      });
+      return response;
+    } catch (error) {
+      console.error(
+        `Failed to initialize test fixture ${fixtureName} for project ${projectId}:`,
+        error,
+      );
+      throw error;
+    }
+  },
+
+  /**
+   * Cleanup all test fixtures for a project
+   */
+  async cleanupTestFixtures(projectId: string): Promise<{
+    success: boolean;
+    message: string;
+    deleted_count: number;
+    temp_path_removed: boolean;
+  }> {
+    try {
+      const response = await callAPIWithETag<{
+        success: boolean;
+        message: string;
+        deleted_count: number;
+        temp_path_removed: boolean;
+      }>(`/api/projects/${projectId}/test-fixtures`, {
+        method: "DELETE",
+      });
+      return response;
+    } catch (error) {
+      console.error(
+        `Failed to cleanup test fixtures for project ${projectId}:`,
+        error,
+      );
+      throw error;
+    }
+  },
 };

@@ -16,6 +16,11 @@ export interface Repository {
   crawl_status: "pending" | "crawling" | "completed" | "failed";
   crawl_error?: Record<string, unknown>;
   config?: RepositoryConfig;
+  metadata?: {
+    is_test_fixture?: boolean;
+    fixture_name?: string;
+    [key: string]: unknown;
+  };
   created_at: string;
   updated_at: string;
 }

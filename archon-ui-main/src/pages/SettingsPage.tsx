@@ -12,7 +12,6 @@ import {
   Bug,
   Info,
   Database,
-  GitBranch,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "../features/shared/hooks/useToast";
@@ -34,7 +33,6 @@ import {
 import { UpdateBanner } from "../features/settings/version/components/UpdateBanner";
 import { VersionStatusCard } from "../features/settings/version/components/VersionStatusCard";
 import { MigrationStatusCard } from "../features/settings/migrations/components/MigrationStatusCard";
-import { GitTestFixturesSection } from "../components/settings/GitTestFixturesSection";
 
 export const SettingsPage = () => {
   const [ragSettings, setRagSettings] = useState<RagSettings>({
@@ -254,19 +252,6 @@ export const SettingsPage = () => {
                   <p>• Your privacy is protected - no personal data is sent</p>
                 </div>
               </div>
-            </CollapsibleSettingsCard>
-          </motion.div>
-
-          {/* Git Test Fixtures Section */}
-          <motion.div variants={itemVariants}>
-            <CollapsibleSettingsCard
-              title="Git Test Fixtures"
-              icon={GitBranch}
-              accentColor="purple"
-              storageKey="git-test-fixtures"
-              defaultExpanded={false}
-            >
-              <GitTestFixturesSection />
             </CollapsibleSettingsCard>
           </motion.div>
         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Moon, Sun, FileText, Layout, Bot, Settings, Palette, Flame, Monitor } from 'lucide-react';
+import { Moon, Sun, FileText, Layout, Bot, Settings, Palette, Flame, Monitor, GitBranch } from 'lucide-react';
 import { Switch } from '@/features/ui/primitives/switch';
 import { Card } from '../ui/Card';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -18,12 +18,15 @@ export const FeaturesSection = () => {
     styleGuideEnabled,
     setStyleGuideEnabled: setStyleGuideContext,
     agentWorkOrdersEnabled,
-    setAgentWorkOrdersEnabled: setAgentWorkOrdersContext
+    setAgentWorkOrdersEnabled: setAgentWorkOrdersContext,
+    gitTestFixturesEnabled,
+    setGitTestFixturesEnabled: setGitTestFixturesContext
   } = useSettings();
   const isDarkMode = theme === 'dark';
   const [projectsEnabled, setProjectsEnabled] = useState(true);
   const [styleGuideEnabledLocal, setStyleGuideEnabledLocal] = useState(styleGuideEnabled);
   const [agentWorkOrdersEnabledLocal, setAgentWorkOrdersEnabledLocal] = useState(agentWorkOrdersEnabled);
+  const [gitTestFixturesEnabledLocal, setGitTestFixturesEnabledLocal] = useState(gitTestFixturesEnabled);
 
   // Commented out for future release
   const [agUILibraryEnabled, setAgUILibraryEnabled] = useState(false);
@@ -47,6 +50,10 @@ export const FeaturesSection = () => {
   useEffect(() => {
     setAgentWorkOrdersEnabledLocal(agentWorkOrdersEnabled);
   }, [agentWorkOrdersEnabled]);
+
+  useEffect(() => {
+    setGitTestFixturesEnabledLocal(gitTestFixturesEnabled);
+  }, [gitTestFixturesEnabled]);
 
   const loadSettings = async () => {
     try {
@@ -257,6 +264,29 @@ export const FeaturesSection = () => {
     }
   };
 
+  const handleGitTestFixturesToggle = async (checked: boolean) => {
+    if (loading) return;
+
+    try {
+      setLoading(true);
+      setGitTestFixturesEnabledLocal(checked);
+
+      // Update context which will save to backend and trigger cleanup if disabling
+      await setGitTestFixturesContext(checked);
+
+      showToast(
+        checked ? 'Git Test Fixtures Enabled' : 'Git Test Fixtures Disabled - Cleanup Initiated',
+        checked ? 'success' : 'warning'
+      );
+    } catch (error) {
+      console.error('Failed to update git test fixtures setting:', error);
+      setGitTestFixturesEnabledLocal(!checked);
+      showToast('Failed to update Git Test Fixtures setting', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <>
       <div className="grid grid-cols-2 gap-4">
@@ -348,6 +378,28 @@ export const FeaturesSection = () => {
                 onCheckedChange={handleAgentWorkOrdersToggle}
                 color="green"
                 icon={<Bot className="w-5 h-5" />}
+                disabled={loading}
+              />
+            </div>
+          </div>
+
+          {/* Git Test Fixtures Toggle */}
+          <div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-br from-purple-500/10 to-purple-600/5 backdrop-blur-sm border border-purple-500/20 shadow-lg">
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-gray-800 dark:text-white">
+                Git Test Fixtures
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Enable test repositories for Git integration testing
+              </p>
+            </div>
+            <div className="flex-shrink-0">
+              <Switch
+                size="lg"
+                checked={gitTestFixturesEnabledLocal}
+                onCheckedChange={handleGitTestFixturesToggle}
+                color="purple"
+                icon={<GitBranch className="w-5 h-5" />}
                 disabled={loading}
               />
             </div>
