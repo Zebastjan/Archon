@@ -150,6 +150,25 @@ async def lifespan(app: FastAPI):
         except Exception as me:
             api_logger.warning(f"⚠️ Could not apply migrations: {me}")
 
+        # Validate database schema - fail fast if schema is incomplete
+        schema_validation_message = None
+        try:
+            from .utils.schema_validator import validate_archon_sources_schema
+            from .utils import get_supabase_client
+
+            supabase_for_validation = get_supabase_client()
+            is_valid, message = validate_archon_sources_schema(supabase_for_validation)
+            if not is_valid:
+                # Logging not configured yet, raise error immediately
+                raise RuntimeError(f"Database schema validation failed: {message}")
+            schema_validation_message = message
+        except ImportError:
+            # Schema validator not available, skip validation
+            schema_validation_message = "Schema validator not available, skipping validation"
+        except Exception as ve:
+            # Schema validation failed critically
+            raise RuntimeError(f"Database schema validation failed: {ve}")
+
         # Now that credentials are loaded, we can properly initialize logging
         # This must happen AFTER credentials so LOGFIRE_ENABLED is set from database
         setup_logfire(service_name="archon-backend")
@@ -157,6 +176,10 @@ async def lifespan(app: FastAPI):
         # Now we can safely use the logger
         logger.info("✅ Credentials initialized")
         api_logger.info("🔥 Logfire initialized for backend")
+
+        # Log schema validation result now that logging is configured
+        if schema_validation_message:
+            api_logger.info(f"✅ {schema_validation_message}")
 
         # Initialize crawling context
         try:
