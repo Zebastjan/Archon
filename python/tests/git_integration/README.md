@@ -88,6 +88,29 @@ Creates a repository with complex merge commits.
 - All commits properly tracked
 - Branch associations correct after merge
 
+#### 4. **edge_cases.py**
+Creates a repository with various edge cases.
+
+**Structure:**
+```
+- README.md (normal file)
+- files/unicode_文件名_ファイル_📄.txt (unicode)
+- files/special!@#$%^&()_+-=[]{}~`.txt (special chars)
+- empty.txt (0 bytes)
+- assets/test.png (binary file)
+- very/long/path/.../file.txt (240+ character path)
+- deeply/nested/.../level10/file.txt (10 levels deep)
+```
+
+**Tests Covered:**
+- Unicode filename handling
+- Special character support in filenames
+- Empty file (0 bytes) detection and reading
+- Binary file access blocking (returns error, not content)
+- Long path support (200+ characters)
+- Deep directory nesting (10+ levels)
+- Accurate metadata for all edge cases
+
 ### Static Test Fixtures
 
 Located in `fixtures/`:
@@ -117,6 +140,16 @@ Located in `fixtures/`:
 - `test_feature_branches_have_different_files` - Branches diverge correctly
 - `test_all_commits_properly_tracked` - All commits synced to database
 - `test_branch_associations_after_merge` - Branch arrays properly merged
+
+### test_edge_cases.py (8 tests)
+- `test_unicode_filenames_supported` - Unicode characters in filenames work
+- `test_special_characters_in_filenames` - Special chars (!@#$%^&) supported
+- `test_empty_files_handled_correctly` - 0-byte files properly handled
+- `test_binary_file_access_blocked` - Reading binary files returns proper error
+- `test_long_file_paths_supported` - Paths 200+ characters work
+- `test_deeply_nested_directories_supported` - 10+ nesting levels work
+- `test_all_edge_case_files_in_tree` - All edge case files indexed
+- `test_file_metadata_accurate_for_edge_cases` - Metadata correct for edge cases
 
 ### test_git_repository_integration.py (4 tests)
 - `test_register_repository_records_metadata` - Repository registration
@@ -183,10 +216,11 @@ Mock Supabase client for testing without database:
 
 ## Coverage Summary
 
-**Total Tests:** 19 (all passing)
+**Total Tests:** 27 (all passing)
 - Divergent file scenarios: 5 tests ✅
 - File deletion scenarios: 5 tests ✅
 - Merge scenarios: 5 tests ✅
+- Edge cases: 8 tests ✅
 - Basic integration: 4 tests ✅
 
 **Test Coverage:**
