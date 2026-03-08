@@ -906,3 +906,96 @@ class GitRepositoryService:
                 file_path=file_path,
                 original_error=str(e),
             ) from e
+
+    def get_repository_by_project_id(self, project_id: str) -> dict | None:
+        """
+        Get repository information by project ID.
+
+        Args:
+            project_id: Project identifier
+
+        Returns:
+            dict with repo_path and other repository metadata, or None if not found
+        """
+        try:
+            result = (
+                self.supabase_client.table("archon_git_repositories")
+                .select("*")
+                .eq("project_id", project_id)
+                .execute()
+            )
+
+            if not result.data:
+                return None
+
+            return result.data[0]
+
+        except Exception as e:
+            logger.error(f"Error fetching repository for project {project_id}: {e}")
+            raise GitError(
+                f"Failed to fetch repository: {e}",
+                original_error=str(e),
+            ) from e
+
+    def get_commit_by_sha(
+        self, project_id: str, commit_sha: str
+    ) -> dict[str, Any] | None:
+        """
+        Get commit information by SHA.
+
+        Args:
+            project_id: Project identifier
+            commit_sha: Commit SHA
+
+        Returns:
+            dict with commit metadata, or None if not found
+        """
+        try:
+            result = (
+                self.supabase_client.table("archon_git_commits")
+                .select("*")
+                .eq("repo_id", project_id)
+                .eq("commit_sha", commit_sha)
+                .execute()
+            )
+
+            if not result.data:
+                return None
+
+            return result.data[0]
+
+        except Exception as e:
+            logger.error(f"Error fetching commit {commit_sha}: {e}")
+            raise GitError(
+                f"Failed to fetch commit: {e}",
+                commit_sha=commit_sha,
+                original_error=str(e),
+            ) from e
+
+    def update_commit_metadata(
+        self, project_id: str, commit_sha: str, metadata: dict[str, Any]
+    ) -> None:
+        """
+        Update commit metadata (e.g., classification results).
+
+        Args:
+            project_id: Project identifier
+            commit_sha: Commit SHA
+            metadata: Metadata dictionary to merge into existing metadata
+        """
+        try:
+            self.supabase_client.table("archon_git_commits").update(
+                {"metadata": metadata}
+            ).eq("repo_id", project_id).eq("commit_sha", commit_sha).execute()
+
+            logger.info(
+                f"Updated metadata for commit {commit_sha} in project {project_id}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error updating commit metadata: {e}")
+            raise GitError(
+                f"Failed to update commit metadata: {e}",
+                commit_sha=commit_sha,
+                original_error=str(e),
+            ) from e

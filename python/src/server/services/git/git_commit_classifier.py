@@ -64,22 +64,32 @@ class CommitClassification(BaseModel):
 class GitCommitClassifier:
     """Service for AI-powered commit classification."""
 
-    def __init__(self, diff_service: GitDiffService, model: str = "openai:gpt-4"):
+    def __init__(
+        self,
+        diff_service: GitDiffService,
+        model: str = "openai:gpt-4",
+        agent: Agent | None = None,
+    ):
         """
         Initialize commit classifier.
 
         Args:
             diff_service: Service for generating diffs
             model: Pydantic AI model string (e.g., "openai:gpt-4", "anthropic:claude-sonnet-4")
+            agent: Optional pre-configured agent (for testing). If provided, model is ignored.
         """
         self.diff_service = diff_service
         self.model = model
 
-        # Create Pydantic AI agent for classification
-        self.agent = Agent(
-            model=self.model,
-            result_type=CommitClassification,
-            system_prompt="""You are an expert code reviewer analyzing Git commits.
+        # Use provided agent or create new one
+        if agent is not None:
+            self.agent = agent
+        else:
+            # Create Pydantic AI agent for classification
+            self.agent = Agent(
+                model=self.model,
+                result_type=CommitClassification,
+                system_prompt="""You are an expert code reviewer analyzing Git commits.
 
 Your task is to classify commits based on their message and diff to help developers
 understand the nature and risk of changes.

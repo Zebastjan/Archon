@@ -15,6 +15,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel
 
 from ..config.logfire_config import get_logger, logfire
+from ..services.git.git_commit_classifier import GitCommitClassifier
 from ..services.git.git_diff_service import GitDiffService
 from ..services.git.git_repository_service import (
     GitBranchNotFoundError,

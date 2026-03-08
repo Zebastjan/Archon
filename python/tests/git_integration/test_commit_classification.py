@@ -115,8 +115,7 @@ async def test_classify_feature_commit(
 ) -> None:
     """Test classification of a feature commit."""
     diff_service = GitDiffService(git_service)
-    classifier = GitCommitClassifier(diff_service, model="mock:model")
-    classifier.agent = mock_agent
+    classifier = GitCommitClassifier(diff_service, agent=mock_agent)
 
     # Classify feature commit
     metadata = await classifier.classify_commit(
@@ -147,8 +146,7 @@ async def test_classify_bugfix_commit(
 ) -> None:
     """Test classification of a bugfix commit."""
     diff_service = GitDiffService(git_service)
-    classifier = GitCommitClassifier(diff_service, model="mock:model")
-    classifier.agent = mock_agent
+    classifier = GitCommitClassifier(diff_service, agent=mock_agent)
 
     # Classify bugfix commit
     metadata = await classifier.classify_commit(
@@ -173,8 +171,7 @@ async def test_classification_includes_diff_context(
 ) -> None:
     """Test that classification includes diff context in the prompt."""
     diff_service = GitDiffService(git_service)
-    classifier = GitCommitClassifier(diff_service, model="mock:model")
-    classifier.agent = mock_agent
+    classifier = GitCommitClassifier(diff_service, agent=mock_agent)
 
     # Classify commit
     await classifier.classify_commit(
@@ -199,8 +196,7 @@ async def test_classification_handles_initial_commit(
 ) -> None:
     """Test that classification handles initial commits (no parent)."""
     diff_service = GitDiffService(git_service)
-    classifier = GitCommitClassifier(diff_service, model="mock:model")
-    classifier.agent = mock_agent
+    classifier = GitCommitClassifier(diff_service, agent=mock_agent)
 
     # Classify commit with no parent
     metadata = await classifier.classify_commit(
@@ -224,12 +220,12 @@ async def test_classification_handles_errors_gracefully(
 ) -> None:
     """Test that classification handles errors gracefully."""
     diff_service = GitDiffService(git_service)
-    classifier = GitCommitClassifier(diff_service, model="mock:model")
 
     # Create a mock agent that raises an error
     error_agent = MagicMock()
     error_agent.run = AsyncMock(side_effect=Exception("AI service unavailable"))
-    classifier.agent = error_agent
+
+    classifier = GitCommitClassifier(diff_service, agent=error_agent)
 
     # Classify should not raise, but return error metadata
     metadata = await classifier.classify_commit(
@@ -252,7 +248,9 @@ def test_diff_summarization(
     from src.server.services.git.git_diff_service import FileDiff, StructuredDiff
 
     diff_service = GitDiffService(git_service)
-    classifier = GitCommitClassifier(diff_service)
+    # Use a mock agent since we're only testing _summarize_diff
+    mock_agent = MagicMock()
+    classifier = GitCommitClassifier(diff_service, agent=mock_agent)
 
     # Create a mock diff
     mock_diff = StructuredDiff(
