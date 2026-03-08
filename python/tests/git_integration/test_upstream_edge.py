@@ -571,3 +571,100 @@ def test_t4200_symlink_handling(
         # If symlinks are not supported, at least verify target.txt exists
         files = adapter.get_file_tree_cli(head_sha)
         assert "target.txt" in files
+
+
+def test_t4100_mixed_content_file(
+    t4100_binary_fixture,
+    git_service
+):
+    """Test mixed binary/text file handling."""
+    success, result = git_service.register_repository(
+        repo_path=str(t4100_binary_fixture),
+        source_id="test-source-mixed"
+    )
+    assert success
+
+    repo_id = result["repo_id"]
+    default_branch = result["default_branch"]
+
+    sync_success, sync_result = git_service.sync_commits(
+        repo_id=repo_id,
+        branch_name=default_branch,
+        max_commits=100
+    )
+    assert sync_success
+
+    # Just verify the file exists in tree
+    adapter = GitTestAdapter(
+        repo_path=t4100_binary_fixture,
+        service=git_service,
+        repo_id=repo_id
+    )
+    
+    head_sha = adapter.get_commit_sha("HEAD")
+    files = adapter.get_file_tree_cli(head_sha)
+    assert "mixed.txt" in files
+
+
+def test_t4400_whitespace_only_file(
+    t4400_empty_files_fixture,
+    git_service
+):
+    """Test whitespace-only file content."""
+    success, result = git_service.register_repository(
+        repo_path=str(t4400_empty_files_fixture),
+        source_id="test-source-whitespace"
+    )
+    assert success
+
+    repo_id = result["repo_id"]
+    default_branch = result["default_branch"]
+
+    sync_success, sync_result = git_service.sync_commits(
+        repo_id=repo_id,
+        branch_name=default_branch,
+        max_commits=100
+    )
+    assert sync_success
+
+    adapter = GitTestAdapter(
+        repo_path=t4400_empty_files_fixture,
+        service=git_service,
+        repo_id=repo_id
+    )
+    
+    head_sha = adapter.get_commit_sha("HEAD")
+    # Test whitespace file specifically
+    adapter.assert_file_content_matches("whitespace.txt", head_sha)
+
+
+def test_t4500_medium_file_content(
+    t4500_large_content_fixture,
+    git_service
+):
+    """Test medium-sized file content retrieval."""
+    success, result = git_service.register_repository(
+        repo_path=str(t4500_large_content_fixture),
+        source_id="test-source-medium"
+    )
+    assert success
+
+    repo_id = result["repo_id"]
+    default_branch = result["default_branch"]
+
+    sync_success, sync_result = git_service.sync_commits(
+        repo_id=repo_id,
+        branch_name=default_branch,
+        max_commits=100
+    )
+    assert sync_success
+
+    adapter = GitTestAdapter(
+        repo_path=t4500_large_content_fixture,
+        service=git_service,
+        repo_id=repo_id
+    )
+    
+    head_sha = adapter.get_commit_sha("HEAD")
+    # Test medium file
+    adapter.assert_file_content_matches("medium.txt", head_sha)
