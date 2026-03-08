@@ -286,6 +286,38 @@ export const repositoryService = {
   },
 
   /**
+   * Get list of initialized test fixtures for a project
+   */
+  async getInitializedFixtures(projectId: string): Promise<{
+    fixtures: Array<{
+      name: string;
+      source_id: string;
+      document_count: number;
+      display_name: string;
+    }>;
+    project_id: string;
+  }> {
+    try {
+      const response = await callAPIWithETag<{
+        fixtures: Array<{
+          name: string;
+          source_id: string;
+          document_count: number;
+          display_name: string;
+        }>;
+        project_id: string;
+      }>(`/api/projects/${projectId}/test-fixtures`);
+      return response;
+    } catch (error) {
+      console.error(
+        `Failed to get initialized fixtures for project ${projectId}:`,
+        error,
+      );
+      throw error;
+    }
+  },
+
+  /**
    * Get diff between two commits
    */
   async getDiff(

@@ -24,9 +24,7 @@ interface ProviderModels {
 
 type ProviderModelMap = Record<ProviderKey, ProviderModels>;
 
-// Provider model persistence helpers
-const PROVIDER_MODELS_KEY = 'archon_provider_models';
-
+// Provider model defaults (no localStorage - database is source of truth)
 const getDefaultModels = (provider: ProviderKey): ProviderModels => {
   const chatDefaults: Record<ProviderKey, string> = {
     openai: 'gpt-4o-mini',
@@ -52,25 +50,8 @@ const getDefaultModels = (provider: ProviderKey): ProviderModels => {
   };
 };
 
-const saveProviderModels = (providerModels: ProviderModelMap): void => {
-  try {
-    localStorage.setItem(PROVIDER_MODELS_KEY, JSON.stringify(providerModels));
-  } catch (error) {
-    console.error('Failed to save provider models:', error);
-  }
-};
-
-const loadProviderModels = (): ProviderModelMap => {
-  try {
-    const saved = localStorage.getItem(PROVIDER_MODELS_KEY);
-    if (saved) {
-      return JSON.parse(saved);
-    }
-  } catch (error) {
-    console.error('Failed to load provider models:', error);
-  }
-
-  // Return defaults for all providers if nothing saved
+// Initialize default models for all providers (session-only, no persistence)
+const getDefaultProviderModels = (): ProviderModelMap => {
   const providers: ProviderKey[] = ['openai', 'google', 'openrouter', 'ollama', 'anthropic', 'grok'];
   const defaultModels: ProviderModelMap = {} as ProviderModelMap;
 
@@ -195,8 +176,8 @@ export const RAGSettings = ({
   // Edit modals for Summary
   const [showEditSummaryModal, setShowEditSummaryModal] = useState(false);
 
-  // Provider-specific model persistence state
-  const [providerModels, setProviderModels] = useState<ProviderModelMap>(() => loadProviderModels());
+  // Provider-specific model cache (session-only, database is source of truth)
+  const [providerModels, setProviderModels] = useState<ProviderModelMap>(() => getDefaultProviderModels());
 
   // Independent provider selection state
   const [chatProvider, setChatProvider] = useState<ProviderKey>(() =>
@@ -295,38 +276,30 @@ export const RAGSettings = ({
     }
   }, [ragSettings.CODE_SUMMARIZATION_BASE_URL, ragSettings.CODE_SUMMARIZATION_INSTANCE_NAME]);
 
-  // Provider model persistence effects - separate for chat and embedding
+  // Provider model cache effects (session-only, no localStorage)
   useEffect(() => {
     // Update chat provider models when chat model changes
     if (chatProvider && ragSettings.MODEL_CHOICE) {
-      setProviderModels(prev => {
-        const updated = {
-          ...prev,
-          [chatProvider]: {
-            ...prev[chatProvider],
-            chatModel: ragSettings.MODEL_CHOICE
-          }
-        };
-        saveProviderModels(updated);
-        return updated;
-      });
+      setProviderModels(prev => ({
+        ...prev,
+        [chatProvider]: {
+          ...prev[chatProvider],
+          chatModel: ragSettings.MODEL_CHOICE
+        }
+      }));
     }
   }, [ragSettings.MODEL_CHOICE, chatProvider]);
 
   useEffect(() => {
     // Update embedding provider models when embedding model changes
     if (embeddingProvider && ragSettings.EMBEDDING_MODEL) {
-      setProviderModels(prev => {
-        const updated = {
-          ...prev,
-          [embeddingProvider]: {
-            ...prev[embeddingProvider],
-            embeddingModel: ragSettings.EMBEDDING_MODEL
-          }
-        };
-        saveProviderModels(updated);
-        return updated;
-      });
+      setProviderModels(prev => ({
+        ...prev,
+        [embeddingProvider]: {
+          ...prev[embeddingProvider],
+          embeddingModel: ragSettings.EMBEDDING_MODEL
+        }
+      }));
     }
   }, [ragSettings.EMBEDDING_MODEL, embeddingProvider]);
 
@@ -401,24 +374,65 @@ export const RAGSettings = ({
     let cancelled = false;
 
     (async () => {
-      try {
-        const response = await fetch(
-          `/api/ollama/instances/health?instance_urls=${encodeURIComponent(normalizedUrl)}`,
-          { method: 'GET', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) }
-        );
+      // Set checking state immediately
+      setOllamaServerStatus('checking');
 
+      // Retry logic: attempt up to 3 times
+      const maxAttempts = 3;
+      const timeoutMs = 30000; // 30 seconds per attempt
+      const retryDelayMs = 5000; // 5 seconds between retries
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (cancelled) return;
 
-        if (!response.ok) {
-          setOllamaServerStatus('offline');
-          return;
-        }
+        try {
+          const response = await fetch(
+            `/api/ollama/instances/health?instance_urls=${encodeURIComponent(normalizedUrl)}`,
+            {
+              method: 'GET',
+              headers: { Accept: 'application/json' },
+              signal: AbortSignal.timeout(timeoutMs)
+            }
+          );
 
-        const data = await response.json();
-        const instanceStatus = data.instance_status?.[normalizedUrl];
-        setOllamaServerStatus(instanceStatus?.is_healthy ? 'online' : 'offline');
-      } catch (error) {
-        if (!cancelled) {
+          if (cancelled) return;
+
+          if (!response.ok) {
+            // If not the last attempt, retry
+            if (attempt < maxAttempts) {
+              console.log(`Ollama health check attempt ${attempt} failed, retrying...`);
+              await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+              continue;
+            }
+            setOllamaServerStatus('offline');
+            return;
+          }
+
+          const data = await response.json();
+          const instanceStatus = data.instance_status?.[normalizedUrl];
+          if (instanceStatus?.is_healthy) {
+            setOllamaServerStatus('online');
+            return; // Success, exit retry loop
+          }
+
+          // Not healthy, but we got a response - retry
+          if (attempt < maxAttempts) {
+            console.log(`Ollama health check attempt ${attempt} returned unhealthy, retrying...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+            continue;
+          }
+
+          setOllamaServerStatus('offline');
+        } catch (error) {
+          if (cancelled) return;
+
+          // If not the last attempt, retry
+          if (attempt < maxAttempts) {
+            console.log(`Ollama health check attempt ${attempt} error, retrying...`, error);
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+            continue;
+          }
+
           setOllamaServerStatus('offline');
         }
       }
@@ -444,7 +458,7 @@ export const RAGSettings = ({
 
   useEffect(() => {
     setOllamaManualConfirmed(false);
-    setOllamaServerStatus('unknown');
+    setOllamaServerStatus('checking');
   }, [ragSettings.LLM_BASE_URL, ragSettings.OLLAMA_EMBEDDING_URL, ragSettings.CODE_SUMMARIZATION_BASE_URL, chatProvider, embeddingProvider, codeSummaryProvider]);
 
   // Update ragSettings when independent providers change (one-way: local state -> ragSettings)
@@ -501,7 +515,7 @@ export const RAGSettings = ({
   const [providerConnectionStatus, setProviderConnectionStatus] = useState<{
     [key: string]: { connected: boolean; checking: boolean; lastChecked?: Date }
   }>({});
-  const [ollamaServerStatus, setOllamaServerStatus] = useState<'unknown' | 'online' | 'offline'>('unknown');
+  const [ollamaServerStatus, setOllamaServerStatus] = useState<'unknown' | 'checking' | 'online' | 'offline'>('unknown');
   const [ollamaManualConfirmed, setOllamaManualConfirmed] = useState(false);
 
   useEffect(() => {

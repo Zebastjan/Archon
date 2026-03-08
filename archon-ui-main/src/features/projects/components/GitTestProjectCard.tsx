@@ -6,7 +6,7 @@
  */
 
 import { GitBranch, Loader2, Play, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "../../../features/shared/hooks/useToast";
 import { SelectableCard } from "../../ui/primitives";
 import { cn } from "../../ui/primitives/styles";
@@ -34,13 +34,32 @@ const FIXTURES = [
   },
 ];
 
-export const GitTestProjectCard: React.FC<GitTestProjectCardProps> = ({ 
-  onInitialize 
+export const GitTestProjectCard: React.FC<GitTestProjectCardProps> = ({
+  onInitialize
 }) => {
   const { showToast } = useToast();
   const [loadingFixture, setLoadingFixture] = useState<string | null>(null);
   const [initializedFixtures, setInitializedFixtures] = useState<Set<string>>(new Set());
   const [isCleaning, setIsCleaning] = useState(false);
+
+  // Load initialized fixtures from backend on mount
+  useEffect(() => {
+    const loadInitializedFixtures = async () => {
+      try {
+        const testProjectId = "git-integration-test-project";
+        const response = await repositoryService.getInitializedFixtures(testProjectId);
+
+        // Extract fixture names from the response
+        const fixtureNames = response.fixtures.map(f => f.name);
+        setInitializedFixtures(new Set(fixtureNames));
+      } catch (error) {
+        // Silently fail - fixtures list will just be empty
+        console.error("Failed to load initialized fixtures:", error);
+      }
+    };
+
+    loadInitializedFixtures();
+  }, []);
 
   const handleInitializeFixture = async (fixtureName: string) => {
     try {
