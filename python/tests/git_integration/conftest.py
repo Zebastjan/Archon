@@ -5,6 +5,11 @@ from collections.abc import Generator
 
 import pytest
 
+from src.server.services.git.git_repository_service import GitRepositoryService
+from tests.git_integration.test_git_repository_integration import (
+    FakeSupabaseClient,
+)
+
 
 @pytest.fixture(autouse=True)
 def configure_test_environment() -> Generator[None, None, None]:
@@ -20,3 +25,15 @@ def configure_test_environment() -> Generator[None, None, None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+@pytest.fixture
+def supabase_client() -> FakeSupabaseClient:
+    """Provide a fake Supabase client for testing."""
+    return FakeSupabaseClient()
+
+
+@pytest.fixture
+def git_service(supabase_client: FakeSupabaseClient) -> GitRepositoryService:
+    """Provide a GitRepositoryService with fake Supabase client."""
+    return GitRepositoryService(supabase_client=supabase_client)

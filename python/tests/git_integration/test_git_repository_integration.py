@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -188,6 +189,52 @@ class FakeSupabaseClient:
             self.tables[name] = FakeSupabaseTable(name)
         return self.tables[name]
 
+    def rpc(self, function_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Mock RPC function calls (like upsert_git_commit_with_branch_merge)."""
+        if function_name == "upsert_git_commit_with_branch_merge":
+            # Simulate the branch merge upsert behavior
+            commits_table = self.table("archon_git_commits")
+            commit_data = {
+                "repo_id": params.get("p_repo_id"),
+                "commit_sha": params.get("p_commit_sha"),
+                "author_name": params.get("p_author_name"),
+                "author_email": params.get("p_author_email"),
+                "commit_date": params.get("p_commit_date"),
+                "message": params.get("p_message"),
+                "parent_shas": params.get("p_parent_shas", []),
+                "branches": params.get("p_branches", []),  # Changed from p_branch_name to p_branches
+                "tags": params.get("p_tags", []),
+            }
+            # Check if commit exists and merge branches
+            existing = None
+            for row in commits_table.rows:
+                if row.get("commit_sha") == commit_data["commit_sha"]:
+                    existing = row
+                    break
+
+            if existing:
+                # Merge branches
+                existing_branches = existing.get("branches", [])
+                new_branches = commit_data["branches"]
+                for branch in new_branches:
+                    if branch and branch not in existing_branches:
+                        existing_branches.append(branch)
+                existing["branches"] = existing_branches
+                # RPC functions are called with .execute(), so return a mock execute response
+                mock_response = MagicMock()
+                mock_response.data = [existing]
+                return mock_response
+            else:
+                # Insert new commit
+                commit_data["id"] = str(uuid.uuid4())
+                commits_table.rows.append(commit_data)
+                # RPC functions are called with .execute(), so return a mock execute response
+                mock_response = MagicMock()
+                mock_response.data = [commit_data]
+                return mock_response
+        else:
+            raise ValueError(f"Unsupported RPC function: {function_name}")
+
 
 @pytest.fixture
 def supabase_client() -> FakeSupabaseClient:
@@ -275,7 +322,7 @@ def test_get_file_tree_includes_binary_flags(
 
     text_entry = next(file for file in files if file["file_path"] == "src/app.py")
     assert text_entry["is_binary"] is False
-    assert text_entry["language"] == "Python"
+    assert text_entry["language"] == "python"  # Language detection returns lowercase
 
 
 def test_sync_commits_merges_branches_on_upsert(

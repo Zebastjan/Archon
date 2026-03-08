@@ -34,7 +34,7 @@ mock_client.table.return_value = mock_table
 _global_patches = [
     patch("supabase.create_client", return_value=mock_client),
     patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client),
-    patch("src.server.utils.get_supabase_client", return_value=mock_client),
+    # Note: src.server.utils doesn't exist, removed patch
 ]
 
 for p in _global_patches:
@@ -81,8 +81,8 @@ def prevent_real_db_calls():
     # Patch all the common ways to get a Supabase client
     with patch("supabase.create_client", return_value=mock_client):
         with patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client):
-            with patch("src.server.utils.get_supabase_client", return_value=mock_client):
-                yield
+            # Note: src.server.utils doesn't exist, removed patch
+            yield
 
 
 @pytest.fixture
@@ -140,27 +140,24 @@ def client(mock_supabase_client):
         "src.server.services.client_manager.get_supabase_client",
         return_value=mock_supabase_client,
     ):
+        # Note: src.server.utils doesn't exist, removed patch
         with patch(
-            "src.server.utils.get_supabase_client",
+            "src.server.services.credential_service.create_client",
             return_value=mock_supabase_client,
         ):
-            with patch(
-                "src.server.services.credential_service.create_client",
-                return_value=mock_supabase_client,
-            ):
-                with patch("supabase.create_client", return_value=mock_supabase_client):
-                    from unittest.mock import AsyncMock
+            with patch("supabase.create_client", return_value=mock_supabase_client):
+                from unittest.mock import AsyncMock
 
-                    import src.server.main as server_main
+                import src.server.main as server_main
 
-                    # Mark initialization as complete for testing (before accessing app)
-                    server_main._initialization_complete = True
-                    app = server_main.app
+                # Mark initialization as complete for testing (before accessing app)
+                server_main._initialization_complete = True
+                app = server_main.app
 
-                    # Mock the schema check to always return valid
-                    mock_schema_check = AsyncMock(return_value={"valid": True, "message": "Schema is up to date"})
-                    with patch("src.server.main._check_database_schema", new=mock_schema_check):
-                        return TestClient(app)
+                # Mock the schema check to always return valid
+                mock_schema_check = AsyncMock(return_value={"valid": True, "message": "Schema is up to date"})
+                with patch("src.server.main._check_database_schema", new=mock_schema_check):
+                    return TestClient(app)
 
 
 @pytest.fixture
