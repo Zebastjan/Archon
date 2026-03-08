@@ -237,9 +237,9 @@ class GitEmbeddingService:
 
             except Exception as e:
                 search_logger.error(
-                    "Failed to embed commit",
-                    commit_sha=commit_sha[:7],
-                    error=str(e),
+                    "Failed to embed commit %s: %s",
+                    commit_sha[:7],
+                    str(e),
                 )
                 return CommitEmbeddingResult(
                     commit_id="",
@@ -301,7 +301,7 @@ class GitEmbeddingService:
 
             if not result.data:
                 search_logger.warning(
-                    "No commits found for embedding", repo_id=repo_id
+                    "No commits found for embedding in repo %s", repo_id
                 )
                 return []
 
@@ -309,9 +309,9 @@ class GitEmbeddingService:
             total_commits = len(commits)
 
             search_logger.info(
-                "Found commits to embed",
-                total_commits=total_commits,
-                repo_id=repo_id,
+                "Found %s commits to embed in repo %s",
+                total_commits,
+                repo_id,
             )
 
             # Process in batches
@@ -323,8 +323,10 @@ class GitEmbeddingService:
                 total_batches = (total_commits + batch_size - 1) // batch_size
 
                 search_logger.info(
-                    f"Processing batch {batch_num}/{total_batches}",
-                    batch_size=len(batch),
+                    "Processing batch %s/%s with %s commits",
+                    batch_num,
+                    total_batches,
+                    len(batch),
                 )
 
                 # Format commits for embedding
@@ -385,9 +387,9 @@ class GitEmbeddingService:
 
                         except Exception as e:
                             search_logger.error(
-                                "Failed to store embedding",
-                                commit_sha=commit["commit_sha"][:7],
-                                error=str(e),
+                                "Failed to store embedding for %s: %s",
+                                commit["commit_sha"][:7],
+                                str(e),
                             )
                             results.append(
                                 CommitEmbeddingResult(
@@ -414,9 +416,9 @@ class GitEmbeddingService:
 
                 except Exception as e:
                     search_logger.error(
-                        "Batch embedding failed",
-                        batch_num=batch_num,
-                        error=str(e),
+                        "Batch embedding failed for batch %s: %s",
+                        batch_num,
+                        str(e),
                     )
                     # Mark entire batch as failed
                     for commit in batch:
@@ -438,11 +440,11 @@ class GitEmbeddingService:
             failures = sum(1 for r in results if not r.success)
 
             search_logger.info(
-                "Batch embedding complete",
-                total=len(results),
-                successes=successes,
-                failures=failures,
-                repo_id=repo_id,
+                "Batch embedding complete: %s total, %s successes, %s failures in repo %s",
+                len(results),
+                successes,
+                failures,
+                repo_id,
             )
 
             return results

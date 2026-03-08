@@ -266,3 +266,81 @@ Mock Supabase client for testing without database:
 - **Service:** `python/src/server/services/git/git_repository_service.py`
 - **API:** `python/src/server/api_routes/git_api.py`
 - **Roadmap:** Project planning document with 8-week implementation plan
+
+---
+
+# Ollama Test Support
+
+The test suite supports running against a live Ollama instance for real embedding validation.
+
+## Test Types
+
+- **Mock Tests** (`@pytest.mark.mock`): Fast tests with mocked dependencies
+- **Ollama Tests** (`@pytest.mark.ollama`): Tests requiring live Ollama instance
+
+## Running Tests
+
+```bash
+# Run all tests (skips Ollama if unavailable)
+pytest tests/git_integration/ -v
+
+# Run only mock tests
+pytest tests/git_integration/ -v -m mock
+
+# Run only Ollama tests (requires Ollama)
+export OLLAMA_TEST_URL=http://localhost:11434
+pytest tests/git_integration/ -v -m ollama
+
+# Skip Ollama tests
+pytest tests/git_integration/ -v -m "not ollama"
+```
+
+## Ollama Setup
+
+### 1. Install and Start Ollama
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+```
+
+### 2. Pull Embedding Model
+
+```bash
+ollama pull nomic-embed-text
+```
+
+### 3. Configure Test URL (optional)
+
+```bash
+export OLLAMA_TEST_URL=http://localhost:11434  # default
+```
+
+## Test Files with Ollama Support
+
+| File | Marker | Description |
+|------|--------|-------------|
+| `test_git_embedding_service.py` | mock | Commit embedding with mocked service |
+| `test_git_semantic_search.py` | mock | Semantic search tests |
+| `test_git_rag_integration.py` | mock | RAG pipeline integration |
+| `test_git_mcp_integration.py` | mock | MCP agent tests |
+| `test_ollama_integration.py` | ollama | Real Ollama embedding tests |
+
+## Fixtures Available
+
+From `conftest.py`:
+
+- `ollama_url` - URL to Ollama instance
+- `ollama_available` - Boolean if Ollama is reachable
+- `embedding_provider` - "ollama" or "mock"
+- `mock_supabase_client` - Mocked Supabase client
+- `mock_embedding_result` - Standard mock embedding (1536-dim)
+
+## CI/CD
+
+Mock tests run without Ollama:
+
+```yaml
+- name: Run tests
+  run: pytest tests/git_integration/ -m mock
+```

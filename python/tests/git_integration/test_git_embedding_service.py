@@ -1,7 +1,7 @@
-"""
-Test Git Embedding Service integration with embedding generation and storage.
+"""Test Git Embedding Service integration with embedding generation and storage.
 
 Phase 1 tests for commit embedding functionality.
+These tests use mocks and don't require external services.
 """
 
 import sys
@@ -35,33 +35,15 @@ from src.server.services.git.git_embedding_service import (
     GitEmbeddingService,
     CommitEmbeddingResult,
 )
-from src.server.services.git.git_repository_service import GitRepositoryService
 
-
-@pytest.fixture
-def mock_supabase_client():
-    """Provide mocked Supabase client."""
-    client = MagicMock()
-    # Setup chainable table methods
-    table_mock = MagicMock()
-    client.table.return_value = table_mock
-    return client
+# All tests in this file use mocks
+pytestmark = pytest.mark.mock
 
 
 @pytest.fixture
 def git_embedding_service(mock_supabase_client):
     """Provide GitEmbeddingService with mocked supabase."""
     return GitEmbeddingService(supabase_client=mock_supabase_client)
-
-
-@pytest.fixture
-def mock_embedding_result():
-    """Mock successful embedding result."""
-    return MagicMock(
-        embeddings=[[0.1] * 1536],  # 1536-dimensional embedding
-        has_failures=False,
-        failed_items=[],
-    )
 
 
 class TestFormatCommitForEmbedding:
