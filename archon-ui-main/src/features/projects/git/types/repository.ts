@@ -25,6 +25,19 @@ export interface Repository {
   updated_at: string;
 }
 
+export interface CommitClassification {
+  intent: "feature" | "bugfix" | "refactor" | "security-fix" | "performance" | "docs" | "test" | "chore";
+  risk_level: "high" | "medium" | "low";
+  api_breaking: boolean;
+  security_relevant: boolean;
+  performance_impact: "high" | "medium" | "low" | "none";
+  test_coverage: "full" | "partial" | "none";
+  confidence: number;
+  reasoning: string;
+  classification_model?: string;
+  classification_timestamp?: string;
+}
+
 export interface Commit {
   id: string;
   repo_id: string;
@@ -39,6 +52,7 @@ export interface Commit {
   message: string;
   branches: string[];
   tags: string[];
+  metadata?: CommitClassification;
   created_at: string;
 }
 

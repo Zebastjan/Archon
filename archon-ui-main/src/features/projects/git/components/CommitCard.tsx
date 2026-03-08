@@ -5,6 +5,7 @@
 
 import { Calendar, User } from "lucide-react";
 import type { Commit } from "../types";
+import { CompactClassificationBadge } from "./ClassificationBadges";
 
 interface CommitCardProps {
   commit: Commit;
@@ -44,6 +45,13 @@ export const CommitCard = ({ commit, isSelected, onClick }: CommitCardProps) => 
 
       {/* Commit message */}
       <p className="mb-2 line-clamp-2 text-sm font-medium text-white">{commit.message}</p>
+
+      {/* Classification Badges (if available) */}
+      {commit.metadata && (
+        <div className="mb-2">
+          <CompactClassificationBadge classification={commit.metadata} />
+        </div>
+      )}
 
       {/* Metadata */}
       <div className="flex items-center gap-4 text-xs text-zinc-400">

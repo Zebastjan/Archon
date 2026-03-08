@@ -27,6 +27,8 @@ export const repositoryKeys = {
     ["projects", projectId, "repository", "tree", commitSha, pathPrefix] as const,
   file: (projectId: string, commitSha: string, filePath: string) =>
     ["projects", projectId, "repository", "file", commitSha, filePath] as const,
+  diff: (projectId: string, fromCommit: string, toCommit: string, filePath?: string) =>
+    ["projects", projectId, "repository", "diff", fromCommit, toCommit, filePath] as const,
 };
 
 /**
@@ -177,5 +179,53 @@ export function useSyncCommits(projectId: string) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       showToast(`Failed to sync commits: ${errorMessage}`, "error");
     },
+  });
+}
+
+/**
+ * Get diff between two commits
+ */
+export function useDiff(
+  projectId: string | undefined,
+  fromCommit: string | undefined,
+  toCommit: string | undefined,
+  filePath?: string,
+) {
+  return useQuery<{
+    from_commit: string;
+    to_commit: string;
+    files_changed: number;
+    additions: number;
+    deletions: number;
+    files: Array<{
+      path: string;
+      old_path?: string | null;
+      status: string;
+      language?: string | null;
+      additions: number;
+      deletions: number;
+      is_binary: boolean;
+      hunks: Array<{
+        old_start: number;
+        old_lines: number;
+        new_start: number;
+        new_lines: number;
+        context: string;
+        diff_text: string;
+        additions: number;
+        deletions: number;
+      }>;
+    }>;
+  }>({
+    queryKey:
+      projectId && fromCommit && toCommit
+        ? repositoryKeys.diff(projectId, fromCommit, toCommit, filePath)
+        : DISABLED_QUERY_KEY,
+    queryFn: () =>
+      projectId && fromCommit && toCommit
+        ? repositoryService.getDiff(projectId, fromCommit, toCommit, filePath)
+        : Promise.reject("Missing required parameters"),
+    enabled: !!projectId && !!fromCommit && !!toCommit,
+    staleTime: STALE_TIMES.static, // Diffs don't change between commits
   });
 }

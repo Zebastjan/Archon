@@ -4,6 +4,7 @@
 
 export type {
   Commit,
+  CommitClassification,
   CommitsPaginationResponse,
   FileContentResponse,
   FileTreeResponse,

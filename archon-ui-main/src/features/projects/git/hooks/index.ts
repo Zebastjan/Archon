@@ -5,6 +5,7 @@
 export {
   repositoryKeys,
   useDeleteRepository,
+  useDiff,
   useFileContent,
   useFileTree,
   useInitializeRepository,

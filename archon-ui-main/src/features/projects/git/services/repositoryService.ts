@@ -284,4 +284,83 @@ export const repositoryService = {
       throw error;
     }
   },
+
+  /**
+   * Get diff between two commits
+   */
+  async getDiff(
+    projectId: string,
+    fromCommit: string,
+    toCommit: string,
+    filePath?: string,
+  ): Promise<{
+    from_commit: string;
+    to_commit: string;
+    files_changed: number;
+    additions: number;
+    deletions: number;
+    files: Array<{
+      path: string;
+      old_path?: string | null;
+      status: string;
+      language?: string | null;
+      additions: number;
+      deletions: number;
+      is_binary: boolean;
+      hunks: Array<{
+        old_start: number;
+        old_lines: number;
+        new_start: number;
+        new_lines: number;
+        context: string;
+        diff_text: string;
+        additions: number;
+        deletions: number;
+      }>;
+    }>;
+  }> {
+    try {
+      const params = new URLSearchParams({
+        from_commit: fromCommit,
+        to_commit: toCommit,
+      });
+      if (filePath) {
+        params.append("file_path", filePath);
+      }
+
+      const response = await callAPIWithETag<{
+        from_commit: string;
+        to_commit: string;
+        files_changed: number;
+        additions: number;
+        deletions: number;
+        files: Array<{
+          path: string;
+          old_path?: string | null;
+          status: string;
+          language?: string | null;
+          additions: number;
+          deletions: number;
+          is_binary: boolean;
+          hunks: Array<{
+            old_start: number;
+            old_lines: number;
+            new_start: number;
+            new_lines: number;
+            context: string;
+            diff_text: string;
+            additions: number;
+            deletions: number;
+          }>;
+        }>;
+      }>(`/api/projects/${projectId}/repository/diff?${params.toString()}`);
+      return response;
+    } catch (error) {
+      console.error(
+        `Failed to get diff between ${fromCommit} and ${toCommit} for project ${projectId}:`,
+        error,
+      );
+      throw error;
+    }
+  },
 };
