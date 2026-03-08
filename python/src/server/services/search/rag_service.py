@@ -22,6 +22,7 @@ from .agentic_rag_strategy import AgenticRAGStrategy
 
 # Import all strategies
 from .base_search_strategy import BaseSearchStrategy
+from .git_search_strategy import GitSearchStrategy
 from .hybrid_search_strategy import HybridSearchStrategy
 from .reranking_strategy import RerankingStrategy
 
@@ -46,6 +47,7 @@ class RAGService:
         # Initialize optional strategies
         self.hybrid_strategy = HybridSearchStrategy(self.supabase_client, self.base_strategy)
         self.agentic_strategy = AgenticRAGStrategy(self.supabase_client, self.base_strategy)
+        self.git_strategy = GitSearchStrategy(self.supabase_client)
 
         # Initialize reranking strategy based on settings
         self.reranking_strategy = None
@@ -489,3 +491,281 @@ class RAGService:
                 logger.error(f"Code example search failed: {e}")
                 span.set_attribute("error", str(e))
                 return False, {"query": query, "error": str(e)}
+
+    async def search_git_commits(
+        self,
+        query: str,
+        match_count: int = 5,
+        repo_id: str | None = None,
+        branch: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        intent_filter: list[str] | None = None,
+        risk_filter: list[str] | None = None,
+        author: str | None = None,
+        breaking_only: bool = False,
+        security_only: bool = False,
+    ) -> tuple[bool, dict[str, Any]]:
+        """
+        Search Git commits semantically with optional filters.
+
+        This integrates Git commit search into the RAG pipeline, enabling
+        queries like:
+        - "Find performance improvements in the last 6 months"
+        - "Show security fixes affecting authentication"
+        - "What breaking changes were introduced?"
+
+        Args:
+            query: Search query (e.g., "performance improvements")
+            match_count: Number of results to return
+            repo_id: Filter by repository ID
+            branch: Filter by branch name
+            since: Filter commits after this date (ISO format)
+            until: Filter commits before this date (ISO format)
+            intent_filter: Filter by commit intent (e.g., ["feature", "bugfix"])
+            risk_filter: Filter by risk level (e.g., ["high", "medium"])
+            author: Filter by author name/email
+            breaking_only: Only return breaking changes
+            security_only: Only return security-related commits
+
+        Returns:
+            Tuple of (success, result_dict)
+        """
+        from datetime import datetime
+
+        with safe_span(
+            "rag_git_commit_search",
+            query_length=len(query),
+            match_count=match_count,
+            repo_id=repo_id,
+            branch=branch,
+        ) as span:
+            try:
+                # Parse date filters
+                since_date = datetime.fromisoformat(since) if since else None
+                until_date = datetime.fromisoformat(until) if until else None
+
+                # Search commits using git strategy
+                results = await self.git_strategy.search_commits(
+                    query=query,
+                    match_count=match_count,
+                    repo_id=repo_id,
+                    branch=branch,
+                    since=since_date,
+                    until=until_date,
+                    intent_filter=intent_filter,
+                    risk_filter=risk_filter,
+                    author=author,
+                    breaking_only=breaking_only,
+                    security_only=security_only,
+                )
+
+                response_data = {
+                    "query": query,
+                    "results": results,
+                    "count": len(results),
+                    "filters": {
+                        "repo_id": repo_id,
+                        "branch": branch,
+                        "since": since,
+                        "until": until,
+                        "intent": intent_filter,
+                        "risk": risk_filter,
+                        "author": author,
+                        "breaking_only": breaking_only,
+                        "security_only": security_only,
+                    },
+                }
+
+                span.set_attribute("results_found", len(results))
+                span.set_attribute("success", True)
+
+                logger.info(f"Git commit search completed - {len(results)} commits found")
+                return True, response_data
+
+            except Exception as e:
+                logger.error(f"Git commit search failed: {e}")
+                span.set_attribute("error", str(e))
+                span.set_attribute("success", False)
+                return False, {"query": query, "error": str(e), "error_type": type(e).__name__}
+
+    async def search_with_git_context(
+        self,
+        query: str,
+        source: str | None = None,
+        match_count: int = 5,
+        include_git_commits: bool = True,
+        git_match_count: int = 3,
+        repo_id: str | None = None,
+        branch: str | None = None,
+    ) -> tuple[bool, dict[str, Any]]:
+        """
+        Enhanced RAG search that includes Git commit context.
+
+        This combines regular document/code search with Git commit history,
+        providing richer context for code-related queries.
+
+        Args:
+            query: The search query
+            source: Optional source domain to filter document results
+            match_count: Number of document/code results to return
+            include_git_commits: Whether to include Git commit results
+            git_match_count: Number of Git commits to include
+            repo_id: Filter Git results by repository
+            branch: Filter Git results by branch
+
+        Returns:
+            Tuple of (success, result_dict) with combined results
+        """
+        with safe_span(
+            "rag_search_with_git_context",
+            query_length=len(query),
+            match_count=match_count,
+            include_git=include_git_commits,
+        ) as span:
+            try:
+                # Run document search and git search in parallel
+                import asyncio
+
+                tasks = [
+                    self.perform_rag_query(query=query, source=source, match_count=match_count)
+                ]
+
+                if include_git_commits:
+                    tasks.append(
+                        self.search_git_commits(
+                            query=query,
+                            match_count=git_match_count,
+                            repo_id=repo_id,
+                            branch=branch,
+                        )
+                    )
+
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Unpack results
+                doc_success, doc_data = results[0] if not isinstance(results[0], Exception) else (False, {})
+                git_success, git_data = (
+                    results[1]
+                    if len(results) > 1 and not isinstance(results[1], Exception)
+                    else (False, {"results": []})
+                )
+
+                # Combine results
+                combined_results = {
+                    "query": query,
+                    "document_results": doc_data.get("results", []),
+                    "git_results": git_data.get("results", []) if git_success else [],
+                    "document_count": len(doc_data.get("results", [])),
+                    "git_count": len(git_data.get("results", [])) if git_success else 0,
+                    "total_count": len(doc_data.get("results", [])) + (len(git_data.get("results", [])) if git_success else 0),
+                    "search_mode": doc_data.get("search_mode", "vector"),
+                    "reranking_applied": doc_data.get("reranking_applied", False),
+                    "include_git_context": include_git_commits,
+                }
+
+                success = doc_success or (git_success if include_git_commits else False)
+                span.set_attribute("success", success)
+                span.set_attribute("doc_results", combined_results["document_count"])
+                span.set_attribute("git_results", combined_results["git_count"])
+
+                logger.info(
+                    f"Combined search completed - {combined_results['document_count']} docs, "
+                    f"{combined_results['git_count']} commits"
+                )
+                return success, combined_results
+
+            except Exception as e:
+                logger.error(f"Combined search failed: {e}")
+                span.set_attribute("error", str(e))
+                return False, {"query": query, "error": str(e), "error_type": type(e).__name__}
+
+    async def get_file_history_context(
+        self,
+        file_path: str,
+        repo_id: str,
+        match_count: int = 10,
+        branch: str | None = None,
+    ) -> tuple[bool, dict[str, Any]]:
+        """
+        Get commit history for a specific file.
+
+        Useful for understanding how a file has evolved over time.
+
+        Args:
+            file_path: Path to the file
+            repo_id: Repository ID
+            match_count: Number of commits to return
+            branch: Optional branch filter
+
+        Returns:
+            Tuple of (success, result_dict) with file history
+        """
+        with safe_span(
+            "rag_file_history",
+            file_path=file_path,
+            repo_id=repo_id,
+            match_count=match_count,
+        ) as span:
+            try:
+                results = await self.git_strategy.search_commits_for_file(
+                    file_path=file_path,
+                    repo_id=repo_id,
+                    match_count=match_count,
+                    branch=branch,
+                )
+
+                response_data = {
+                    "file_path": file_path,
+                    "repo_id": repo_id,
+                    "branch": branch,
+                    "commits": results,
+                    "count": len(results),
+                }
+
+                span.set_attribute("commits_found", len(results))
+                span.set_attribute("success", True)
+
+                return True, response_data
+
+            except Exception as e:
+                logger.error(f"File history search failed: {e}")
+                span.set_attribute("error", str(e))
+                return False, {"file_path": file_path, "error": str(e)}
+
+    async def get_commit_context_for_rag(
+        self,
+        commit_sha: str,
+        repo_id: str,
+    ) -> tuple[bool, dict[str, Any]]:
+        """
+        Get detailed commit context for RAG queries.
+
+        This retrieves full commit information including files changed,
+        classification, and metadata for use in RAG responses.
+
+        Args:
+            commit_sha: The commit SHA
+            repo_id: Repository ID
+
+        Returns:
+            Tuple of (success, commit_context)
+        """
+        with safe_span("rag_commit_context", commit_sha=commit_sha, repo_id=repo_id) as span:
+            try:
+                context = await self.git_strategy.get_commit_context(
+                    commit_sha=commit_sha,
+                    repo_id=repo_id,
+                )
+
+                if context:
+                    span.set_attribute("success", True)
+                    return True, context
+                else:
+                    span.set_attribute("success", False)
+                    return False, {"error": "Commit not found", "commit_sha": commit_sha}
+
+            except Exception as e:
+                logger.error(f"Failed to get commit context: {e}")
+                span.set_attribute("error", str(e))
+                return False, {"commit_sha": commit_sha, "error": str(e)}
