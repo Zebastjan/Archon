@@ -20,14 +20,10 @@ def merge_fixture(tmp_path: Path):
 def test_merge_commit_has_multiple_parents(
     merge_fixture, git_service: GitRepositoryService, supabase_client: FakeSupabaseClient
 ) -> None:
-    """Test that merge commits are stored in the database.
+    """Test that merge commits have multiple parents in parent_shas array.
 
-    NOTE: There is a known bug in the current implementation where parent_shas are not
-    passed to the upsert_git_commit_with_branch_merge RPC function, so they will be empty
-    even for merge commits. This should be fixed by updating the RPC function and service
-    to include p_parent_shas parameter.
-
-    See: migration/0.1.0/019_add_commit_upsert_function.sql (missing parent_shas handling)
+    Fixed in migration 020_fix_parent_shas_in_commit_upsert.sql - parent_shas are now
+    properly passed to the RPC function and stored in the database.
     """
     # Register repository
     success, result = git_service.register_repository(
@@ -50,12 +46,17 @@ def test_merge_commit_has_multiple_parents(
     assert merge_commit is not None, "Merge commit should be stored in database"
     assert "parent_shas" in merge_commit, "Merge commit should have parent_shas field"
 
-    # KNOWN BUG: parent_shas are currently not populated by the RPC function
-    # Once fixed, this test should verify: len(parent_shas) == 2
+    # Verify parent_shas are properly populated
     parent_shas = merge_commit["parent_shas"]
     assert isinstance(parent_shas, list), "parent_shas should be a list"
-    # Currently will be empty due to bug - uncomment when fixed:
-    # assert len(parent_shas) == 2, f"Merge commit should have 2 parents, got {len(parent_shas)}"
+    assert len(parent_shas) == 2, f"Merge commit should have 2 parents, got {len(parent_shas)}"
+
+    # Both parent commits should be in the database
+    for parent_sha in parent_shas:
+        parent_commit = next(
+            (c for c in commits_table.rows if c["commit_sha"] == parent_sha), None
+        )
+        assert parent_commit is not None, f"Parent commit {parent_sha} should be in database"
 
 
 def test_merge_commit_file_tree_includes_both_features(

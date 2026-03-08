@@ -192,7 +192,7 @@ class FakeSupabaseClient:
     def rpc(self, function_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """Mock RPC function calls (like upsert_git_commit_with_branch_merge)."""
         if function_name == "upsert_git_commit_with_branch_merge":
-            # Simulate the branch merge upsert behavior
+            # Simulate the branch merge upsert behavior (updated to match migration 020)
             commits_table = self.table("archon_git_commits")
             commit_data = {
                 "repo_id": params.get("p_repo_id"),
@@ -201,8 +201,8 @@ class FakeSupabaseClient:
                 "author_email": params.get("p_author_email"),
                 "commit_date": params.get("p_commit_date"),
                 "message": params.get("p_message"),
-                "parent_shas": params.get("p_parent_shas", []),
-                "branches": params.get("p_branches", []),  # Changed from p_branch_name to p_branches
+                "parent_shas": params.get("p_parent_shas", []),  # Now properly included
+                "branches": params.get("p_branches", []),
                 "tags": params.get("p_tags", []),
             }
             # Check if commit exists and merge branches
@@ -220,6 +220,9 @@ class FakeSupabaseClient:
                     if branch and branch not in existing_branches:
                         existing_branches.append(branch)
                 existing["branches"] = existing_branches
+                # Set parent_shas if not already set (parent_shas are immutable)
+                if not existing.get("parent_shas"):
+                    existing["parent_shas"] = commit_data["parent_shas"]
                 # RPC functions are called with .execute(), so return a mock execute response
                 mock_response = MagicMock()
                 mock_response.data = [existing]

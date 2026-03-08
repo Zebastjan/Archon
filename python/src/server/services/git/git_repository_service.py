@@ -676,6 +676,7 @@ class GitRepositoryService:
                                     "p_author_email": commit_data["author_email"],
                                     "p_commit_date": commit_data["commit_date"],
                                     "p_message": commit_data["message"],
+                                    "p_parent_shas": commit_data["parent_shas"],
                                     "p_branches": commit_data["branches"],
                                 },
                             ).execute()
