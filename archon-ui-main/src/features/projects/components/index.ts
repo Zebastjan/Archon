@@ -13,6 +13,7 @@
  * - VersionHistory: Document versioning
  */
 
+export { GitTestProjectCard } from "./GitTestProjectCard";
 export { NewProjectModal } from "./NewProjectModal";
 export { ProjectCard } from "./ProjectCard";
 export { ProjectCardActions } from "./ProjectCardActions";

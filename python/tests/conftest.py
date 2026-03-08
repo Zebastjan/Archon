@@ -31,11 +31,10 @@ mock_table.select.return_value = mock_select
 mock_client.table.return_value = mock_table
 
 # Apply global patches immediately
-from unittest.mock import patch
 _global_patches = [
     patch("supabase.create_client", return_value=mock_client),
     patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client),
-    patch("src.server.utils.get_supabase_client", return_value=mock_client),
+    # Note: src.server.utils doesn't exist, removed patch
 ]
 
 for p in _global_patches:
@@ -54,20 +53,20 @@ def ensure_test_environment():
     os.environ["ARCHON_MCP_PORT"] = "8051"
     os.environ["ARCHON_AGENTS_PORT"] = "8052"
     yield
-    
+
 
 @pytest.fixture(autouse=True)
 def prevent_real_db_calls():
     """Automatically prevent any real database calls in all tests."""
     # Create a mock client to use everywhere
     mock_client = MagicMock()
-    
+
     # Mock table operations with chaining support
     mock_table = MagicMock()
     mock_select = MagicMock()
     mock_or = MagicMock()
     mock_execute = MagicMock()
-    
+
     # Setup basic chaining
     mock_execute.data = []
     mock_or.execute.return_value = mock_execute
@@ -78,12 +77,12 @@ def prevent_real_db_calls():
     mock_table.select.return_value = mock_select
     mock_table.insert.return_value.execute.return_value.data = [{"id": "test-id"}]
     mock_client.table.return_value = mock_table
-    
+
     # Patch all the common ways to get a Supabase client
     with patch("supabase.create_client", return_value=mock_client):
         with patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client):
-            with patch("src.server.utils.get_supabase_client", return_value=mock_client):
-                yield
+            # Note: src.server.utils doesn't exist, removed patch
+            yield
 
 
 @pytest.fixture
@@ -141,26 +140,24 @@ def client(mock_supabase_client):
         "src.server.services.client_manager.get_supabase_client",
         return_value=mock_supabase_client,
     ):
+        # Note: src.server.utils doesn't exist, removed patch
         with patch(
-            "src.server.utils.get_supabase_client",
+            "src.server.services.credential_service.create_client",
             return_value=mock_supabase_client,
         ):
-            with patch(
-                "src.server.services.credential_service.create_client",
-                return_value=mock_supabase_client,
-            ):
-                with patch("supabase.create_client", return_value=mock_supabase_client):
-                    from unittest.mock import AsyncMock
-                    import src.server.main as server_main
+            with patch("supabase.create_client", return_value=mock_supabase_client):
+                from unittest.mock import AsyncMock
 
-                    # Mark initialization as complete for testing (before accessing app)
-                    server_main._initialization_complete = True
-                    app = server_main.app
+                import src.server.main as server_main
 
-                    # Mock the schema check to always return valid
-                    mock_schema_check = AsyncMock(return_value={"valid": True, "message": "Schema is up to date"})
-                    with patch("src.server.main._check_database_schema", new=mock_schema_check):
-                        return TestClient(app)
+                # Mark initialization as complete for testing (before accessing app)
+                server_main._initialization_complete = True
+                app = server_main.app
+
+                # Mock the schema check to always return valid
+                mock_schema_check = AsyncMock(return_value={"valid": True, "message": "Schema is up to date"})
+                with patch("src.server.main._check_database_schema", new=mock_schema_check):
+                    return TestClient(app)
 
 
 @pytest.fixture

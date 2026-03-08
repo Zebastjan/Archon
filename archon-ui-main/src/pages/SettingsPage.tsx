@@ -33,31 +33,13 @@ import {
 import { UpdateBanner } from "../features/settings/version/components/UpdateBanner";
 import { VersionStatusCard } from "../features/settings/version/components/VersionStatusCard";
 import { MigrationStatusCard } from "../features/settings/migrations/components/MigrationStatusCard";
+import { DebugLogViewer } from "../components/settings/DebugLogViewer";
 
 export const SettingsPage = () => {
-  const [ragSettings, setRagSettings] = useState<RagSettings>({
-    USE_CONTEXTUAL_EMBEDDINGS: false,
-    CONTEXTUAL_EMBEDDINGS_MAX_WORKERS: 3,
-    USE_HYBRID_SEARCH: true,
-    USE_AGENTIC_RAG: true,
-    USE_RERANKING: true,
-    MODEL_CHOICE: "gpt-4.1-nano",
-  });
+  // Don't set defaults - wait for backend to load settings
+  const [ragSettings, setRagSettings] = useState<RagSettings | null>(null);
   const [codeExtractionSettings, setCodeExtractionSettings] =
-    useState<CodeExtractionSettingsType>({
-      MIN_CODE_BLOCK_LENGTH: 250,
-      MAX_CODE_BLOCK_LENGTH: 5000,
-      ENABLE_COMPLETE_BLOCK_DETECTION: true,
-      ENABLE_LANGUAGE_SPECIFIC_PATTERNS: true,
-      ENABLE_PROSE_FILTERING: true,
-      MAX_PROSE_RATIO: 0.15,
-      MIN_CODE_INDICATORS: 3,
-      ENABLE_DIAGRAM_FILTERING: true,
-      ENABLE_CONTEXTUAL_LENGTH: true,
-      CODE_EXTRACTION_MAX_WORKERS: 3,
-      CONTEXT_WINDOW_SIZE: 1000,
-      ENABLE_CODE_SUMMARIES: true,
-    });
+    useState<CodeExtractionSettingsType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showButtonPlayground, setShowButtonPlayground] = useState(false);
@@ -96,7 +78,8 @@ export const SettingsPage = () => {
     }
   };
 
-  if (loading) {
+  // Don't render until settings are loaded from backend
+  if (loading || !ragSettings || !codeExtractionSettings) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader className="animate-spin text-gray-500" size={32} />
@@ -208,7 +191,7 @@ export const SettingsPage = () => {
               defaultExpanded={true}
             >
               <RAGSettings
-                ragSettings={ragSettings}
+                ragSettings={ragSettings!}
                 setRagSettings={setRagSettings}
               />
             </CollapsibleSettingsCard>
@@ -222,7 +205,7 @@ export const SettingsPage = () => {
               defaultExpanded={true}
             >
               <CodeExtractionSettings
-                codeExtractionSettings={codeExtractionSettings}
+                codeExtractionSettings={codeExtractionSettings!}
                 setCodeExtractionSettings={setCodeExtractionSettings}
               />
             </CollapsibleSettingsCard>
@@ -300,6 +283,9 @@ export const SettingsPage = () => {
           <p className="text-red-600 dark:text-red-400">{error}</p>
         </motion.div>
       )}
+
+      {/* Debug Log Viewer - Floating Button */}
+      <DebugLogViewer />
     </motion.div>
   );
 };
