@@ -222,52 +222,55 @@ SENSITIVE_FILENAMES = {
     "access_token",
 }
 
-# Language detection mapping (file extension -> language name)
+# Language detection mapping (file extension -> PrismJS language alias)
 LANGUAGE_MAPPING = {
-    ".py": "Python",
-    ".js": "JavaScript",
-    ".jsx": "JavaScript",
-    ".ts": "TypeScript",
-    ".tsx": "TypeScript",
-    ".java": "Java",
-    ".c": "C",
-    ".cpp": "C++",
-    ".cc": "C++",
-    ".h": "C/C++ Header",
-    ".hpp": "C++ Header",
-    ".cs": "C#",
-    ".go": "Go",
-    ".rs": "Rust",
-    ".rb": "Ruby",
-    ".php": "PHP",
-    ".swift": "Swift",
-    ".kt": "Kotlin",
-    ".scala": "Scala",
-    ".r": "R",
-    ".m": "Objective-C",
-    ".sh": "Shell",
-    ".bash": "Bash",
-    ".zsh": "Zsh",
-    ".html": "HTML",
-    ".htm": "HTML",
-    ".css": "CSS",
-    ".scss": "SCSS",
-    ".sass": "Sass",
-    ".less": "Less",
-    ".vue": "Vue",
-    ".svelte": "Svelte",
-    ".json": "JSON",
-    ".xml": "XML",
-    ".yaml": "YAML",
-    ".yml": "YAML",
-    ".toml": "TOML",
-    ".md": "Markdown",
-    ".markdown": "Markdown",
-    ".rst": "reStructuredText",
-    ".tex": "LaTeX",
-    ".sql": "SQL",
-    ".dockerfile": "Dockerfile",
-    ".makefile": "Makefile",
+    # Programming languages
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "jsx",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".go": "go",
+    ".rs": "rust",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".r": "r",
+    ".m": "objectivec",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    # Web technologies
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".sass": "sass",
+    ".less": "less",
+    ".vue": "markup",  # Vue uses HTML-like syntax
+    ".svelte": "markup",  # Svelte uses HTML-like syntax
+    # Data formats
+    ".json": "json",
+    ".xml": "xml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".rst": "rest",
+    ".tex": "latex",
+    ".sql": "sql",
+    ".dockerfile": "docker",
+    ".makefile": "makefile",
 }
 
 
@@ -458,6 +461,31 @@ class GitRepositoryService:
                 f"Failed to get commit SHA for branch '{branch}': {e}",
                 repo_path=repo_path,
                 branch=branch,
+                original_error=str(e),
+            ) from e
+
+    def list_branches(self, repo_path: str) -> list[str]:
+        """
+        Get list of all branch names in repository.
+
+        Args:
+            repo_path: Path to repository
+
+        Returns:
+            List of branch names
+
+        Raises:
+            GitRepositoryNotFoundError: If repository is invalid
+            GitError: If unable to list branches
+        """
+        repo = self._validate_repository(repo_path)
+
+        try:
+            return [head.name for head in repo.heads]
+        except Exception as e:
+            raise GitError(
+                f"Failed to list branches: {e}",
+                repo_path=repo_path,
                 original_error=str(e),
             ) from e
 

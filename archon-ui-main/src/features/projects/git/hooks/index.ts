@@ -12,3 +12,5 @@ export {
   useRepositoryCommits,
   useSyncCommits,
 } from "./useRepositoryQueries";
+
+export { useGitBranches } from "./useGitBranches";

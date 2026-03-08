@@ -6,7 +6,14 @@
 import { GitBranch, RefreshCw, Trash2, FlaskConical } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/features/ui/primitives";
-import { useDeleteRepository, useSyncCommits } from "../hooks";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/features/ui/primitives/select";
+import { useDeleteRepository, useSyncCommits, useGitBranches } from "../hooks";
 import type { Repository } from "../types";
 
 interface RepositoryHeaderProps {
@@ -26,6 +33,8 @@ export const RepositoryHeader = ({
 
   const syncMutation = useSyncCommits(projectId);
   const deleteMutation = useDeleteRepository(projectId);
+  const { data: branchesData } = useGitBranches(projectId);
+  const branches = branchesData?.branches || [selectedBranch];
 
   const handleSync = () => {
     syncMutation.mutate({ branch_name: selectedBranch });
@@ -65,13 +74,30 @@ export const RepositoryHeader = ({
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          {/* Branch selector - simplified for now */}
-          <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-            <div className="flex items-center gap-2">
-              <GitBranch className="h-4 w-4 text-cyan-400" />
-              <span className="text-sm text-white">{selectedBranch}</span>
-            </div>
-          </div>
+          {/* Branch selector */}
+          <Select
+            value={selectedBranch}
+            onValueChange={onBranchChange}
+          >
+            <SelectTrigger className="w-[200px]">
+              <div className="flex items-center gap-2">
+                <GitBranch className="h-4 w-4 text-cyan-400" />
+                <SelectValue placeholder="Select branch" />
+              </div>
+            </SelectTrigger>
+            <SelectContent>
+              {branches.map((branch) => (
+                <SelectItem key={branch} value={branch}>
+                  <div className="flex items-center justify-between w-full">
+                    <span>{branch}</span>
+                    {branch === branchesData?.default_branch && (
+                      <span className="ml-2 text-xs text-cyan-400">(default)</span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {/* Sync button */}
           <Button

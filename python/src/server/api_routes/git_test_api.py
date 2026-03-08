@@ -165,16 +165,32 @@ async def initialize_test_fixture(project_id: str, request: InitializeTestFixtur
                 status_code=500, detail=result.get("error", "Failed to register test fixture repository")
             )
 
-        # Sync commits
+        # Sync commits from all branches for multi-branch fixtures
         repo_id = result["repo_id"]
         default_branch = expected_data.get("default_branch", "main")
+        all_branches = expected_data.get("branches", [default_branch])
 
-        sync_success, sync_result = git_service.sync_commits(
-            repo_id=repo_id, branch_name=default_branch, max_commits=100
-        )
+        # Track total commits synced across all branches
+        total_commits_synced = 0
 
-        if not sync_success:
-            logfire.warning(f"Failed to sync commits for test fixture: {sync_result.get('error')}")
+        # Sync each branch to ensure all commits are captured
+        for branch_name in all_branches:
+            logger.info(f"Syncing branch: {branch_name}")
+            sync_success, sync_result = git_service.sync_commits(
+                repo_id=repo_id, branch_name=branch_name, max_commits=100
+            )
+
+            if not sync_success:
+                logger.error(f"Failed to sync branch {branch_name}: {sync_result.get('error')}")
+                logfire.warning(f"Failed to sync branch {branch_name}: {sync_result.get('error')}")
+                # Continue to sync other branches even if one fails
+                continue
+
+            commits_synced = sync_result.get("commit_count", 0)
+            total_commits_synced += commits_synced
+            logger.info(f"Synced {commits_synced} commits from branch {branch_name}")
+
+        logger.info(f"Total commits synced across all branches: {total_commits_synced}")
 
         logger.info(f"Successfully initialized test fixture '{request.fixture_name}' for project {project_id}")
 

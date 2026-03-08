@@ -220,6 +220,69 @@ async def get_repository(project_id: str):
         ) from e
 
 
+@router.get("/projects/{project_id}/repository/branches")
+async def list_repository_branches(project_id: str):
+    """
+    List all branches in a repository.
+
+    Args:
+        project_id: UUID of project
+
+    Returns:
+        List of branch names with default branch marked
+
+    Raises:
+        HTTPException 404: If project or repository not found
+        HTTPException 500: If operation fails
+    """
+    try:
+        logfire.info(f"Listing branches for project {project_id}")
+
+        supabase_client = get_supabase_client()
+
+        # Get repository for project
+        repo_response = (
+            supabase_client.table("archon_git_repositories")
+            .select("id, repo_url, default_branch, source_id")
+            .eq("source_id", project_id)
+            .execute()
+        )
+
+        if not repo_response.data or len(repo_response.data) == 0:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="Repository not found for project",
+            )
+
+        repo_record = repo_response.data[0]
+        repo_path = str(repo_record["repo_url"])
+        default_branch = str(repo_record["default_branch"])
+
+        # List branches using service
+        service = GitRepositoryService(supabase_client)
+        branches = service.list_branches(repo_path)
+
+        return {
+            "branches": branches,
+            "default_branch": default_branch,
+        }
+
+    except HTTPException:
+        raise
+    except GitRepositoryNotFoundError as e:
+        logger.error(f"Repository not found: {e}")
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Repository path is invalid or not a git repository",
+        ) from e
+    except Exception as e:
+        logger.error(f"Failed to list branches: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list branches: {str(e)}",
+        ) from e
+
+
 @router.delete("/projects/{project_id}/repository")
 async def delete_repository(project_id: str):
     """
