@@ -301,8 +301,9 @@ def test_t1200_checkout_branch_file_trees(
         except:
             pass
 
-    # Get SHAs for each branch
-    main_sha = adapter.get_commit_sha("main") if "main" in ["main", "master"] else adapter.get_commit_sha("master")
+    # Get default branch name from adapter
+    default_branch = adapter.get_branch_name()
+    main_sha = adapter.get_commit_sha(default_branch)
     branch_a_sha = adapter.get_commit_sha("branch-a")
     branch_b_sha = adapter.get_commit_sha("branch-b")
 
@@ -374,7 +375,8 @@ def test_t2000_checkout_develop_branch_changes(
     # Sync develop branch
     git_service.sync_commits(repo_id=repo_id, branch_name="develop", max_commits=100)
 
-    main_sha = adapter.get_commit_sha("main") if "main" in ["main", "master"] else adapter.get_commit_sha("master")
+    default_branch = adapter.get_branch_name()
+    main_sha = adapter.get_commit_sha(default_branch)
     develop_sha = adapter.get_commit_sha("develop")
 
     # Main should have config.yaml
@@ -411,7 +413,8 @@ def test_t2000_modified_file_retrieval(
     git_service.sync_commits(repo_id=repo_id, branch_name="develop", max_commits=100)
 
     # Get both SHAs and verify modified file
-    main_sha = adapter.get_commit_sha("main") if "main" in ["main", "master"] else adapter.get_commit_sha("master")
+    default_branch = adapter.get_branch_name()
+    main_sha = adapter.get_commit_sha(default_branch)
     develop_sha = adapter.get_commit_sha("develop")
 
     adapter.assert_file_content_matches("src/app.py", main_sha)

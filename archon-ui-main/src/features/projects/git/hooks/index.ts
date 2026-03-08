@@ -15,3 +15,5 @@ export {
 } from "./useRepositoryQueries";
 
 export { useGitBranches } from "./useGitBranches";
+
+export { useSemanticSearch } from "./useSemanticSearch";

@@ -3,7 +3,7 @@
  * Main tab for git repository browsing within projects
  */
 
-import { GitBranch, FileText, Tag, GitCompare } from "lucide-react";
+import { GitBranch, FileText, Tag, GitCompare, Search } from "lucide-react";
 import { useState } from "react";
 import { InitializeRepositoryModal } from "./components/InitializeRepositoryModal";
 import { CommitList } from "./components/CommitList";
@@ -11,9 +11,12 @@ import { FileTreeViewer } from "./components/FileTreeViewer";
 import { RepositoryHeader } from "./components/RepositoryHeader";
 import { ClassificationBadges } from "./components/ClassificationBadges";
 import { DiffViewer } from "./components/DiffViewer";
+import { CommitSearch } from "./components/CommitSearch";
+import { SemanticSearchResults } from "./components/SemanticSearchResults";
 import { useProjectRepository, useRepositoryCommits, useDiff } from "./hooks";
+import { useSemanticSearch } from "./hooks/useSemanticSearch";
 
-type ViewMode = "files" | "classification" | "compare";
+type ViewMode = "files" | "classification" | "compare" | "search";
 
 interface GitTabProps {
   project?: {
@@ -49,6 +52,9 @@ export const GitTab = ({ project }: GitTabProps) => {
     compareCommitSha,
     selectedCommitSha,
   );
+
+  // Semantic search state
+  const { results: searchResults, isLoading: isSearching, lastQuery, search, reset: resetSearch } = useSemanticSearch();
 
   // Loading state
   if (isLoading) {
@@ -177,6 +183,18 @@ export const GitTab = ({ project }: GitTabProps) => {
                 <GitCompare className="h-3.5 w-3.5" />
                 Compare
               </button>
+              <button
+                onClick={() => setViewMode("search")}
+                className={`flex items-center gap-2 rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                  viewMode === "search"
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+                type="button"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Search
+              </button>
             </div>
 
             {/* Compare mode: commit selector */}
@@ -269,6 +287,33 @@ export const GitTab = ({ project }: GitTabProps) => {
                 <div>
                   <GitCompare className="mx-auto mb-3 h-12 w-12 text-zinc-600" />
                   <p className="text-sm text-zinc-400">Select a commit to compare with</p>
+                </div>
+              </div>
+            )}
+
+            {viewMode === "search" && (
+              <div className="flex h-full flex-col">
+                <div className="mb-4">
+                  <CommitSearch
+                    onSearch={(query, filters) => {
+                      search(query, filters, 20);
+                    }}
+                    isLoading={isSearching}
+                    defaultBranch={selectedBranch || repository.default_branch}
+                    repoId={repository.id}
+                  />
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <SemanticSearchResults
+                    results={searchResults}
+                    isLoading={isSearching}
+                    query={lastQuery}
+                    onSelectCommit={(sha) => {
+                      setSelectedCommitSha(sha);
+                      setViewMode("files");
+                    }}
+                    selectedCommitSha={selectedCommitSha}
+                  />
                 </div>
               </div>
             )}
