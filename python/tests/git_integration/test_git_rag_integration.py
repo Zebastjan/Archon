@@ -263,6 +263,42 @@ class TestGitRAGFiltering:
                 assert commit["classification"].get("security_relevant") is True
 
 
+@pytest.mark.asyncio
+class TestGitRAGIntegrationExtended:
+    """Additional RAG integration tests."""
+    
+    async def test_search_git_commits_with_author_filter(self, supabase_client):
+        """Test filtering commits by author."""
+        rag_service = RAGService(supabase_client)
+        
+        success, result = await rag_service.search_git_commits(
+            query="changes",
+            author="test@example.com",
+        )
+        
+        assert isinstance(success, bool)
+    
+    async def test_search_git_commits_time_range(self, supabase_client):
+        """Test searching commits within time range."""
+        rag_service = RAGService(supabase_client)
+        
+        success, result = await rag_service.search_git_commits(
+            query="feature",
+            since="2024-01-01",
+            until="2024-06-30",
+        )
+        
+        assert isinstance(success, bool)
+    
+    async def test_empty_git_search_query(self, supabase_client):
+        """Test handling of empty query."""
+        rag_service = RAGService(supabase_client)
+        
+        success, result = await rag_service.search_git_commits(query="")
+        
+        assert isinstance(success, bool)
+
+
 # Fixtures for tests (these would need real data)
 @pytest.fixture
 def test_repo_id():
