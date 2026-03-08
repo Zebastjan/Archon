@@ -15,6 +15,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel
 
 from ..config.logfire_config import get_logger, logfire
+from ..services.git.git_diff_service import GitDiffService
 from ..services.git.git_repository_service import (
     GitBranchNotFoundError,
     GitCommitNotFoundError,
@@ -697,6 +698,165 @@ async def get_file_content(
         ) from e
     except Exception as e:
         logger.error(f"Error getting file content: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
+        ) from e
+
+
+@router.get("/projects/{project_id}/repository/diff")
+async def get_diff(
+    project_id: str,
+    from_commit: str,
+    to_commit: str,
+    file_path: str | None = None,
+):
+    """
+    Get structured diff between two commits.
+
+    Args:
+        project_id: UUID of project
+        from_commit: Starting commit SHA
+        to_commit: Ending commit SHA
+        file_path: Optional file path to filter diff
+
+    Returns:
+        Structured diff with file-level and hunk-level details:
+        {
+            "from_commit": "abc123",
+            "to_commit": "def456",
+            "files_changed": 3,
+            "additions": 45,
+            "deletions": 12,
+            "files": [
+                {
+                    "path": "src/main.py",
+                    "old_path": null,
+                    "status": "modified",
+                    "language": "python",
+                    "additions": 15,
+                    "deletions": 8,
+                    "is_binary": false,
+                    "hunks": [
+                        {
+                            "old_start": 10,
+                            "old_lines": 5,
+                            "new_start": 10,
+                            "new_lines": 12,
+                            "context": "def main()",
+                            "diff_text": "@@ -10,5 +10,12 @@ def main()...",
+                            "additions": 7,
+                            "deletions": 0
+                        }
+                    ]
+                }
+            ]
+        }
+
+    Raises:
+        404: Repository, commits, or file not found
+        400: Invalid commit SHA or diff generation failed
+        500: Internal server error
+    """
+    try:
+        supabase_client = get_supabase_client()
+
+        # Get project's source_id
+        project_response = (
+            supabase_client.table("archon_projects").select("*").eq("id", project_id).execute()
+        )
+
+        if not project_response.data:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}",
+            )
+
+        project = project_response.data[0]
+        source_id = project.get("source_id")
+
+        if not source_id:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail="Project does not have an associated Git repository",
+            )
+
+        # Get repository by source_id
+        repo_response = (
+            supabase_client.table("archon_git_repositories")
+            .select("*")
+            .eq("source_id", source_id)
+            .execute()
+        )
+
+        if not repo_response.data:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Git repository not found for project: {project_id}",
+            )
+
+        repo_record = repo_response.data[0]
+        repo_path = repo_record["repo_url"]
+
+        # Generate diff using GitDiffService
+        git_service = GitRepositoryService(supabase_client)
+        diff_service = GitDiffService(git_service)
+
+        structured_diff = diff_service.get_diff(
+            repo_path=repo_path,
+            from_sha=from_commit,
+            to_sha=to_commit,
+            file_path=file_path,
+        )
+
+        # Convert dataclasses to dicts for JSON response
+        return {
+            "from_commit": structured_diff.from_commit,
+            "to_commit": structured_diff.to_commit,
+            "files_changed": structured_diff.files_changed,
+            "additions": structured_diff.additions,
+            "deletions": structured_diff.deletions,
+            "files": [
+                {
+                    "path": f.path,
+                    "old_path": f.old_path,
+                    "status": f.status,
+                    "language": f.language,
+                    "additions": f.additions,
+                    "deletions": f.deletions,
+                    "is_binary": f.is_binary,
+                    "hunks": [
+                        {
+                            "old_start": h.old_start,
+                            "old_lines": h.old_lines,
+                            "new_start": h.new_start,
+                            "new_lines": h.new_lines,
+                            "context": h.context,
+                            "diff_text": h.diff_text,
+                            "additions": h.additions,
+                            "deletions": h.deletions,
+                        }
+                        for h in f.hunks
+                    ],
+                }
+                for f in structured_diff.files
+            ],
+        }
+
+    except HTTPException:
+        raise
+    except GitCommitNotFoundError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=e.to_dict(),
+        ) from e
+    except GitError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=e.to_dict(),
+        ) from e
+    except Exception as e:
+        logger.error(f"Error generating diff: {e}", exc_info=True)
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}",
