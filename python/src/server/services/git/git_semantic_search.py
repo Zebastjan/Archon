@@ -24,7 +24,7 @@ from typing import Any
 from supabase import Client as SupabaseClient
 
 from ...config.logfire_config import safe_span, search_logger
-from ...db_connector import get_db_client
+from ..client_manager import get_supabase_client
 from ..embeddings.embedding_service import create_embedding
 
 
@@ -92,7 +92,7 @@ class GitSemanticSearch:
         Args:
             supabase_client: Supabase client for database operations
         """
-        self.supabase = supabase_client or get_db_client()
+        self.supabase = supabase_client or get_supabase_client()
 
     async def search_commits(
         self,

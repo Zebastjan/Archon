@@ -24,7 +24,7 @@ from typing import Any
 from supabase import Client as SupabaseClient
 
 from ...config.logfire_config import safe_span, search_logger
-from ...db_connector import get_db_client
+from ..client_manager import get_supabase_client
 from ..embeddings.embedding_service import (
     EmbeddingBatchResult,
     create_embeddings_batch,
@@ -64,7 +64,7 @@ class GitEmbeddingService:
         Args:
             supabase_client: Supabase client for database operations
         """
-        self.supabase = supabase_client or get_db_client()
+        self.supabase = supabase_client or get_supabase_client()
 
     def format_commit_for_embedding(
         self,
