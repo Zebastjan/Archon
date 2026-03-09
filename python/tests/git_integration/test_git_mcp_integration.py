@@ -2,6 +2,12 @@
 Test Git MCP Integration - MCP agent tools for git search.
 
 Phase 4 tests for MCP agent integration with Git functionality.
+
+IMPORTANT: These tests mock only external dependencies (Supabase), not service layers.
+This ensures we test the real integration chain:
+- GitSemanticSearch → GitSearchStrategy → GitTools → MCP wrapper
+
+If someone breaks GitSearchStrategy formatting or data flow, these tests will catch it.
 """
 
 import sys
@@ -13,6 +19,7 @@ sys.modules['src.server.db_connector'].get_db_client = MagicMock(return_value=Ma
 sys.modules['openai'] = MagicMock()
 sys.modules['src.server.services.embeddings'] = MagicMock()
 sys.modules['src.server.services.embeddings.embedding_service'] = MagicMock()
+sys.modules['src.server.services.embeddings.embedding_service'].create_embedding = AsyncMock(return_value=[0.1] * 1536)
 sys.modules['src.server.services.embeddings.contextual_embedding_service'] = MagicMock()
 sys.modules['src.server.services.credential_service'] = MagicMock()
 
@@ -24,6 +31,14 @@ from typing import Any
 from src.server.mcp.git_tools import GitTools
 from src.server.mcp.git_mcp_server import GitMCPServer
 MCP_AVAILABLE = True
+
+# Import realistic mock data factories
+from tests.git_integration.fixtures.realistic_mock_data import (
+    create_supabase_commit_response,
+    create_security_fix_response,
+    create_bug_fix_response,
+    create_feature_response,
+)
 
 
 @pytest.fixture
@@ -83,30 +98,56 @@ class TestMCPGitTools:
 
     @pytest.mark.asyncio
     async def test_mcp_git_search_tool_execution(self, mock_supabase_client):
-        """Agent can call git search tool."""
+        """Agent can call git search tool.
+
+        IMPORTANT: Mocks only Supabase, tests real chain:
+        GitSemanticSearch → GitSearchStrategy → GitTools
+        """
         git_tools = GitTools(mock_supabase_client)
 
-        # Mock search results
-        mock_results = [
-            {
-                "commit_sha": "abc123",
-                "message": "Add performance improvements",
-                "author": "dev@example.com",
-                "similarity": 0.85,
-            }
-        ]
+        # Mock Supabase RPC response (external dependency only)
+        mock_supabase_client.rpc.return_value.execute.return_value = MagicMock(
+            data=[
+                create_supabase_commit_response(
+                    commit_sha="abc123" + "a" * 34,
+                    message="Add performance improvements",
+                    intent="feature",
+                    risk_level="low",
+                    author_name="Dev Team",
+                    author_email="dev@example.com",
+                    similarity=0.85,
+                )
+            ]
+        )
 
-        with patch.object(git_tools.git_strategy, 'search_commits', new_callable=AsyncMock, return_value=mock_results):
-            result = await git_tools.search_commits(
-                query="performance improvements",
-                limit=5
-            )
+        # Call real MCP tool (no strategy mocking!)
+        result = await git_tools.search_commits(
+            query="performance improvements",
+            limit=5
+        )
 
+        # Validate MCP wrapper structure
         assert result["success"] is True
         assert result["query"] == "performance improvements"
         assert result["count"] == 1
         assert len(result["results"]) == 1
-        assert result["results"][0]["commit_sha"] == "abc123"
+
+        # Validate complete commit structure from strategy (all 17 fields)
+        commit = result["results"][0]
+        assert commit["type"] == "git_commit"
+        assert commit["commit_sha"] == "abc123" + "a" * 34
+        assert commit["commit_id"] is not None
+        assert commit["repo_id"] is not None
+        assert commit["message"] == "Add performance improvements"
+        assert commit["author"] == "Dev Team"
+        assert commit["author_email"] == "dev@example.com"
+        assert commit["commit_date"] is not None
+        assert commit["branches"] == ["main"]
+        assert commit["classification"]["intent"] == "feature"
+        assert commit["similarity_score"] == 0.85
+        assert commit["embedding_dimension"] == 1536
+        assert "content" in commit  # Formatted by _format_commit_content
+        assert "metadata" in commit
 
     @pytest.mark.asyncio
     async def test_mcp_git_file_history_tool_execution(self, mock_supabase_client):
@@ -167,29 +208,36 @@ class TestMCPResultsFormatting:
 
     @pytest.mark.asyncio
     async def test_mcp_results_formatted_for_agent(self, mock_supabase_client):
-        """Results are human-readable for agents."""
+        """Results are human-readable for agents.
+
+        IMPORTANT: Mocks only Supabase, validates real MCP wrapper formatting.
+        """
         git_tools = GitTools(mock_supabase_client)
 
-        # Mock search results
-        mock_results = [
-            {
-                "commit_sha": "abc123",
-                "message": "Add feature X",
-                "author": "developer@example.com",
-                "similarity": 0.92,
-            }
-        ]
+        # Mock Supabase RPC response
+        mock_supabase_client.rpc.return_value.execute.return_value = MagicMock(
+            data=[
+                create_feature_response()
+            ]
+        )
 
-        with patch.object(git_tools.git_strategy, 'search_commits', new_callable=AsyncMock, return_value=mock_results):
-            result = await git_tools.search_commits(query="feature X")
+        # Call real MCP tool chain
+        result = await git_tools.search_commits(query="feature X")
 
-        # Verify result structure is agent-friendly
+        # Verify MCP wrapper adds these fields
         assert "success" in result
         assert "query" in result
         assert "count" in result
         assert "results" in result
         assert isinstance(result["results"], list)
         assert result["success"] is True
+
+        # Verify GitSearchStrategy provides complete commit structure
+        commit = result["results"][0]
+        assert commit["type"] == "git_commit"
+        assert "content" in commit  # Human-readable content for agent
+        assert "metadata" in commit
+        assert "classification" in commit
 
     @pytest.mark.asyncio
     async def test_mcp_error_handling(self, mock_supabase_client):
@@ -214,25 +262,39 @@ class TestMCPQueryTypes:
 
     @pytest.mark.asyncio
     async def test_mcp_semantic_commit_queries(self, mock_supabase_client):
-        """Natural language to commits."""
+        """Natural language to commits.
+
+        IMPORTANT: Mocks only Supabase, tests real semantic search chain.
+        """
         git_tools = GitTools(mock_supabase_client)
 
-        mock_results = [
-            {
-                "commit_sha": "abc123",
-                "message": "Implement user authentication",
-                "similarity": 0.88,
-            }
-        ]
+        # Mock Supabase RPC response
+        mock_supabase_client.rpc.return_value.execute.return_value = MagicMock(
+            data=[
+                create_supabase_commit_response(
+                    commit_sha="abc123" + "a" * 34,
+                    message="Implement user authentication",
+                    intent="feature",
+                    risk_level="medium",
+                    similarity=0.88,
+                )
+            ]
+        )
 
-        with patch.object(git_tools.git_strategy, 'search_commits', new_callable=AsyncMock, return_value=mock_results):
-            result = await git_tools.search_commits(
-                query="how does authentication work?"
-            )
+        # Call real MCP tool chain
+        result = await git_tools.search_commits(
+            query="how does authentication work?"
+        )
 
         assert result["success"] is True
         assert result["count"] == 1
         assert "authentication" in result["results"][0]["message"].lower()
+
+        # Validate complete structure
+        commit = result["results"][0]
+        assert "content" in commit
+        assert "metadata" in commit
+        assert commit["type"] == "git_commit"
 
     @pytest.mark.asyncio
     async def test_mcp_performance_optimization_queries(self, mock_supabase_client):
@@ -260,28 +322,34 @@ class TestMCPQueryTypes:
 
     @pytest.mark.asyncio
     async def test_mcp_security_fix_queries(self, mock_supabase_client):
-        """Find security commits."""
+        """Find security commits.
+
+        IMPORTANT: Mocks only Supabase, tests real security filtering chain.
+        """
         git_tools = GitTools(mock_supabase_client)
 
-        mock_results = [
-            {
-                "commit_sha": "sec789",
-                "message": "Fix SQL injection vulnerability",
-                "intent": ["security_fix"],
-                "risk_level": "high",
-                "similarity": 0.95,
-            }
-        ]
+        # Mock Supabase RPC response with security commit
+        mock_supabase_client.rpc.return_value.execute.return_value = MagicMock(
+            data=[create_security_fix_response()]
+        )
 
-        with patch.object(git_tools.git_strategy, 'search_commits', new_callable=AsyncMock, return_value=mock_results):
-            result = await git_tools.search_commits(
-                query="security vulnerabilities",
-                security_only=True
-            )
+        # Call real MCP tool chain
+        result = await git_tools.search_commits(
+            query="security vulnerabilities",
+            security_only=True
+        )
 
         assert result["success"] is True
         assert result["count"] == 1
-        assert result["results"][0]["intent"] == ["security_fix"]
+
+        # Validate complete structure
+        commit = result["results"][0]
+        assert commit["type"] == "git_commit"
+        assert commit["classification"]["intent"] == "security_fix"
+        assert commit["classification"]["risk_level"] == "high"
+        assert "content" in commit
+        assert "metadata" in commit
+        assert commit["commit_sha"] is not None
 
     @pytest.mark.asyncio
     async def test_mcp_author_queries(self, mock_supabase_client):
