@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from collections.abc import Generator
 from unittest.mock import MagicMock
 
@@ -12,6 +13,9 @@ from src.server.services.git.git_repository_service import GitRepositoryService
 from tests.git_integration.test_git_repository_integration import (
     FakeSupabaseClient,
 )
+
+# Define fixtures directory path
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +93,7 @@ def mock_embedding_result():
 def mock_supabase_client():
     """Provide a mocked Supabase client with chainable methods."""
     client = MagicMock()
-    
+
     # Setup table method chain
     table_mock = MagicMock()
     table_mock.select.return_value = table_mock
@@ -103,11 +107,38 @@ def mock_supabase_client():
     table_mock.is_.return_value = table_mock
     table_mock.limit.return_value = table_mock
     table_mock.execute.return_value = MagicMock(data=[])
+    table_mock.update.return_value = table_mock
+    table_mock.insert.return_value = table_mock
+    table_mock.upsert.return_value = table_mock
     client.table.return_value = table_mock
-    
+
     # Setup RPC method
     rpc_mock = MagicMock()
     rpc_mock.execute.return_value = MagicMock(data=[])
     client.rpc.return_value = rpc_mock
-    
+
     return client
+
+
+# Embedded Test Repository Fixtures
+
+@pytest.fixture(scope="session")
+def embedded_test_repo():
+    """Provide path to embedded test repository with classified commits."""
+    from tests.git_integration.fixtures.generators.embedded_repo import generate_embedded_fixture
+
+    # Generate if not exists
+    repo_data = generate_embedded_fixture()
+    return repo_data
+
+
+@pytest.fixture
+def test_repo_id():
+    """Provide test repository ID for RAG integration tests."""
+    return "embedded-test-repo-id"
+
+
+@pytest.fixture
+def test_commit_sha(embedded_test_repo):
+    """Provide a test commit SHA from embedded repository."""
+    return embedded_test_repo["commits"][0]["sha"]
