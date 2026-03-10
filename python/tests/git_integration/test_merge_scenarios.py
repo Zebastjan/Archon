@@ -20,15 +20,9 @@ def merge_fixture(tmp_path: Path):
 def test_merge_commit_has_multiple_parents(
     merge_fixture, git_service: GitRepositoryService, supabase_client: FakeSupabaseClient
 ) -> None:
-    """Test that merge commits have multiple parents in parent_shas array.
-
-    Fixed in migration 020_fix_parent_shas_in_commit_upsert.sql - parent_shas are now
-    properly passed to the RPC function and stored in the database.
-    """
+    """Test that merge commits have multiple parents in parent_shas array."""
     # Register repository
-    success, result = git_service.register_repository(
-        str(merge_fixture.repo_path), source_id="source-merge"
-    )
+    success, result = git_service.register_repository(str(merge_fixture.repo_path), source_id="source-merge")
     assert success is True
     repo_id = result["repo_id"]
 
@@ -53,9 +47,7 @@ def test_merge_commit_has_multiple_parents(
 
     # Both parent commits should be in the database
     for parent_sha in parent_shas:
-        parent_commit = next(
-            (c for c in commits_table.rows if c["commit_sha"] == parent_sha), None
-        )
+        parent_commit = next((c for c in commits_table.rows if c["commit_sha"] == parent_sha), None)
         assert parent_commit is not None, f"Parent commit {parent_sha} should be in database"
 
 
@@ -64,9 +56,7 @@ def test_merge_commit_file_tree_includes_both_features(
 ) -> None:
     """Test that file tree at merge commit includes files from both branches."""
     # Register repository
-    success, result = git_service.register_repository(
-        str(merge_fixture.repo_path), source_id="source-tree"
-    )
+    success, result = git_service.register_repository(str(merge_fixture.repo_path), source_id="source-tree")
     assert success is True
     repo_id = result["repo_id"]
 
@@ -89,23 +79,17 @@ def test_feature_branches_have_different_files(
 ) -> None:
     """Test that feature branches have their own specific files before merge."""
     # Register repository
-    success, result = git_service.register_repository(
-        str(merge_fixture.repo_path), source_id="source-features"
-    )
+    success, result = git_service.register_repository(str(merge_fixture.repo_path), source_id="source-features")
     assert success is True
     repo_id = result["repo_id"]
 
     # Get file tree for feature-a
-    tree_success, feature_a_tree = git_service.get_file_tree(
-        repo_id, merge_fixture.feature_a_commit_sha
-    )
+    tree_success, feature_a_tree = git_service.get_file_tree(repo_id, merge_fixture.feature_a_commit_sha)
     assert tree_success is True
     feature_a_files = {f["file_path"] for f in feature_a_tree["files"]}
 
     # Get file tree for feature-b
-    tree_success, feature_b_tree = git_service.get_file_tree(
-        repo_id, merge_fixture.feature_b_commit_sha
-    )
+    tree_success, feature_b_tree = git_service.get_file_tree(repo_id, merge_fixture.feature_b_commit_sha)
     assert tree_success is True
     feature_b_files = {f["file_path"] for f in feature_b_tree["files"]}
 
@@ -127,9 +111,7 @@ def test_all_commits_properly_tracked(
 ) -> None:
     """Test that all commits in merge scenario are properly tracked."""
     # Register repository
-    success, result = git_service.register_repository(
-        str(merge_fixture.repo_path), source_id="source-all-commits"
-    )
+    success, result = git_service.register_repository(str(merge_fixture.repo_path), source_id="source-all-commits")
     assert success is True
     repo_id = result["repo_id"]
 
@@ -162,9 +144,7 @@ def test_branch_associations_after_merge(
 ) -> None:
     """Test that branch associations are correct after merge."""
     # Register repository
-    success, result = git_service.register_repository(
-        str(merge_fixture.repo_path), source_id="source-branches"
-    )
+    success, result = git_service.register_repository(str(merge_fixture.repo_path), source_id="source-branches")
     assert success is True
     repo_id = result["repo_id"]
 

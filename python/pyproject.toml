@@ -29,6 +29,10 @@ dev = [
     "ruff>=0.12.5",
     "requests>=2.31.0",
     "factory-boy>=3.3.0",
+    "psycopg2-binary>=2.9.11",
+    "fastapi>=0.119.1",
+    "httpx>=0.28.1",
+    "supabase>=2.15.1",
 ]
 
 # Server container dependencies

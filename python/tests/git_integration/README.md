@@ -198,21 +198,18 @@ Mock Supabase client for testing without database:
 - `deletions_fixture` - Programmatically generated file-deletions repo
 - `merge_fixture` - Programmatically generated merge-scenarios repo
 
-## Known Issues
+## Fixed Issues
 
-### 🐛 parent_shas Not Populated (CRITICAL)
-**Issue:** The `upsert_git_commit_with_branch_merge` RPC function does not include `parent_shas` parameter, so merge commit parents are never stored in the database.
+### ✅ parent_shas Now Properly Stored
+**Status:** FIXED in migration 019
 
-**Location:** `migration/0.1.0/019_add_commit_upsert_function.sql`
+**Fix Applied:**
+- Updated `upsert_git_commit_with_branch_merge` RPC function to accept `p_parent_shas TEXT[]` parameter
+- Added `parent_shas` to INSERT and ON CONFLICT UPDATE statements
+- Function now returns UUID instead of VOID for better tracking
+- Parent SHAs are set on initial insert and preserved on updates (immutable)
 
-**Impact:** Cannot properly track commit ancestry or identify merge commits
-
-**Fix Required:**
-1. Update RPC function to accept `p_parent_shas TEXT[]` parameter
-2. Include `parent_shas` in INSERT and UPDATE statements
-3. Update service call in `git_repository_service.py` line 679 to pass `parent_shas`
-
-**Test Coverage:** `test_merge_commit_has_multiple_parents` documents this bug
+**Test Coverage:** `test_merge_commit_has_multiple_parents` validates 2-parent merge commits work correctly
 
 ## Coverage Summary
 
