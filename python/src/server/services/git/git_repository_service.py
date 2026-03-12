@@ -999,3 +999,208 @@ class GitRepositoryService:
                 commit_sha=commit_sha,
                 original_error=str(e),
             ) from e
+
+    async def extract_code_entities(
+        self,
+        repo_id: str,
+        commit_sha: str,
+        file_paths: list[str] | None = None,
+        batch_size: int = 50,
+    ) -> dict[str, Any]:
+        """
+        Extract code entities and relationships from source files at a commit.
+
+        Uses Tree-sitter parsers to analyze source code and extract structural
+        information (functions, classes, methods, imports, calls, etc.).
+        Stores extracted entities in archon_code_entities and relationships
+        in archon_code_relationships.
+
+        Args:
+            repo_id: UUID of repository
+            commit_sha: Commit SHA to analyze
+            file_paths: Optional list of specific files to analyze. If None,
+                       analyzes all supported source files in the commit.
+            batch_size: Number of files to process per batch (default 50)
+
+        Returns:
+            Dict with extraction results:
+            - processed: Number of files processed
+            - entities_created: Total entities created
+            - relationships_created: Total relationships created
+            - errors: List of errors encountered
+            - files_by_language: Breakdown of files processed by language
+
+        Example:
+            >>> results = await service.extract_code_entities(
+            ...     repo_id="uuid",
+            ...     commit_sha="abc123",
+            ...     file_paths=["src/main.py", "src/utils.ts"]
+            ... )
+            >>> print(f"Created {results['entities_created']} entities")
+        """
+        from ..code_entity_service import CodeEntityService
+        from ..languages import get_language_for_file
+
+        code_entity_service = CodeEntityService(self.supabase_client)
+
+        # If no file paths specified, get all supported source files
+        if file_paths is None:
+            success, result = self.get_file_tree(repo_id, commit_sha)
+            if not success:
+                return {
+                    "processed": 0,
+                    "entities_created": 0,
+                    "relationships_created": 0,
+                    "errors": [result.get("error", "Failed to get file tree")],
+                    "files_by_language": {},
+                }
+
+            # Filter to supported source files only
+            all_files = result.get("files", [])
+            file_paths = [
+                f["file_path"]
+                for f in all_files
+                if not f.get("is_binary", False) and get_language_for_file(f["file_path"]) is not None
+            ]
+
+            logger.info(
+                f"Found {len(file_paths)} supported source files out of {len(all_files)} total files"
+            )
+
+        # Track results
+        total_results = {
+            "processed": 0,
+            "entities_created": 0,
+            "relationships_created": 0,
+            "errors": [],
+            "files_by_language": {},
+        }
+
+        # Create async file content getter
+        async def get_file_content(repo_id: str, commit_sha: str, file_path: str) -> str:
+            success, result = self.get_file_content(repo_id, commit_sha, file_path)
+            if not success:
+                raise Exception(result.get("error", f"Failed to read {file_path}"))
+            return result["content"]
+
+        # Process in batches
+        for i in range(0, len(file_paths), batch_size):
+            batch = file_paths[i : i + batch_size]
+
+            try:
+                batch_results = await code_entity_service.extract_and_store_entities(
+                    repo_id=repo_id,
+                    commit_sha=commit_sha,
+                    file_paths=batch,
+                    file_content_getter=get_file_content,
+                )
+
+                # Aggregate results
+                total_results["processed"] += batch_results["processed"]
+                total_results["entities_created"] += batch_results["entities_created"]
+                total_results["relationships_created"] += batch_results["relationships_created"]
+                total_results["errors"].extend(batch_results["errors"])
+
+                # Track files by language
+                for file_path in batch:
+                    lang_support = get_language_for_file(file_path)
+                    if lang_support:
+                        lang = lang_support.language_id
+                        total_results["files_by_language"][lang] = (
+                            total_results["files_by_language"].get(lang, 0) + 1
+                        )
+
+                logger.debug(
+                    f"Processed batch {i // batch_size + 1}: "
+                    f"{batch_results['processed']} files, "
+                    f"{batch_results['entities_created']} entities"
+                )
+
+            except Exception as e:
+                logger.exception(f"Failed to process batch {i // batch_size + 1}: {e}")
+                total_results["errors"].append({
+                    "batch": i // batch_size + 1,
+                    "error": str(e),
+                })
+
+        logger.info(
+            f"Code entity extraction complete for {repo_id}@{commit_sha[:8]}: "
+            f"{total_results['processed']} files, "
+            f"{total_results['entities_created']} entities, "
+            f"{total_results['relationships_created']} relationships"
+        )
+
+        return total_results
+
+    async def sync_commits_with_code_entities(
+        self,
+        repo_id: str,
+        branch_name: str,
+        max_commits: int | None = None,
+        extract_entities: bool = True,
+        entity_batch_size: int = 50,
+    ) -> tuple[bool, dict[str, Any]]:
+        """
+        Sync commits and optionally extract code entities in one operation.
+
+        Combines sync_commits() and extract_code_entities() for convenience.
+        After syncing commits, extracts code entities from the HEAD commit
+        of the specified branch.
+
+        Args:
+            repo_id: UUID of repository
+            branch_name: Branch name to sync
+            max_commits: Optional limit on commits to sync
+            extract_entities: Whether to extract code entities (default True)
+            entity_batch_size: Batch size for entity extraction
+
+        Returns:
+            Tuple of (success, result_dict) with both commit sync and entity
+            extraction results
+        """
+        # First sync commits
+        sync_success, sync_result = self.sync_commits(repo_id, branch_name, max_commits)
+
+        if not sync_success:
+            return False, {
+                "sync_success": False,
+                "sync_result": sync_result,
+                "entity_result": None,
+                "error": "Commit sync failed",
+            }
+
+        entity_result = None
+
+        # Then extract code entities if requested
+        if extract_entities:
+            try:
+                # Get the HEAD commit SHA for the branch
+                repo_response = (
+                    self.supabase_client.table("archon_git_repositories")
+                    .select("current_head_sha")
+                    .eq("id", repo_id)
+                    .execute()
+                )
+
+                if repo_response.data:
+                    head_sha = repo_response.data[0].get("current_head_sha")
+                    if head_sha:
+                        entity_result = await self.extract_code_entities(
+                            repo_id=repo_id,
+                            commit_sha=head_sha,
+                            batch_size=entity_batch_size,
+                        )
+                    else:
+                        logger.warning(f"No HEAD SHA found for repo {repo_id}")
+                else:
+                    logger.warning(f"Repository not found: {repo_id}")
+
+            except Exception as e:
+                logger.exception(f"Failed to extract code entities: {e}")
+                entity_result = {"error": str(e)}
+
+        return True, {
+            "sync_success": True,
+            "sync_result": sync_result,
+            "entity_result": entity_result,
+        }

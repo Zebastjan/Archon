@@ -27,6 +27,19 @@ from ..services.git.git_repository_service import (
 )
 from ..utils import get_supabase_client
 
+
+class ExtractCodeEntitiesRequest(BaseModel):
+    commit_sha: str | None = None
+    file_paths: list[str] | None = None
+    batch_size: int = 50
+
+
+class SyncCommitsWithEntitiesRequest(BaseModel):
+    branch_name: str | None = None
+    max_commits: int | None = None
+    extract_entities: bool = True
+    entity_batch_size: int = 50
+
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=["git"])
@@ -858,6 +871,176 @@ async def get_diff(
         ) from e
     except Exception as e:
         logger.error(f"Error generating diff: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
+        ) from e
+
+
+@router.post("/projects/{project_id}/repository/extract-entities")
+async def extract_code_entities(project_id: str, request: ExtractCodeEntitiesRequest):
+    """
+    Extract code entities and relationships from source files.
+
+    Uses Tree-sitter parsers to analyze source code structure (functions, classes,
+    methods, imports, calls) and store them for querying.
+
+    Args:
+        project_id: UUID of project
+        request: Extraction parameters (commit_sha, file_paths, batch_size)
+
+    Returns:
+        Extraction results with counts of entities and relationships created
+
+    Raises:
+        HTTPException 404: If repository not found
+        HTTPException 400: If commit not found
+        HTTPException 500: If extraction fails
+    """
+    try:
+        logfire.info(f"Extracting code entities for project {project_id} | commit={request.commit_sha}")
+
+        supabase_client = get_supabase_client()
+
+        # Get repository
+        repo_response = (
+            supabase_client.table("archon_git_repositories")
+            .select("id, current_head_sha")
+            .eq("source_id", project_id)
+            .execute()
+        )
+
+        if not repo_response.data:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="Repository not found for this project",
+            )
+
+        repo_id = repo_response.data[0]["id"]
+        current_head_sha = repo_response.data[0]["current_head_sha"]
+
+        # Use HEAD if no commit SHA specified
+        commit_sha = request.commit_sha or current_head_sha
+
+        # Extract entities using GitRepositoryService
+        git_service = GitRepositoryService(supabase_client)
+        result = await git_service.extract_code_entities(
+            repo_id=repo_id,
+            commit_sha=commit_sha,
+            file_paths=request.file_paths,
+            batch_size=request.batch_size,
+        )
+
+        logger.info(
+            f"Entity extraction complete for project {project_id}: "
+            f"{result['processed']} files, {result['entities_created']} entities"
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except GitCommitNotFoundError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=e.to_dict(),
+        ) from e
+    except GitError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=e.to_dict(),
+        ) from e
+    except Exception as e:
+        logger.error(f"Error extracting code entities: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
+        ) from e
+
+
+@router.post("/projects/{project_id}/repository/sync-with-entities")
+async def sync_commits_with_entities(project_id: str, request: SyncCommitsWithEntitiesRequest):
+    """
+    Sync commits and extract code entities in one operation.
+
+    Combines commit synchronization with code entity extraction for convenience.
+
+    Args:
+        project_id: UUID of project
+        request: Sync parameters including entity extraction options
+
+    Returns:
+        Combined sync and extraction results
+
+    Raises:
+        HTTPException 404: If repository not found
+        HTTPException 400: If branch not found
+        HTTPException 500: If operation fails
+    """
+    try:
+        logfire.info(
+            f"Syncing commits with entity extraction for project {project_id} | "
+            f"branch={request.branch_name}, extract={request.extract_entities}"
+        )
+
+        supabase_client = get_supabase_client()
+
+        # Get repository
+        repo_response = (
+            supabase_client.table("archon_git_repositories")
+            .select("id, default_branch")
+            .eq("source_id", project_id)
+            .execute()
+        )
+
+        if not repo_response.data:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="Repository not found for this project",
+            )
+
+        repo_id = repo_response.data[0]["id"]
+        default_branch = repo_response.data[0]["default_branch"]
+        branch_name = request.branch_name or default_branch
+
+        # Sync commits with entity extraction
+        git_service = GitRepositoryService(supabase_client)
+        success, result = await git_service.sync_commits_with_code_entities(
+            repo_id=repo_id,
+            branch_name=branch_name,
+            max_commits=request.max_commits,
+            extract_entities=request.extract_entities,
+            entity_batch_size=request.entity_batch_size,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("sync_result", {}).get("error", "Failed to sync commits"),
+            )
+
+        logger.info(
+            f"Sync with entities complete for project {project_id}: "
+            f"{result['sync_result'].get('commit_count', 0)} commits, "
+            f"entities={result.get('entity_result', {})}"
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except GitBranchNotFoundError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=e.to_dict(),
+        ) from e
+    except GitError as e:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=e.to_dict(),
+        ) from e
+    except Exception as e:
+        logger.error(f"Error syncing commits with entities: {e}", exc_info=True)
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}",

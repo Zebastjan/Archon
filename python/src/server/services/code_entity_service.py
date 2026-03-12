@@ -385,6 +385,33 @@ class CodeEntityService:
             )
             return []
     
+    async def get_entity_by_id(
+        self,
+        entity_id: str,
+    ) -> dict[str, Any] | None:
+        """Get a single entity by its ID.
+        
+        Args:
+            entity_id: Entity UUID
+            
+        Returns:
+            Entity record or None if not found
+        """
+        try:
+            response = self.supabase.table("archon_code_entities").select("*").eq("id", entity_id).execute()
+            
+            if response.data:
+                return response.data[0]
+            return None
+            
+        except Exception as e:
+            self._logger.exception(
+                "get_entity_by_id_failed",
+                entity_id=entity_id,
+                error=str(e),
+            )
+            return None
+    
     async def get_entity_relationships(
         self,
         entity_id: str,
