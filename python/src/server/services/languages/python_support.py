@@ -145,18 +145,13 @@ class PythonLanguageSupport(LanguageSupportBase):
         """
         # Handle different node types
         if node.type == "function_definition":
+            # Check if async (tree-sitter 0.25+ has 'async' as child node)
+            is_async = any(child.type == "async" for child in node.children)
             self._handle_function(
                 node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=False
+                parent_entity, scope_stack, is_async=is_async
             )
             return  # Don't recurse into handled nodes
-            
-        elif node.type == "async_function_definition":
-            self._handle_function(
-                node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=True
-            )
-            return
             
         elif node.type == "class_definition":
             self._handle_class(
@@ -455,14 +450,10 @@ class PythonLanguageSupport(LanguageSupportBase):
         
         # Process the definition (will create the entity)
         if definition_node.type == "function_definition":
+            is_async = any(child.type == "async" for child in definition_node.children)
             entity = self._handle_function(
                 definition_node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=False
-            )
-        elif definition_node.type == "async_function_definition":
-            entity = self._handle_function(
-                definition_node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=True
+                parent_entity, scope_stack, is_async=is_async
             )
         elif definition_node.type == "class_definition":
             entity = self._handle_class(

@@ -151,25 +151,19 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
         
         # Function declarations
         if node.type == "function_declaration":
+            is_async = any(child.type == "async" for child in node.children)
             self._handle_function_declaration(
                 node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=False, is_arrow=False
+                parent_entity, scope_stack, is_async=is_async, is_arrow=False
             )
             return
             
-        # Async function declarations
-        elif node.type == "async_function_declaration":
-            self._handle_function_declaration(
-                node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=True, is_arrow=False
-            )
-            return
-            
-        # Class declarations
-        elif node.type == "class_declaration":
+        # Class declarations (including abstract)
+        elif node.type in ("class_declaration", "abstract_class_declaration"):
+            is_abstract = node.type == "abstract_class_declaration"
             self._handle_class(
                 node, content, file_path, entities, relationships,
-                parent_entity, scope_stack
+                parent_entity, scope_stack, is_abstract=is_abstract
             )
             return
             
@@ -345,6 +339,7 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
         relationships: list[CodeRelationship],
         parent_entity: CodeEntity | None,
         scope_stack: list[str],
+        is_abstract: bool = False,
     ) -> CodeEntity:
         """Handle class declarations."""
         name_node = node.child_by_field_name("name")
@@ -363,7 +358,10 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
         
         # Build signature
         type_parameters = node.child_by_field_name("type_parameters")
-        signature_parts = ["class", class_name]
+        signature_parts = []
+        if is_abstract:
+            signature_parts.append("abstract")
+        signature_parts.extend(["class", class_name])
         
         if type_parameters:
             type_params_text = content[type_parameters.start_byte:type_parameters.end_byte]
@@ -389,6 +387,7 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
                 "bases": bases,
                 "implements": implements,
                 "local_name": class_name,
+                "abstract": is_abstract,
             },
         )
         entities.append(entity)
