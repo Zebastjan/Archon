@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 # Base dependencies - empty since we're using dependency groups
 dependencies = [
+    "aiohttp>=3.11.18",
     "asyncpg>=0.30.0",
     "python-dotenv>=1.1.1",
     "tree-sitter>=0.25.2",

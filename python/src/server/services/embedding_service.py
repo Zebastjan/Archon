@@ -316,7 +316,7 @@ async def generate_embeddings_for_repo(
     # Get entities without embeddings
     entities = await db.fetch(
         """
-        SELECT id, name, signature, docstring, source_code, entity_type
+        SELECT id, name, signature, docstring, source_code, entity_type, repo_id
         FROM archon_code_entities
         WHERE repo_id = $1
         AND embedding_model IS NULL
@@ -359,17 +359,17 @@ async def generate_embeddings_for_repo(
                     
                     column = column_map.get(dimension, "embedding_768")
                     
-                    # Update entity with embedding
-                    await db.execute(
-                        f"""
+                    # Update entity with embedding - pass as literal string for pgvector
+                    embedding_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                    
+                    query = f"""
                         UPDATE archon_code_entities
-                        SET {column} = $1::vector,
-                            embedding_model = $2,
-                            embedding_dimension = $3
-                        WHERE id = $4
-                        """,
-                        embedding, model, dimension, entity["id"]
-                    )
+                        SET {column} = '{embedding_str}'::vector,
+                            embedding_model = $1,
+                            embedding_dimension = $2
+                        WHERE id = $3
+                    """
+                    await db.execute(query, model, dimension, str(entity["id"]))
                     
                     processed += 1
                 else:
