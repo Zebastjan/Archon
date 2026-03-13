@@ -10,7 +10,7 @@ from typing import Any
 
 from supabase import Client
 
-from ...config.logfire_config import get_logger
+from src.server.config.logfire_config import get_logger
 from .client_manager import get_supabase_client
 from .languages import CodeEntity, CodeRelationship, get_language_for_file
 from .languages.language_support import ParseError
@@ -28,14 +28,6 @@ class CodeEntityService:
     - Query entities by repository, type, language
     - Perform semantic search over code
     - Traverse relationships (find callers, callees, implementations)
-    
-    Example:
-        >>> service = CodeEntityService()
-        >>> await service.extract_and_store_entities(
-        ...     repo_id="uuid",
-        ...     commit_sha="abc123",
-        ...     file_paths=["src/main.py", "src/utils.py"]
-        ... )
     """
     
     def __init__(self, supabase_client: Client | None = None):
@@ -45,7 +37,7 @@ class CodeEntityService:
             supabase_client: Optional Supabase client instance
         """
         self.supabase = supabase_client or get_supabase_client()
-        self._logger = logger.bind(service="code_entity")
+        self._logger = logger
         self._logger.debug("code_entity_service_initialized")
     
     async def extract_and_store_entities(
@@ -55,36 +47,7 @@ class CodeEntityService:
         file_paths: list[str],
         file_content_getter: callable,
     ) -> dict[str, Any]:
-        """Extract and store code entities from multiple files.
-        
-        Extracts entities and relationships from source files and stores them
-        in the database with multi-dimensional embeddings support.
-        
-        Args:
-            repo_id: Repository UUID
-            commit_sha: Git commit SHA
-            file_paths: List of file paths to process
-            file_content_getter: Async function to get file content (repo_id, commit_sha, file_path) -> str
-            
-        Returns:
-            Dict with extraction results:
-            - processed: Number of files processed
-            - entities_created: Total entities created
-            - relationships_created: Total relationships created
-            - errors: List of errors encountered
-            
-        Example:
-            >>> async def get_content(repo_id, commit_sha, file_path):
-            ...     # Implementation that returns file content
-            ...     return content
-            >>> 
-            >>> result = await service.extract_and_store_entities(
-            ...     repo_id="uuid",
-            ...     commit_sha="abc123",
-            ...     file_paths=["src/main.py"],
-            ...     file_content_getter=get_content
-            ... )
-        """
+        """Extract and store code entities from multiple files."""
         results = {
             "processed": 0,
             "entities_created": 0,
@@ -97,10 +60,7 @@ class CodeEntityService:
                 # Check if language is supported
                 lang_support = get_language_for_file(file_path)
                 if not lang_support:
-                    self._logger.debug(
-                        "skipping_unsupported_file",
-                        file=file_path,
-                    )
+                    self._logger.debug(f"skipping_unsupported_file file={file_path}")
                     continue
                 
                 # Get file content
@@ -157,33 +117,18 @@ class CodeEntityService:
                         results["relationships_created"] += 1
                     else:
                         # Relationship references external entity (not in current file)
-                        # Could store as "unresolved" or look up in database
-                        self._logger.debug(
-                            "unresolved_relationship",
-                            source=relationship.source_name,
-                            target=relationship.target_name,
-                            file=file_path,
-                        )
+                        self._logger.debug(f"unresolved_relationship source={relationship.source_name} target={relationship.target_name} file={file_path}")
                 
                 results["processed"] += 1
                 
             except Exception as e:
-                self._logger.exception(
-                    "extraction_failed",
-                    file=file_path,
-                    error=str(e),
-                )
+                self._logger.exception(f"extraction_failed file={file_path} error={e}")
                 results["errors"].append({
                     "file": file_path,
                     "error": str(e),
                 })
         
-        self._logger.info(
-            "extraction_complete",
-            repo_id=repo_id,
-            commit_sha=commit_sha,
-            **results,
-        )
+        self._logger.info(f"extraction_complete repo_id={repo_id} processed={results['processed']} entities={results['entities_created']} relationships={results['relationships_created']}")
         
         return results
     
@@ -195,18 +140,7 @@ class CodeEntityService:
         language: str,
         entity: CodeEntity,
     ) -> dict[str, Any] | None:
-        """Store a code entity in the database.
-        
-        Args:
-            repo_id: Repository UUID
-            commit_sha: Git commit SHA
-            file_path: File path within repo
-            language: Programming language
-            entity: CodeEntity to store
-            
-        Returns:
-            Created entity record with ID, or None if failed
-        """
+        """Store a code entity in the database."""
         try:
             data = {
                 "repo_id": repo_id,
@@ -220,7 +154,6 @@ class CodeEntityService:
                 "source_code": entity.source_code,
                 "language": language,
                 "commit_sha": commit_sha,
-                "metadata": entity.metadata,
                 # Embeddings will be added separately
                 "embedding_model": None,
                 "embedding_dimension": None,
@@ -229,28 +162,14 @@ class CodeEntityService:
             response = self.supabase.table("archon_code_entities").insert(data).execute()
             
             if response.data:
-                self._logger.debug(
-                    "entity_stored",
-                    entity_id=response.data[0]["id"],
-                    name=entity.name,
-                    type=entity.entity_type,
-                )
+                self._logger.debug(f"entity_stored entity_id={response.data[0]['id']} name={entity.name} type={entity.entity_type}")
                 return response.data[0]
             else:
-                self._logger.warning(
-                    "entity_insert_failed",
-                    name=entity.name,
-                    file=file_path,
-                )
+                self._logger.warning(f"entity_insert_failed name={entity.name} file={file_path}")
                 return None
                 
         except Exception as e:
-            self._logger.exception(
-                "store_entity_failed",
-                name=entity.name,
-                file=file_path,
-                error=str(e),
-            )
+            self._logger.exception(f"store_entity_failed name={entity.name} file={file_path} error={e}")
             return None
     
     async def _store_relationship(
@@ -260,17 +179,7 @@ class CodeEntityService:
         relationship_type: str,
         metadata: dict,
     ) -> dict[str, Any] | None:
-        """Store a relationship in the database.
-        
-        Args:
-            source_id: Source entity UUID
-            target_id: Target entity UUID
-            relationship_type: Type of relationship (CALLS, INHERITS, etc.)
-            metadata: Additional metadata
-            
-        Returns:
-            Created relationship record, or None if failed
-        """
+        """Store a relationship in the database."""
         try:
             data = {
                 "source_entity_id": source_id,
@@ -282,29 +191,14 @@ class CodeEntityService:
             response = self.supabase.table("archon_code_relationships").insert(data).execute()
             
             if response.data:
-                self._logger.debug(
-                    "relationship_stored",
-                    relationship_id=response.data[0]["id"],
-                    source=source_id,
-                    target=target_id,
-                    type=relationship_type,
-                )
+                self._logger.debug(f"relationship_stored relationship_id={response.data[0]['id']} source={source_id} target={target_id} type={relationship_type}")
                 return response.data[0]
             else:
-                self._logger.warning(
-                    "relationship_insert_failed",
-                    source=source_id,
-                    target=target_id,
-                )
+                self._logger.warning(f"relationship_insert_failed source={source_id} target={target_id}")
                 return None
                 
         except Exception as e:
-            self._logger.exception(
-                "store_relationship_failed",
-                source=source_id,
-                target=target_id,
-                error=str(e),
-            )
+            self._logger.exception(f"store_relationship_failed source={source_id} target={target_id} error={e}")
             return None
     
     async def generate_embeddings(
@@ -314,32 +208,8 @@ class CodeEntityService:
         embedding_model: str = "text-embedding-3-small",
         embedding_dimension: int = 1536,
     ) -> dict[str, Any]:
-        """Generate embeddings for code entities.
-        
-        Fetches entities without embeddings and generates them using
-        the specified embedding model. Updates the appropriate column
-        based on embedding_dimension.
-        
-        Args:
-            repo_id: Repository UUID
-            commit_sha: Git commit SHA (to only embed current commit)
-            embedding_model: Model name to use
-            embedding_dimension: Dimension (384, 768, 1024, 1536, 3072)
-            
-        Returns:
-            Dict with embedding generation results
-            
-        Note:
-            This should be called after extract_and_store_entities.
-            Uses batch processing for efficiency.
-        """
-        # This is a placeholder - actual implementation would integrate
-        # with the existing embedding service
-        self._logger.warning(
-            "generate_embeddings_not_implemented",
-            repo_id=repo_id,
-            model=embedding_model,
-        )
+        """Generate embeddings for code entities."""
+        self._logger.warning(f"generate_embeddings_not_implemented repo_id={repo_id} model={embedding_model}")
         
         return {
             "processed": 0,
@@ -353,16 +223,7 @@ class CodeEntityService:
         name: str,
         entity_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Find entities by name in a repository.
-        
-        Args:
-            repo_id: Repository UUID
-            name: Entity name (can be partial match)
-            entity_type: Optional filter by entity type
-            
-        Returns:
-            List of matching entity records
-        """
+        """Find entities by name in a repository."""
         try:
             query = self.supabase.table("archon_code_entities").select("*").eq("repo_id", repo_id)
             
@@ -377,26 +238,14 @@ class CodeEntityService:
             return response.data or []
             
         except Exception as e:
-            self._logger.exception(
-                "find_entity_failed",
-                repo_id=repo_id,
-                name=name,
-                error=str(e),
-            )
+            self._logger.exception(f"find_entity_failed repo_id={repo_id} name={name} error={e}")
             return []
     
     async def get_entity_by_id(
         self,
         entity_id: str,
     ) -> dict[str, Any] | None:
-        """Get a single entity by its ID.
-        
-        Args:
-            entity_id: Entity UUID
-            
-        Returns:
-            Entity record or None if not found
-        """
+        """Get a single entity by its ID."""
         try:
             response = self.supabase.table("archon_code_entities").select("*").eq("id", entity_id).execute()
             
@@ -405,11 +254,7 @@ class CodeEntityService:
             return None
             
         except Exception as e:
-            self._logger.exception(
-                "get_entity_by_id_failed",
-                entity_id=entity_id,
-                error=str(e),
-            )
+            self._logger.exception(f"get_entity_by_id_failed entity_id={entity_id} error={e}")
             return None
     
     async def get_entity_relationships(
@@ -418,18 +263,7 @@ class CodeEntityService:
         relationship_types: list[str] | None = None,
         direction: str = "both",
     ) -> list[dict[str, Any]]:
-        """Get relationships for an entity.
-        
-        Uses the database function get_entity_relationships.
-        
-        Args:
-            entity_id: Entity UUID
-            relationship_types: Optional filter by types
-            direction: 'incoming', 'outgoing', or 'both'
-            
-        Returns:
-            List of relationship records with related entity info
-        """
+        """Get relationships for an entity."""
         try:
             response = self.supabase.rpc(
                 "get_entity_relationships",
@@ -443,11 +277,7 @@ class CodeEntityService:
             return response.data or []
             
         except Exception as e:
-            self._logger.exception(
-                "get_relationships_failed",
-                entity_id=entity_id,
-                error=str(e),
-            )
+            self._logger.exception(f"get_relationships_failed entity_id={entity_id} error={e}")
             return []
     
     async def search_entities(
@@ -457,19 +287,7 @@ class CodeEntityService:
         match_count: int = 10,
         repo_filter: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search entities by semantic similarity.
-        
-        Uses the database function match_archon_code_entities_multi.
-        
-        Args:
-            query_embedding: Query vector
-            embedding_dimension: Dimension of the embedding
-            match_count: Maximum results to return
-            repo_filter: Optional repository UUID filter
-            
-        Returns:
-            List of matching entities with similarity scores
-        """
+        """Search entities by semantic similarity."""
         try:
             response = self.supabase.rpc(
                 "match_archon_code_entities_multi",
@@ -485,9 +303,5 @@ class CodeEntityService:
             return response.data or []
             
         except Exception as e:
-            self._logger.exception(
-                "search_entities_failed",
-                dimension=embedding_dimension,
-                error=str(e),
-            )
+            self._logger.exception(f"search_entities_failed dimension={embedding_dimension} error={e}")
             return []

@@ -64,23 +64,19 @@ class DatabaseConnector:
     Designed as a drop-in replacement for Supabase client in most use cases.
     
     Example:
-        >>> db = DatabaseConnector()
-        >>> await db.initialize()
-        >>> 
-        >>> # Simple query
-        >>> result = await db.fetch("SELECT * FROM archon_projects WHERE id = $1", project_id)
-        >>> 
-        >>> # Insert with returning
-        >>> record = await db.fetchrow(
-        ...     """
-        ...     INSERT INTO archon_code_entities (repo_id, name, entity_type)
-        ...     VALUES ($1, $2, $3)
-        ...     RETURNING *
-        ...     """,
-        ...     repo_id, name, entity_type
-        ... )
-        >>> 
-        >>> await db.close()
+        db = DatabaseConnector()
+        await db.initialize()
+        
+        # Simple query
+        result = await db.fetch("SELECT * FROM archon_projects WHERE id = $1", project_id)
+        
+        # Insert with returning
+        record = await db.fetchrow(
+            "INSERT INTO archon_code_entities (repo_id, name, entity_type) VALUES ($1, $2, $3) RETURNING *",
+            repo_id, name, entity_type
+        )
+        
+        await db.close()
     """
     
     _instance: "DatabaseConnector | None" = None
@@ -103,7 +99,7 @@ class DatabaseConnector:
             return
             
         self.config = config or DatabaseConfig.from_env()
-        self._logger = logger.bind(connector="database")
+        self._logger = logger
         self._initialized = False
     
     async def initialize(self) -> None:
@@ -127,12 +123,10 @@ class DatabaseConnector:
             )
             self._initialized = True
             self._logger.info(
-                "database_pool_initialized",
-                min_connections=self.config.min_connections,
-                max_connections=self.config.max_connections,
+                f"database_pool_initialized min_connections={self.config.min_connections} max_connections={self.config.max_connections}"
             )
         except Exception as e:
-            self._logger.exception("failed_to_initialize_database_pool", error=str(e))
+            self._logger.exception(f"failed_to_initialize_database_pool error={e}")
             raise DatabaseConnectionError(f"Failed to initialize database: {e}") from e
     
     async def close(self) -> None:

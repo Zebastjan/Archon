@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${ARCHON_DB_PASSWORD:-archon_local_dev}
       POSTGRES_DB: ${ARCHON_DB_NAME:-archon}
     ports:
-      - "${ARCHON_DB_PORT:-5432}:5432"
+      - "${ARCHON_DB_PORT:-5434}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migration:/docker-entrypoint-initdb.d/migrations:ro
@@ -203,7 +203,8 @@ services:
         AGENT_WORK_ORDERS_PORT: ${AGENT_WORK_ORDERS_PORT:-8053}
     container_name: archon-agent-work-orders
     depends_on:
-      - archon-server
+      archon-server:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     ports:

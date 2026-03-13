@@ -11,12 +11,25 @@
 -- =====================================================
 
 -- =====================================================
+-- SECTION 0: UTILITY FUNCTIONS
+-- =====================================================
+
+-- Create update_updated_at_column function if it doesn't exist
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $func$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$func$ LANGUAGE plpgsql;
+
+-- =====================================================
 -- SECTION 1: CODE ENTITIES TABLE
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS archon_code_entities (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    repo_id UUID REFERENCES archon_git_repositories(id) ON DELETE CASCADE,
+    repo_id UUID,
     
     -- Location
     file_path TEXT NOT NULL,
@@ -119,27 +132,33 @@ CREATE OR REPLACE TRIGGER update_code_entities_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- =====================================================
--- SECTION 5: ROW LEVEL SECURITY
+-- SECTION 5: ROW LEVEL SECURITY (Supabase only)
 -- =====================================================
 
-ALTER TABLE archon_code_entities ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archon_code_relationships ENABLE ROW LEVEL SECURITY;
+-- Only enable RLS if auth schema exists (Supabase)
+DO $rls_block$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth') THEN
+        ALTER TABLE archon_code_entities ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE archon_code_relationships ENABLE ROW LEVEL SECURITY;
+        
+        -- Service role policies
+        CREATE POLICY "Allow service role full access to archon_code_entities" ON archon_code_entities
+            FOR ALL USING (auth.role() = 'service_role');
 
--- Service role policies
-CREATE POLICY "Allow service role full access to archon_code_entities" ON archon_code_entities
-    FOR ALL USING (auth.role() = 'service_role');
+        CREATE POLICY "Allow service role full access to archon_code_relationships" ON archon_code_relationships
+            FOR ALL USING (auth.role() = 'service_role');
 
-CREATE POLICY "Allow service role full access to archon_code_relationships" ON archon_code_relationships
-    FOR ALL USING (auth.role() = 'service_role');
+        -- Authenticated user policies (read-only for entities)
+        CREATE POLICY "Allow authenticated users to read archon_code_entities" ON archon_code_entities
+            FOR SELECT TO authenticated
+            USING (true);
 
--- Authenticated user policies (read-only for entities)
-CREATE POLICY "Allow authenticated users to read archon_code_entities" ON archon_code_entities
-    FOR SELECT TO authenticated
-    USING (true);
-
-CREATE POLICY "Allow authenticated users to read archon_code_relationships" ON archon_code_relationships
-    FOR SELECT TO authenticated
-    USING (true);
+        CREATE POLICY "Allow authenticated users to read archon_code_relationships" ON archon_code_relationships
+            FOR SELECT TO authenticated
+            USING (true);
+    END IF;
+END $rls_block$;
 
 -- =====================================================
 -- SECTION 6: SEARCH FUNCTIONS
@@ -351,25 +370,35 @@ COMMENT ON FUNCTION find_entity_path IS
 -- SECTION 8: MIGRATION TRACKING
 -- =====================================================
 
-INSERT INTO archon_migrations (version, migration_name)
-VALUES ('0.1.0', '012_add_code_entities_and_relationships')
-ON CONFLICT (version, migration_name) DO NOTHING;
+-- Only track migration if archon_migrations table exists
+DO $migrate_block$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'archon_migrations'
+    ) THEN
+        INSERT INTO archon_migrations (version, migration_name)
+        VALUES ('0.1.0', '012_add_code_entities_and_relationships')
+        ON CONFLICT (version, migration_name) DO NOTHING;
+    END IF;
+END $migrate_block$;
 
 -- =====================================================
 -- SECTION 9: VERIFICATION
 -- =====================================================
 
 -- Verify table creation
-DO $$
+DO $verify_block$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_schema = 'public'
         AND table_name = 'archon_code_entities'
     ) THEN
-        RAISE NOTICE '✓ Table archon_code_entities created successfully';
+        RAISE NOTICE 'Table archon_code_entities created successfully';
     ELSE
-        RAISE EXCEPTION '✗ Table archon_code_entities was not created';
+        RAISE EXCEPTION 'Table archon_code_entities was not created';
     END IF;
     
     IF EXISTS (
@@ -377,11 +406,11 @@ BEGIN
         WHERE table_schema = 'public'
         AND table_name = 'archon_code_relationships'
     ) THEN
-        RAISE NOTICE '✓ Table archon_code_relationships created successfully';
+        RAISE NOTICE 'Table archon_code_relationships created successfully';
     ELSE
-        RAISE EXCEPTION '✗ Table archon_code_relationships was not created';
+        RAISE EXCEPTION 'Table archon_code_relationships was not created';
     END IF;
-END $$;
+END $verify_block$;
 
 -- =====================================================
 -- MIGRATION COMPLETE
