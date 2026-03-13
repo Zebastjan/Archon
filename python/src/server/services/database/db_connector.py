@@ -15,9 +15,9 @@ from typing import Any, AsyncGenerator
 import asyncpg
 from asyncpg import Pool
 
-from ...config.logfire_config import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class DatabaseConfig:

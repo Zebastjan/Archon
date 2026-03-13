@@ -1,21 +1,17 @@
 """Code Entity Service
 
 Manages extraction, storage, and retrieval of code entities and their relationships
-from git repositories. Integrates Tree-sitter language parsing with the existing
-git repository infrastructure.
+from git repositories. Integrates Tree-sitter language parsing with PostgreSQL.
 """
 
-from datetime import UTC, datetime
 from typing import Any
 
-from supabase import Client
-
-from src.server.config.logfire_config import get_logger
-from .client_manager import get_supabase_client
+import logging
+from .database.db_connector import get_database_connector, initialize_database
 from .languages import CodeEntity, CodeRelationship, get_language_for_file
 from .languages.language_support import ParseError
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class CodeEntityService:
@@ -30,15 +26,19 @@ class CodeEntityService:
     - Traverse relationships (find callers, callees, implementations)
     """
     
-    def __init__(self, supabase_client: Client | None = None):
-        """Initialize code entity service.
-        
-        Args:
-            supabase_client: Optional Supabase client instance
-        """
-        self.supabase = supabase_client or get_supabase_client()
+    def __init__(self):
+        """Initialize code entity service."""
         self._logger = logger
+        self._db = None
         self._logger.debug("code_entity_service_initialized")
+    
+    async def _get_db(self):
+        """Get or initialize database connection."""
+        if self._db is None:
+            await initialize_database()
+            self._db = get_database_connector()
+            await self._db.initialize()
+        return self._db
     
     async def extract_and_store_entities(
         self,
@@ -54,6 +54,8 @@ class CodeEntityService:
             "relationships_created": 0,
             "errors": [],
         }
+        
+        db = await self._get_db()
         
         for file_path in file_paths:
             try:
@@ -92,6 +94,7 @@ class CodeEntityService:
                 entity_id_map = {}
                 for entity in entities:
                     entity_record = await self._store_entity(
+                        db=db,
                         repo_id=repo_id,
                         commit_sha=commit_sha,
                         file_path=file_path,
@@ -109,6 +112,7 @@ class CodeEntityService:
                     
                     if source_id and target_id:
                         await self._store_relationship(
+                            db=db,
                             source_id=source_id,
                             target_id=target_id,
                             relationship_type=relationship.relationship_type,
@@ -134,6 +138,7 @@ class CodeEntityService:
     
     async def _store_entity(
         self,
+        db,
         repo_id: str,
         commit_sha: str,
         file_path: str,
@@ -142,28 +147,28 @@ class CodeEntityService:
     ) -> dict[str, Any] | None:
         """Store a code entity in the database."""
         try:
-            data = {
-                "repo_id": repo_id,
-                "file_path": file_path,
-                "line_start": entity.line_start,
-                "line_end": entity.line_end,
-                "entity_type": entity.entity_type,
-                "name": entity.name,
-                "signature": entity.signature,
-                "docstring": entity.docstring,
-                "source_code": entity.source_code,
-                "language": language,
-                "commit_sha": commit_sha,
-                # Embeddings will be added separately
-                "embedding_model": None,
-                "embedding_dimension": None,
-            }
+            query = """
+                INSERT INTO archon_code_entities (
+                    repo_id, file_path, line_start, line_end, entity_type,
+                    name, signature, docstring, source_code, language, commit_sha,
+                    embedding_model, embedding_dimension
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                RETURNING id, repo_id, file_path, line_start, line_end, entity_type,
+                          name, signature, docstring, source_code, language, commit_sha
+            """
             
-            response = self.supabase.table("archon_code_entities").insert(data).execute()
+            record = await db.fetchrow(
+                query,
+                repo_id, file_path, entity.line_start, entity.line_end,
+                entity.entity_type, entity.name, entity.signature,
+                entity.docstring, entity.source_code, language, commit_sha,
+                None, None
+            )
             
-            if response.data:
-                self._logger.debug(f"entity_stored entity_id={response.data[0]['id']} name={entity.name} type={entity.entity_type}")
-                return response.data[0]
+            if record:
+                entity_id = record["id"]
+                self._logger.debug(f"entity_stored entity_id={entity_id} name={entity.name} type={entity.entity_type}")
+                return dict(record)
             else:
                 self._logger.warning(f"entity_insert_failed name={entity.name} file={file_path}")
                 return None
@@ -174,6 +179,7 @@ class CodeEntityService:
     
     async def _store_relationship(
         self,
+        db,
         source_id: str,
         target_id: str,
         relationship_type: str,
@@ -181,24 +187,109 @@ class CodeEntityService:
     ) -> dict[str, Any] | None:
         """Store a relationship in the database."""
         try:
-            data = {
-                "source_entity_id": source_id,
-                "target_entity_id": target_id,
-                "relationship_type": relationship_type,
-                "metadata": metadata,
-            }
+            query = """
+                INSERT INTO archon_code_relationships 
+                (source_entity_id, target_entity_id, relationship_type, metadata)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id
+            """
             
-            response = self.supabase.table("archon_code_relationships").insert(data).execute()
+            import json
+            record = await db.fetchrow(
+                query,
+                source_id, target_id, relationship_type, json.dumps(metadata)
+            )
             
-            if response.data:
-                self._logger.debug(f"relationship_stored relationship_id={response.data[0]['id']} source={source_id} target={target_id} type={relationship_type}")
-                return response.data[0]
+            if record:
+                self._logger.debug(f"relationship_stored relationship_id={record['id']} source={source_id} target={target_id} type={relationship_type}")
+                return dict(record)
             else:
                 self._logger.warning(f"relationship_insert_failed source={source_id} target={target_id}")
                 return None
                 
         except Exception as e:
             self._logger.exception(f"store_relationship_failed source={source_id} target={target_id} error={e}")
+            return None
+    
+    async def store_entity_with_embedding(
+        self,
+        entity: CodeEntity,
+        repo_id: str,
+        commit_sha: str,
+        embedding: list[float] | None = None,
+        embedding_model: str | None = None,
+        embedding_dimension: int | None = None,
+    ) -> str | None:
+        """Store a code entity with optional embedding.
+        
+        Args:
+            entity: The code entity to store
+            repo_id: Repository ID
+            commit_sha: Git commit SHA
+            embedding: Optional embedding vector
+            embedding_model: Name of the embedding model
+            embedding_dimension: Dimension of the embedding
+            
+        Returns:
+            Entity ID if stored successfully, None otherwise
+        """
+        try:
+            db = await self._get_db()
+            
+            # Determine which embedding column to use
+            embedding_column = None
+            if embedding and embedding_dimension:
+                if embedding_dimension == 384:
+                    embedding_column = "embedding_384"
+                elif embedding_dimension == 768:
+                    embedding_column = "embedding_768"
+                elif embedding_dimension == 1024:
+                    embedding_column = "embedding_1024"
+                elif embedding_dimension == 1536:
+                    embedding_column = "embedding_1536"
+                elif embedding_dimension == 3072:
+                    embedding_column = "embedding_3072"
+            
+            # Build query dynamically based on whether we have an embedding
+            if embedding_column:
+                query = f"""
+                    INSERT INTO archon_code_entities (
+                        repo_id, file_path, line_start, line_end, entity_type,
+                        name, signature, docstring, source_code, language, commit_sha,
+                        {embedding_column}, embedding_model, embedding_dimension
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector, $13, $14)
+                    RETURNING id
+                """
+                record = await db.fetchrow(
+                    query,
+                    repo_id, entity.file_path, entity.line_start, entity.line_end,
+                    entity.entity_type, entity.name, entity.signature,
+                    entity.docstring, entity.source_code, entity.language, commit_sha,
+                    embedding, embedding_model, embedding_dimension
+                )
+            else:
+                query = """
+                    INSERT INTO archon_code_entities (
+                        repo_id, file_path, line_start, line_end, entity_type,
+                        name, signature, docstring, source_code, language, commit_sha
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    RETURNING id
+                """
+                record = await db.fetchrow(
+                    query,
+                    repo_id, entity.file_path, entity.line_start, entity.line_end,
+                    entity.entity_type, entity.name, entity.signature,
+                    entity.docstring, entity.source_code, entity.language, commit_sha
+                )
+            
+            if record:
+                entity_id = record["id"]
+                self._logger.debug(f"entity_stored entity_id={entity_id} name={entity.name}")
+                return entity_id
+            return None
+            
+        except Exception as e:
+            self._logger.exception(f"store_entity_failed name={entity.name} error={e}")
             return None
     
     async def generate_embeddings(
@@ -208,7 +299,11 @@ class CodeEntityService:
         embedding_model: str = "text-embedding-3-small",
         embedding_dimension: int = 1536,
     ) -> dict[str, Any]:
-        """Generate embeddings for code entities."""
+        """Generate embeddings for code entities.
+        
+        This is a placeholder - actual embedding generation should use
+        an embedding service like Ollama or OpenAI.
+        """
         self._logger.warning(f"generate_embeddings_not_implemented repo_id={repo_id} model={embedding_model}")
         
         return {
@@ -225,17 +320,23 @@ class CodeEntityService:
     ) -> list[dict[str, Any]]:
         """Find entities by name in a repository."""
         try:
-            query = self.supabase.table("archon_code_entities").select("*").eq("repo_id", repo_id)
+            db = await self._get_db()
             
-            # Use ILIKE for case-insensitive partial matching
-            query = query.ilike("name", f"%{name}%")
+            query = """
+                SELECT * FROM archon_code_entities 
+                WHERE repo_id = $1 
+                AND name ILIKE $2
+            """
+            params = [repo_id, f"%{name}%"]
             
             if entity_type:
-                query = query.eq("entity_type", entity_type)
+                query += " AND entity_type = $3"
+                params.append(entity_type)
             
-            response = query.execute()
+            query += " ORDER BY name"
             
-            return response.data or []
+            records = await db.fetch(query, *params)
+            return [dict(r) for r in records]
             
         except Exception as e:
             self._logger.exception(f"find_entity_failed repo_id={repo_id} name={name} error={e}")
@@ -247,11 +348,12 @@ class CodeEntityService:
     ) -> dict[str, Any] | None:
         """Get a single entity by its ID."""
         try:
-            response = self.supabase.table("archon_code_entities").select("*").eq("id", entity_id).execute()
+            db = await self._get_db()
             
-            if response.data:
-                return response.data[0]
-            return None
+            query = "SELECT * FROM archon_code_entities WHERE id = $1"
+            record = await db.fetchrow(query, entity_id)
+            
+            return dict(record) if record else None
             
         except Exception as e:
             self._logger.exception(f"get_entity_by_id_failed entity_id={entity_id} error={e}")
@@ -265,16 +367,60 @@ class CodeEntityService:
     ) -> list[dict[str, Any]]:
         """Get relationships for an entity."""
         try:
-            response = self.supabase.rpc(
-                "get_entity_relationships",
-                {
-                    "entity_id": entity_id,
-                    "relationship_types": relationship_types,
-                    "direction": direction,
-                }
-            ).execute()
+            db = await self._get_db()
+            results = []
             
-            return response.data or []
+            # Outgoing relationships
+            if direction in ("outgoing", "both"):
+                query = """
+                    SELECT 
+                        cr.id as relationship_id,
+                        cr.target_entity_id as related_entity_id,
+                        cr.relationship_type,
+                        ce.name as entity_name,
+                        ce.entity_type,
+                        ce.file_path,
+                        cr.metadata
+                    FROM archon_code_relationships cr
+                    JOIN archon_code_entities ce ON ce.id = cr.target_entity_id
+                    WHERE cr.source_entity_id = $1
+                """
+                params = [entity_id]
+                
+                if relationship_types:
+                    placeholders = [f"${i+2}" for i in range(len(relationship_types))]
+                    query += f" AND cr.relationship_type IN ({', '.join(placeholders)})"
+                    params.extend(relationship_types)
+                
+                records = await db.fetch(query, *params)
+                results.extend([dict(r) for r in records])
+            
+            # Incoming relationships
+            if direction in ("incoming", "both"):
+                query = """
+                    SELECT 
+                        cr.id as relationship_id,
+                        cr.source_entity_id as related_entity_id,
+                        cr.relationship_type,
+                        ce.name as entity_name,
+                        ce.entity_type,
+                        ce.file_path,
+                        cr.metadata
+                    FROM archon_code_relationships cr
+                    JOIN archon_code_entities ce ON ce.id = cr.source_entity_id
+                    WHERE cr.target_entity_id = $1
+                """
+                params = [entity_id]
+                
+                if relationship_types:
+                    placeholders = [f"${i+2}" for i in range(len(relationship_types))]
+                    query += f" AND cr.relationship_type IN ({', '.join(placeholders)})"
+                    params.extend(relationship_types)
+                
+                records = await db.fetch(query, *params)
+                results.extend([dict(r) for r in records])
+            
+            return results
             
         except Exception as e:
             self._logger.exception(f"get_relationships_failed entity_id={entity_id} error={e}")
@@ -287,21 +433,88 @@ class CodeEntityService:
         match_count: int = 10,
         repo_filter: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search entities by semantic similarity."""
+        """Search entities by semantic similarity using pgvector."""
         try:
-            response = self.supabase.rpc(
-                "match_archon_code_entities_multi",
-                {
-                    "query_embedding": query_embedding,
-                    "embedding_dimension": embedding_dimension,
-                    "match_count": match_count,
-                    "filter": {},
-                    "repo_filter": repo_filter,
-                }
-            ).execute()
+            db = await self._get_db()
             
-            return response.data or []
+            # Determine which embedding column to use
+            embedding_column = {
+                384: "embedding_384",
+                768: "embedding_768",
+                1024: "embedding_1024",
+                1536: "embedding_1536",
+                3072: "embedding_3072",
+            }.get(embedding_dimension, "embedding_1536")
+            
+            query = f"""
+                SELECT 
+                    id, repo_id, file_path, entity_type, name, 
+                    signature, docstring, source_code, language, commit_sha,
+                    1 - ({embedding_column} <=> $1::vector) AS similarity
+                FROM archon_code_entities
+                WHERE {embedding_column} IS NOT NULL
+                AND ($2::uuid IS NULL OR repo_id = $2)
+                ORDER BY {embedding_column} <=> $1::vector
+                LIMIT $3
+            """
+            
+            records = await db.fetch(
+                query, 
+                query_embedding, 
+                repo_filter, 
+                match_count
+            )
+            
+            return [dict(r) for r in records]
             
         except Exception as e:
             self._logger.exception(f"search_entities_failed dimension={embedding_dimension} error={e}")
             return []
+    
+    async def get_repository_stats(self, repo_id: str) -> dict[str, Any]:
+        """Get statistics for a repository."""
+        try:
+            db = await self._get_db()
+            
+            # Count by type
+            type_counts = await db.fetch(
+                """
+                SELECT entity_type, COUNT(*) as count
+                FROM archon_code_entities
+                WHERE repo_id = $1
+                GROUP BY entity_type
+                """,
+                repo_id
+            )
+            
+            # Count by language
+            lang_counts = await db.fetch(
+                """
+                SELECT language, COUNT(*) as count
+                FROM archon_code_entities
+                WHERE repo_id = $1
+                GROUP BY language
+                """,
+                repo_id
+            )
+            
+            # Relationship count
+            rel_count = await db.fetchval(
+                """
+                SELECT COUNT(*) FROM archon_code_relationships r
+                JOIN archon_code_entities e ON e.id = r.source_entity_id
+                WHERE e.repo_id = $1
+                """,
+                repo_id
+            )
+            
+            return {
+                "repo_id": repo_id,
+                "by_type": {r["entity_type"]: r["count"] for r in type_counts},
+                "by_language": {r["language"]: r["count"] for r in lang_counts},
+                "total_relationships": rel_count,
+            }
+            
+        except Exception as e:
+            self._logger.exception(f"get_repository_stats_failed repo_id={repo_id} error={e}")
+            return {}

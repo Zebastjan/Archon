@@ -8,13 +8,14 @@ from pathlib import Path
 
 from tree_sitter import Language, Node, Parser, Tree
 
+import logging
+
 try:
     import tree_sitter_python as ts_python
     HAS_TS_PYTHON = True
 except ImportError:
     HAS_TS_PYTHON = False
 
-from ...config.logfire_config import get_logger
 from .language_support import (
     CodeEntity,
     CodeRelationship,
@@ -22,7 +23,7 @@ from .language_support import (
     ParseError,
 )
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class PythonLanguageSupport(LanguageSupportBase):

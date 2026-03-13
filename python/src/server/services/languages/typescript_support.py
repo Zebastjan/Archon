@@ -8,6 +8,8 @@ from pathlib import Path
 
 from tree_sitter import Language, Node, Parser
 
+import logging
+
 try:
     import tree_sitter_typescript as ts_typescript
     from tree_sitter_typescript import language_tsx, language_typescript
@@ -15,7 +17,6 @@ try:
 except ImportError:
     HAS_TS = False
 
-from ...config.logfire_config import get_logger
 from .language_support import (
     CodeEntity,
     CodeRelationship,
@@ -23,7 +24,7 @@ from .language_support import (
     ParseError,
 )
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class TypeScriptLanguageSupport(LanguageSupportBase):

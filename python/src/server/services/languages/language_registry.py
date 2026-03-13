@@ -4,12 +4,12 @@ Manages language support implementations and provides lookup by file extension
 or language ID. Uses lazy loading to avoid importing unused language modules.
 """
 
+import logging
 from pathlib import Path
 
-from ...config.logfire_config import get_logger
 from .language_support import LanguageSupport
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class LanguageSupportRegistry:
