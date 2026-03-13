@@ -153,7 +153,8 @@ class TestDatabaseSchema:
 
         # Get source code of key functions
         git_test_source = inspect.getsource(git_test_api.initialize_test_fixture)
-        git_api_source = inspect.getsource(git_api.add_repository)
+        # Use initialize_repository which is the POST endpoint handler
+        git_api_source = inspect.getsource(git_api.initialize_repository)
 
         all_source = git_test_source + git_api_source
 
@@ -220,7 +221,7 @@ class TestSchemaDocumentation:
         }
 
         # This test always passes - it documents the schema
-        assert len(expected_schema) == 22, "archon_sources should have 22 columns"
+        assert len(expected_schema) == 24, f"archon_sources should have 24 columns (currently {len(expected_schema)})"
 
         # Print documentation
         print("\narchon_sources table schema:")

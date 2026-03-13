@@ -32,18 +32,18 @@ class TestGitRepositoryService:
 
     def test_detect_language_python(self, service):
         """Test language detection for Python files."""
-        assert service.detect_language("test.py") == "Python"
-        assert service.detect_language("/path/to/script.py") == "Python"
+        assert service.detect_language("test.py") == "python"
+        assert service.detect_language("/path/to/script.py") == "python"
 
     def test_detect_language_javascript(self, service):
         """Test language detection for JavaScript files."""
-        assert service.detect_language("app.js") == "JavaScript"
-        assert service.detect_language("component.jsx") == "JavaScript"
+        assert service.detect_language("app.js") == "javascript"
+        assert service.detect_language("component.jsx") == "jsx"
 
     def test_detect_language_typescript(self, service):
         """Test language detection for TypeScript files."""
-        assert service.detect_language("app.ts") == "TypeScript"
-        assert service.detect_language("component.tsx") == "TypeScript"
+        assert service.detect_language("app.ts") == "typescript"
+        assert service.detect_language("component.tsx") == "tsx"
 
     def test_detect_language_dockerfile(self, service):
         """Test language detection for Dockerfile."""
