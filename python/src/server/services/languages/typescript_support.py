@@ -149,12 +149,22 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
     ) -> None:
         """Recursively walk the TypeScript/JavaScript AST."""
         
-        # Function declarations
-        if node.type == "function_declaration":
+        # Function declarations (including generators)
+        if node.type in ("function_declaration", "generator_function_declaration"):
             is_async = any(child.type == "async" for child in node.children)
+            is_generator = node.type == "generator_function_declaration"
             self._handle_function_declaration(
                 node, content, file_path, entities, relationships,
-                parent_entity, scope_stack, is_async=is_async, is_arrow=False
+                parent_entity, scope_stack, is_async=is_async, is_arrow=False,
+                is_generator=is_generator
+            )
+            return
+            
+        # Lexical declarations (const/let with arrow functions)
+        elif node.type == "lexical_declaration":
+            self._handle_lexical_declaration(
+                node, content, file_path, entities, relationships,
+                parent_entity, scope_stack
             )
             return
             
@@ -248,6 +258,7 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
         scope_stack: list[str],
         is_async: bool,
         is_arrow: bool,
+        is_generator: bool = False,
     ) -> CodeEntity:
         """Handle function declarations."""
         name_node = node.child_by_field_name("name")
@@ -304,6 +315,7 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
             metadata={
                 "async": is_async,
                 "arrow": is_arrow,
+                "generator": is_generator,
                 "local_name": func_name,
             },
         )
@@ -892,3 +904,105 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
         # This would require looking at the preceding sibling or comment nodes
         # For now, return None - can be enhanced with comment parsing
         return None
+    
+    def _handle_lexical_declaration(
+        self,
+        node: Node,
+        content: str,
+        file_path: str,
+        entities: list[CodeEntity],
+        relationships: list[CodeRelationship],
+        parent_entity: CodeEntity | None,
+        scope_stack: list[str],
+    ) -> None:
+        """Handle const/let declarations (may contain arrow functions).
+        
+        Example: const FancyInput = forwardRef((props, ref) => {...})
+        """
+        # Find variable declarators (const x = ...)
+        for child in node.children:
+            if child.type == "variable_declarator":
+                name_node = child.child_by_field_name("name")
+                value_node = child.child_by_field_name("value")
+                
+                if name_node and value_node:
+                    var_name = content[name_node.start_byte:name_node.end_byte]
+                    
+                    # Check if value is an arrow function or call expression containing one
+                    if value_node.type == "arrow_function":
+                        # Direct arrow function: const fn = () => {}
+                        self._handle_arrow_function_entity(
+                            var_name, value_node, content, file_path,
+                            entities, relationships, parent_entity, scope_stack
+                        )
+                    elif value_node.type == "call_expression":
+                        # Check if call contains arrow function (e.g., forwardRef(() => {}))
+                        for arg in value_node.children:
+                            if arg.type == "arguments":
+                                for arg_child in arg.children:
+                                    if arg_child.type == "arrow_function":
+                                        self._handle_arrow_function_entity(
+                                            var_name, arg_child, content, file_path,
+                                            entities, relationships, parent_entity, scope_stack,
+                                            is_forward_ref=True
+                                        )
+                                        break
+    
+    def _handle_arrow_function_entity(
+        self,
+        name: str,
+        node: Node,
+        content: str,
+        file_path: str,
+        entities: list[CodeEntity],
+        relationships: list[CodeRelationship],
+        parent_entity: CodeEntity | None,
+        scope_stack: list[str],
+        is_forward_ref: bool = False,
+    ) -> CodeEntity:
+        """Create entity for arrow function."""
+        qualified_name = ".".join(scope_stack + [name]) if scope_stack else name
+        
+        # Build signature
+        params_node = node.child_by_field_name("parameters")
+        return_type_node = node.child_by_field_name("return_type")
+        
+        signature_parts = ["const", name, "="]
+        if params_node:
+            params_text = content[params_node.start_byte:params_node.end_byte]
+            signature_parts.append(params_text)
+        signature_parts.append("=>")
+        if return_type_node:
+            return_type_text = content[return_type_node.start_byte:return_type_node.end_byte]
+            signature_parts.append(return_type_text)
+        
+        signature = " ".join(signature_parts)
+        
+        entity = CodeEntity(
+            entity_type="function",
+            name=qualified_name,
+            signature=signature,
+            docstring=None,
+            source_code=content[node.start_byte:node.end_byte],
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            metadata={
+                "async": False,
+                "arrow": True,
+                "forward_ref": is_forward_ref,
+                "local_name": name,
+            },
+        )
+        entities.append(entity)
+        
+        # Walk body
+        body_node = node.child_by_field_name("body")
+        if body_node:
+            new_scope = scope_stack + [name]
+            for child in body_node.children:
+                self._walk_tree(
+                    child, content, file_path, entities, relationships,
+                    entity, new_scope
+                )
+        
+        return entity
