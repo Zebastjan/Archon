@@ -72,9 +72,9 @@ class PythonLanguageSupport(LanguageSupportBase):
             )
         
         self._language = Language(ts_python.language())
-        self._parser = Parser(self._language)
-        self._logger = logger.bind(language="python")
-        self._logger.debug("python_language_support_initialized")
+        self._parser = Parser(self._language)  # Language passed to constructor
+        self._logger = logger
+        self._logger.debug("Python language support initialized")
     
     def extract_entities_and_relationships(
         self,
@@ -116,10 +116,8 @@ class PythonLanguageSupport(LanguageSupportBase):
         )
         
         self._logger.debug(
-            "extraction_complete",
-            file=file_path,
-            entity_count=len(entities),
-            relationship_count=len(relationships),
+            f"Extraction complete: {file_path} - "
+            f"{len(entities)} entities, {len(relationships)} relationships"
         )
         
         return entities, relationships

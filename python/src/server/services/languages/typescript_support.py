@@ -10,7 +10,7 @@ from tree_sitter import Language, Node, Parser
 
 try:
     import tree_sitter_typescript as ts_typescript
-    import tree_sitter_javascript as ts_javascript
+    from tree_sitter_typescript import language_tsx, language_typescript
     HAS_TS = True
 except ImportError:
     HAS_TS = False
@@ -75,11 +75,11 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
                 "Install with: uv pip install tree-sitter-typescript tree-sitter-javascript"
             )
         
-        self._ts_language = Language(ts_typescript.language())
-        self._js_language = Language(ts_javascript.language())
-        self._parser = Parser(self._ts_language)
-        self._logger = logger.bind(language="typescript")
-        self._logger.debug("typescript_language_support_initialized")
+        self._ts_language = Language(language_typescript())
+        self._js_language = Language(language_tsx())
+        # Parser created fresh for each parse since we need different languages
+        self._logger = logger
+        self._logger.debug("TypeScript language support initialized")
     
     def _get_language(self, file_path: str) -> Language:
         """Select appropriate grammar based on file extension."""
@@ -106,7 +106,8 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
             ParseError: If the source code cannot be parsed
         """
         language = self._get_language(file_path)
-        self._parser.set_language(language)
+        # Create new parser with the correct language (tree-sitter 0.25+ API)
+        self._parser = Parser(language)
         
         try:
             tree = self._parser.parse(bytes(content, "utf8"))
@@ -130,10 +131,8 @@ class TypeScriptLanguageSupport(LanguageSupportBase):
         )
         
         self._logger.debug(
-            "extraction_complete",
-            file=file_path,
-            entity_count=len(entities),
-            relationship_count=len(relationships),
+            f"Extraction complete: {file_path} - "
+            f"{len(entities)} entities, {len(relationships)} relationships"
         )
         
         return entities, relationships

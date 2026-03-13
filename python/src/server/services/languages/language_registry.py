@@ -31,7 +31,7 @@ class LanguageSupportRegistry:
         """Initialize empty registry."""
         self._languages: dict[str, LanguageSupport] = {}
         self._by_extension: dict[str, LanguageSupport] = {}
-        self._logger = logger.bind(registry="language_support")
+        self._logger = logger
         self._logger.debug("language_registry_initialized")
     
     def register(self, support: LanguageSupport) -> None:
@@ -56,9 +56,8 @@ class LanguageSupportRegistry:
             self._by_extension[ext.lower()] = support
         
         self._logger.info(
-            "language_registered",
-            language=support.language_id,
-            extensions=support.file_extensions,
+            f"Language registered: {support.language_id} "
+            f"with extensions {support.file_extensions}"
         )
     
     def get_for_file(self, file_path: str) -> LanguageSupport | None:
@@ -152,26 +151,25 @@ def _register_builtin_languages(registry: LanguageSupportRegistry) -> None:
     Called once during registry initialization. Imports language modules
     here to avoid circular imports at module load time.
     """
-    logger.debug("registering_builtin_languages")
+    logger.debug("Registering builtin languages")
     
     try:
         from .python_support import PythonLanguageSupport
         registry.register(PythonLanguageSupport())
-        logger.debug("python_language_registered")
+        logger.debug("Python language support registered")
     except ImportError as e:
-        logger.warning("python_language_import_failed", error=str(e))
+        logger.warning(f"Python language import failed: {e}")
     
     try:
         from .typescript_support import TypeScriptLanguageSupport
         registry.register(TypeScriptLanguageSupport())
-        logger.debug("typescript_language_registered")
+        logger.debug("TypeScript language support registered")
     except ImportError as e:
-        logger.warning("typescript_language_import_failed", error=str(e))
+        logger.warning(f"TypeScript language import failed: {e}")
     
     logger.info(
-        "builtin_languages_registered",
-        count=len(registry.list_languages()),
-        languages=registry.list_languages(),
+        f"Builtin languages registered: {len(registry.list_languages())} "
+        f"({', '.join(registry.list_languages())})"
     )
 
 
