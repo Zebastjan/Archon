@@ -1,11 +1,33 @@
 # Docker Compose profiles:
-# - Default (no profile): Starts archon-server, archon-mcp, and archon-frontend
+# - Default (no profile): Starts archon-server, archon-mcp, archon-frontend, and postgres
 # - Agents are opt-in: archon-agents starts only with the "agents" profile
 # Usage:
-#   docker compose up                        # Starts server, mcp, frontend (agents disabled)
+#   docker compose up                        # Starts server, mcp, frontend, postgres
 #   docker compose --profile agents up -d    # Also starts archon-agents
 
 services:
+  # PostgreSQL Database with pgvector
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: archon-postgres
+    environment:
+      POSTGRES_USER: ${ARCHON_DB_USER:-archon}
+      POSTGRES_PASSWORD: ${ARCHON_DB_PASSWORD:-archon_local_dev}
+      POSTGRES_DB: ${ARCHON_DB_NAME:-archon}
+    ports:
+      - "${ARCHON_DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migration:/docker-entrypoint-initdb.d/migrations:ro
+      - ./scripts/docker-postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ARCHON_DB_USER:-archon} -d ${ARCHON_DB_NAME:-archon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
   # Server Service (FastAPI + Socket.IO + Crawling)
   archon-server:
     build:
@@ -18,8 +40,11 @@ services:
     ports:
       - "${ARCHON_SERVER_PORT:-8181}:${ARCHON_SERVER_PORT:-8181}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Database: Use PostgreSQL (local or from env)
+      - ARCHON_DATABASE_URL=${ARCHON_DATABASE_URL:-postgresql://archon:archon_local_dev@postgres:5432/archon}
+      # Legacy Supabase support (optional fallback)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
@@ -32,6 +57,9 @@ services:
       - ARCHON_HOST=${HOST:-localhost}
     networks:
       - app-network
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       # SECURITY: Docker socket mounting removed (CVE-2025-9074 - CVSS 9.3)
       # MCP status now monitored via HTTP health checks (secure, portable)
@@ -81,8 +109,11 @@ services:
     ports:
       - "${ARCHON_MCP_PORT:-8051}:${ARCHON_MCP_PORT:-8051}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Database: Use PostgreSQL (local or from env)
+      - ARCHON_DATABASE_URL=${ARCHON_DATABASE_URL:-postgresql://archon:archon_local_dev@postgres:5432/archon}
+      # Legacy Supabase support (optional fallback)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
       - TRANSPORT=sse
@@ -98,6 +129,8 @@ services:
       - app-network
     depends_on:
       archon-server:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       
     extra_hosts:
@@ -129,8 +162,11 @@ services:
     ports:
       - "${ARCHON_AGENTS_PORT:-8052}:${ARCHON_AGENTS_PORT:-8052}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Database: Use PostgreSQL (local or from env)
+      - ARCHON_DATABASE_URL=${ARCHON_DATABASE_URL:-postgresql://archon:archon_local_dev@postgres:5432/archon}
+      # Legacy Supabase support (optional fallback)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
@@ -139,6 +175,9 @@ services:
       - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
     networks:
       - app-network
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -165,16 +204,21 @@ services:
     container_name: archon-agent-work-orders
     depends_on:
       - archon-server
+      postgres:
+        condition: service_healthy
     ports:
       - "${AGENT_WORK_ORDERS_PORT:-8053}:${AGENT_WORK_ORDERS_PORT:-8053}"
     environment:
+      # Database: Use PostgreSQL (local or from env)
+      - ARCHON_DATABASE_URL=${ARCHON_DATABASE_URL:-postgresql://archon:archon_local_dev@postgres:5432/archon}
+      # Legacy Supabase support (optional fallback)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - ENABLE_AGENT_WORK_ORDERS=true
       - SERVICE_DISCOVERY_MODE=docker_compose
       - STATE_STORAGE_TYPE=supabase
       - ARCHON_SERVER_URL=http://archon-server:${ARCHON_SERVER_PORT:-8181}
       - ARCHON_MCP_URL=http://archon-mcp:${ARCHON_MCP_PORT:-8051}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
@@ -233,6 +277,10 @@ services:
     depends_on:
       archon-server:
         condition: service_healthy
+
+volumes:
+  postgres_data:
+    driver: local
 
 networks:
   app-network:
