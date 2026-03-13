@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "archon-codebase": {
+      "url": "http://localhost:8051/sse",
+      "transport": "sse",
+      "capabilities": {
+        "tools": [
+          "codebase_find_entity",
+          "codebase_semantic_search", 
+          "codebase_get_entity_context",
+          "codebase_find_callers",
+          "codebase_repo_stats",
+          "codebase_list_repos",
+          "codebase_find_by_file"
+        ]
+      }
+    }
+  }
+}

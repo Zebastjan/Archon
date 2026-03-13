@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "archon-codebase": {
+      "command": "http://localhost:8051/sse",
+      "type": "sse",
+      "description": "Archon Codebase Intelligence - search and analyze code with semantic embeddings"
+    }
+  }
+}
