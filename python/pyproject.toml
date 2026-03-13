@@ -43,6 +43,7 @@ server = [
     # Database and storage
     "supabase==2.15.1",
     "asyncpg>=0.29.0",
+    "sqlalchemy[asyncio]>=2.0.0",
     # AI/ML libraries
     "openai==1.71.0",
     "pydantic-ai>=0.0.13",
