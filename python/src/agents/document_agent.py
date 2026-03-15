@@ -147,18 +147,18 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
                 if not ctx.deps.project_id:
                     return "No project is currently selected. Please specify a project or create one first to manage documents."
 
-                supabase = get_supabase_client()
-                response = (
-                    supabase.table("archon_projects")
-                    .select("docs")
-                    .eq("id", ctx.deps.project_id)
-                    .execute()
+                from ..server.services.database import get_database_connector
+                db = get_database_connector()
+
+                response = await db.fetch(
+                    "SELECT docs FROM archon_projects WHERE id = $1",
+                    ctx.deps.project_id
                 )
 
-                if not response.data:
+                if not response:
                     return "No project found with the given ID."
 
-                docs = response.data[0].get("docs", [])
+                docs = response[0].get("docs", [])
                 if not docs:
                     return "No documents found in this project."
 
@@ -178,18 +178,18 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
         async def get_document(ctx: RunContext[DocumentDependencies], document_title: str) -> str:
             """Get the content of a specific document by title."""
             try:
-                supabase = get_supabase_client()
-                response = (
-                    supabase.table("archon_projects")
-                    .select("docs")
-                    .eq("id", ctx.deps.project_id)
-                    .execute()
+                from ..server.services.database import get_database_connector
+                db = get_database_connector()
+
+                response = await db.fetch(
+                    "SELECT docs FROM archon_projects WHERE id = $1",
+                    ctx.deps.project_id
                 )
 
-                if not response.data:
+                if not response:
                     return "No project found."
 
-                docs = response.data[0].get("docs", [])
+                docs = response[0].get("docs", [])
                 matching_docs = [
                     doc for doc in docs if document_title.lower() in doc.get("title", "").lower()
                 ]

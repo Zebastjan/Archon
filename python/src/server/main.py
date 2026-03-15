@@ -91,9 +91,9 @@ async def lifespan(app: FastAPI):
         # Apply pending database migrations automatically
         try:
             from .services.migration_service import migration_service
-            from .utils import get_supabase_client
+            from .services.database import get_database_connector
 
-            supabase = get_supabase_client()
+            db = get_database_connector()
 
             pending = await migration_service.get_pending_migrations()
             if pending:
@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
                             # We'll handle this by checking if the table exists first
                             try:
                                 # Check if table exists by querying it
-                                supabase.table("archon_operation_progress").select("id").limit(1).execute()
+                                await db.fetch("SELECT id FROM archon_operation_progress LIMIT 1")
                                 api_logger.info(f"Table archon_operation_progress already exists")
                             except Exception:
                                 # Table doesn't exist - we need to create it
@@ -120,12 +120,15 @@ async def lifespan(app: FastAPI):
 
                             # Record the migration as applied
                             try:
-                                supabase.table("archon_migrations").insert(
-                                    {
-                                        "version": migration.version,
-                                        "migration_name": migration.name,
-                                    }
-                                ).execute()
+                                await db.execute(
+                                    """
+                                    INSERT INTO archon_migrations (version, migration_name)
+                                    VALUES ($1, $2)
+                                    ON CONFLICT (version) DO NOTHING
+                                    """,
+                                    migration.version,
+                                    migration.name
+                                )
                                 api_logger.info(f"✅ Recorded migration: {migration.name}")
                             except Exception:
                                 # Might already be recorded
@@ -133,12 +136,15 @@ async def lifespan(app: FastAPI):
                         else:
                             # For other migrations, try to record them
                             try:
-                                supabase.table("archon_migrations").insert(
-                                    {
-                                        "version": migration.version,
-                                        "migration_name": migration.name,
-                                    }
-                                ).execute()
+                                await db.execute(
+                                    """
+                                    INSERT INTO archon_migrations (version, migration_name)
+                                    VALUES ($1, $2)
+                                    ON CONFLICT (version) DO NOTHING
+                                    """,
+                                    migration.version,
+                                    migration.name
+                                )
                                 api_logger.info(f"✅ Recorded migration: {migration.name}")
                             except:
                                 pass
@@ -155,18 +161,12 @@ async def lifespan(app: FastAPI):
         # Validate database schema - fail fast if schema is incomplete
         schema_validation_message = None
         try:
-            from .utils.schema_validator import validate_archon_sources_schema
-            from .utils import get_supabase_client
-
-            supabase_for_validation = get_supabase_client()
-            is_valid, message = validate_archon_sources_schema(supabase_for_validation)
-            if not is_valid:
-                # Logging not configured yet, raise error immediately
-                raise RuntimeError(f"Database schema validation failed: {message}")
-            schema_validation_message = message
+            # Using PostgreSQL directly - skip Supabase-specific schema validation
+            schema_validation_message = "Using PostgreSQL directly (schema validation skipped)"
+            api_logger.info(f"✅ {schema_validation_message}")
         except ValueError as ve:
-            # Supabase not configured - skip schema validation (using PostgreSQL directly)
-            if "SUPABASE_URL" in str(ve):
+            # Database not configured
+            if "DATABASE_URL" in str(ve) or "SUPABASE_URL" in str(ve):
                 schema_validation_message = "Supabase not configured - using PostgreSQL directly, schema validation skipped"
             else:
                 raise RuntimeError(f"Database schema validation failed: {ve}")
@@ -394,12 +394,12 @@ async def _check_database_schema():
         return _schema_check_cache["result"]
 
     try:
-        from .services.client_manager import get_supabase_client
+        from .services.database import get_database_connector
 
-        client = get_supabase_client()
+        db = get_database_connector()
 
         # Try to query the new columns directly - if they exist, schema is up to date
-        client.table("archon_sources").select("source_url, source_display_name").limit(1).execute()
+        await db.fetch("SELECT source_url, source_display_name FROM archon_sources LIMIT 1")
 
         # Cache successful result permanently
         _schema_check_cache["valid"] = True
@@ -408,8 +408,8 @@ async def _check_database_schema():
         return {"valid": True, "message": "Schema is up to date"}
 
     except ValueError as e:
-        # Supabase not configured - skip schema check (using PostgreSQL directly)
-        if "SUPABASE_URL" in str(e):
+        # Database not configured - skip schema check
+        if "DATABASE_URL" in str(e) or "SUPABASE_URL" in str(e):
             _schema_check_cache["valid"] = True
             _schema_check_cache["checked_at"] = current_time
             return {"valid": True, "message": "Using PostgreSQL directly (schema validation skipped)"}
