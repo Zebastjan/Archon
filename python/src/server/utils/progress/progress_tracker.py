@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from ...config.logfire_config import safe_logfire_error, safe_logfire_info
-from ...utils import get_supabase_client
+from ...services.database import get_database_connector
 
 
 class ProgressTracker:
@@ -22,19 +22,20 @@ class ProgressTracker:
     # Class-level storage for all progress states
     _progress_states: dict[str, dict[str, Any]] = {}
 
-    def __init__(self, progress_id: str, operation_type: str = "crawl"):
+    def __init__(self, progress_id: str, operation_type: str = "crawl", existing_state: dict[str, Any] | None = None):
         """
         Initialize the progress tracker.
 
         Args:
             progress_id: Unique progress identifier
             operation_type: Type of operation (crawl, upload, etc.)
+            existing_state: Optional pre-loaded existing state from database
         """
         self.progress_id = progress_id
         self.operation_type = operation_type
 
-        # Check for existing progress in database (for restart/resume)
-        existing = self._restore_from_database(progress_id)
+        # Check for existing progress (passed in or use None)
+        existing = existing_state
 
         if existing:
             # Restore from database
@@ -75,17 +76,17 @@ class ProgressTracker:
         ProgressTracker._progress_states[progress_id] = self.state
 
     @classmethod
-    def get_progress(cls, progress_id: str) -> dict[str, Any] | None:
+    async def get_progress(cls, progress_id: str) -> dict[str, Any] | None:
         """Get progress state by ID (checks memory first, then database)."""
         # Check memory first
         if progress_id in cls._progress_states:
             return cls._progress_states.get(progress_id)
 
         # Fall back to database
-        return cls._restore_from_database(progress_id)
+        return await cls._restore_from_database(progress_id)
 
     @classmethod
-    def clear_progress(cls, progress_id: str) -> None:
+    async def clear_progress(cls, progress_id: str) -> None:
         """Remove progress state from memory and database."""
         # Remove from memory
         if progress_id in cls._progress_states:
@@ -93,13 +94,16 @@ class ProgressTracker:
 
         # Remove from database
         try:
-            supabase = get_supabase_client()
-            supabase.table("archon_operation_progress").delete().eq("progress_id", progress_id).execute()
+            db = get_database_connector()
+            await db.execute(
+                "DELETE FROM archon_operation_progress WHERE progress_id = $1",
+                progress_id
+            )
         except Exception as e:
             safe_logfire_error(f"Failed to clear progress from database: {e}")
 
     @classmethod
-    def list_active(cls) -> dict[str, dict[str, Any]]:
+    async def list_active(cls) -> dict[str, dict[str, Any]]:
         """Get all active progress states (from both memory and database)."""
         active = {}
 
@@ -111,15 +115,16 @@ class ProgressTracker:
 
         # Also get from database for operations that survived restart
         try:
-            supabase = get_supabase_client()
-            result = (
-                supabase.table("archon_operation_progress")
-                .select("*")
-                .in_("status", ["starting", "in_progress", "paused"])
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                """
+                SELECT * FROM archon_operation_progress
+                WHERE status = ANY($1)
+                """,
+                ["starting", "in_progress", "paused"]
             )
 
-            for record in result.data or []:
+            for record in result:
                 progress_id = record.get("progress_id")
                 if progress_id and progress_id not in active:
                     # Convert DB record to state format
@@ -151,28 +156,34 @@ class ProgressTracker:
         Returns the count of restored operations.
         """
         try:
-            supabase = get_supabase_client()
+            db = get_database_connector()
 
-            result = (
-                supabase.table("archon_operation_progress")
-                .select("progress_id, status, operation_type, source_id")
-                .in_("status", ["in_progress", "crawling", "starting"])
-                .execute()
+            result = await db.fetch(
+                """
+                SELECT progress_id, status, operation_type, source_id
+                FROM archon_operation_progress
+                WHERE status = ANY($1)
+                """,
+                ["in_progress", "crawling", "starting"]
             )
 
-            if not result.data:
+            if not result:
                 return 0
 
             restored_count = 0
-            for record in result.data:
+            for record in result:
                 progress_id = record.get("progress_id")
                 if progress_id:
-                    supabase.table("archon_operation_progress").update(
-                        {
-                            "status": "paused",
-                            "updated_at": datetime.now().isoformat(),
-                        }
-                    ).eq("progress_id", progress_id).execute()
+                    await db.execute(
+                        """
+                        UPDATE archon_operation_progress
+                        SET status = $1, updated_at = $2
+                        WHERE progress_id = $3
+                        """,
+                        "paused",
+                        datetime.now().isoformat(),
+                        progress_id
+                    )
 
                     safe_logfire_info(
                         f"Restored operation | progress_id={progress_id} | "
@@ -193,21 +204,23 @@ class ProgressTracker:
         Returns the count of resumed operations.
         """
         try:
-            supabase = get_supabase_client()
+            db = get_database_connector()
 
             # Find all paused operations
-            result = (
-                supabase.table("archon_operation_progress")
-                .select("progress_id, status, operation_type, source_id")
-                .eq("status", "paused")
-                .execute()
+            result = await db.fetch(
+                """
+                SELECT progress_id, status, operation_type, source_id
+                FROM archon_operation_progress
+                WHERE status = $1
+                """,
+                "paused"
             )
 
-            if not result.data:
+            if not result:
                 return 0
 
             resumed_count = 0
-            for record in result.data:
+            for record in result:
                 progress_id = record.get("progress_id")
                 source_id = record.get("source_id")
                 operation_type = record.get("operation_type", "crawl")
@@ -222,56 +235,70 @@ class ProgressTracker:
                     )
                     # Mark operation as failed since we can't resume without source_id
                     try:
-                        supabase.table("archon_operation_progress").update(
-                            {
-                                "status": "failed",
-                                "error_message": "Cannot auto-resume: missing source_id",
-                                "updated_at": datetime.now().isoformat(),
-                            }
-                        ).eq("progress_id", progress_id).execute()
+                        await db.execute(
+                            """
+                            UPDATE archon_operation_progress
+                            SET status = $1, error_message = $2, updated_at = $3
+                            WHERE progress_id = $4
+                            """,
+                            "failed",
+                            "Cannot auto-resume: missing source_id",
+                            datetime.now().isoformat(),
+                            progress_id
+                        )
                     except Exception:
                         pass
                     continue
 
                 try:
                     # Get source metadata to reconstruct crawl request
-                    source_result = (
-                        supabase.table("archon_sources")
-                        .select("source_url, metadata")
-                        .eq("source_id", source_id)
-                        .execute()
+                    source_result = await db.fetch(
+                        """
+                        SELECT source_url, metadata
+                        FROM archon_sources
+                        WHERE source_id = $1
+                        """,
+                        source_id
                     )
 
                     # Check if source record exists
-                    if not source_result.data or len(source_result.data) == 0:
+                    if not source_result or len(source_result) == 0:
                         safe_logfire_error(
                             f"Auto-resume failed: source record not found | progress_id={progress_id} | source_id={source_id}"
                         )
                         # Mark operation as failed
-                        supabase.table("archon_operation_progress").update(
-                            {
-                                "status": "failed",
-                                "error_message": f"Cannot auto-resume: source record not found (source_id: {source_id})",
-                                "updated_at": datetime.now().isoformat(),
-                            }
-                        ).eq("progress_id", progress_id).execute()
+                        await db.execute(
+                            """
+                            UPDATE archon_operation_progress
+                            SET status = $1, error_message = $2, updated_at = $3
+                            WHERE progress_id = $4
+                            """,
+                            "failed",
+                            f"Cannot auto-resume: source record not found (source_id: {source_id})",
+                            datetime.now().isoformat(),
+                            progress_id
+                        )
                         continue
 
                     # Update status to in_progress
-                    supabase.table("archon_operation_progress").update(
-                        {
-                            "status": "in_progress",
-                            "updated_at": datetime.now().isoformat(),
-                        }
-                    ).eq("progress_id", progress_id).execute()
+                    await db.execute(
+                        """
+                        UPDATE archon_operation_progress
+                        SET status = $1, updated_at = $2
+                        WHERE progress_id = $3
+                        """,
+                        "in_progress",
+                        datetime.now().isoformat(),
+                        progress_id
+                    )
 
                     # Restart the crawl operation
                     if operation_type == "crawl":
                         from ...services.crawling.crawling_service import CrawlingService
                         from ...services.crawler_manager import get_crawler
 
-                        source_url = source_result.data[0].get("source_url")
-                        metadata = source_result.data[0].get("metadata", {})
+                        source_url = source_result[0].get("source_url")
+                        metadata = source_result[0].get("metadata", {})
 
                         crawl_request = {
                             "url": source_url,
@@ -292,11 +319,17 @@ class ProgressTracker:
                             )
                             # Mark operation as failed
                             try:
-                                supabase.table("archon_operation_progress").update({
-                                    "status": "failed",
-                                    "error_message": f"Auto-resume failed: Could not initialize crawler - {str(crawler_error)}",
-                                    "updated_at": datetime.now().isoformat(),
-                                }).eq("progress_id", progress_id).execute()
+                                await db.execute(
+                                    """
+                                    UPDATE archon_operation_progress
+                                    SET status = $1, error_message = $2, updated_at = $3
+                                    WHERE progress_id = $4
+                                    """,
+                                    "failed",
+                                    f"Auto-resume failed: Could not initialize crawler - {str(crawler_error)}",
+                                    datetime.now().isoformat(),
+                                    progress_id
+                                )
                             except Exception:
                                 pass
                             continue  # Skip to next operation
@@ -306,7 +339,6 @@ class ProgressTracker:
                             try:
                                 crawl_service = CrawlingService(
                                     crawler=crawler,
-                                    supabase_client=supabase,
                                     progress_id=progress_id
                                 )
                                 await crawl_service.orchestrate_crawl(crawl_request)
@@ -322,11 +354,18 @@ class ProgressTracker:
                                 )
                                 # Mark as failed in database (best effort)
                                 try:
-                                    supabase.table("archon_operation_progress").update({
-                                        "status": "failed",
-                                        "error_message": error_message,
-                                        "updated_at": datetime.now().isoformat(),
-                                    }).eq("progress_id", progress_id).execute()
+                                    db_inner = get_database_connector()
+                                    await db_inner.execute(
+                                        """
+                                        UPDATE archon_operation_progress
+                                        SET status = $1, error_message = $2, updated_at = $3
+                                        WHERE progress_id = $4
+                                        """,
+                                        "failed",
+                                        error_message,
+                                        datetime.now().isoformat(),
+                                        progress_id
+                                    )
                                 except Exception:
                                     pass
 
@@ -345,13 +384,17 @@ class ProgressTracker:
                     )
                     # Mark as failed with error details
                     try:
-                        supabase.table("archon_operation_progress").update(
-                            {
-                                "status": "failed",
-                                "error_message": f"Auto-resume error: {str(e)}",
-                                "updated_at": datetime.now().isoformat(),
-                            }
-                        ).eq("progress_id", progress_id).execute()
+                        await db.execute(
+                            """
+                            UPDATE archon_operation_progress
+                            SET status = $1, error_message = $2, updated_at = $3
+                            WHERE progress_id = $4
+                            """,
+                            "failed",
+                            f"Auto-resume error: {str(e)}",
+                            datetime.now().isoformat(),
+                            progress_id
+                        )
                     except Exception:
                         pass
                     # Continue with next operation even if one fails
@@ -367,13 +410,17 @@ class ProgressTracker:
     async def pause_operation(cls, progress_id: str) -> bool:
         """Pause an operation."""
         try:
-            supabase = get_supabase_client()
-            supabase.table("archon_operation_progress").update(
-                {
-                    "status": "paused",
-                    "updated_at": datetime.now().isoformat(),
-                }
-            ).eq("progress_id", progress_id).execute()
+            db = get_database_connector()
+            await db.execute(
+                """
+                UPDATE archon_operation_progress
+                SET status = $1, updated_at = $2
+                WHERE progress_id = $3
+                """,
+                "paused",
+                datetime.now().isoformat(),
+                progress_id
+            )
 
             # Also update in-memory
             if progress_id in cls._progress_states:
@@ -390,13 +437,17 @@ class ProgressTracker:
     async def resume_operation(cls, progress_id: str) -> bool:
         """Resume a paused operation."""
         try:
-            supabase = get_supabase_client()
-            supabase.table("archon_operation_progress").update(
-                {
-                    "status": "in_progress",
-                    "updated_at": datetime.now().isoformat(),
-                }
-            ).eq("progress_id", progress_id).execute()
+            db = get_database_connector()
+            await db.execute(
+                """
+                UPDATE archon_operation_progress
+                SET status = $1, updated_at = $2
+                WHERE progress_id = $3
+                """,
+                "in_progress",
+                datetime.now().isoformat(),
+                progress_id
+            )
 
             # Also update in-memory
             if progress_id in cls._progress_states:
@@ -439,7 +490,7 @@ class ProgressTracker:
         if initial_data:
             self.state.update(initial_data)
 
-        self._update_state()
+        await self._update_state()
         safe_logfire_info(f"Progress tracking started | progress_id={self.progress_id} | type={self.operation_type}")
 
     async def update(self, status: str, progress: int, log: str, **kwargs):
@@ -512,7 +563,7 @@ class ProgressTracker:
             if key not in protected_fields:
                 self.state[key] = value
 
-        self._update_state()
+        await self._update_state()
 
         # Schedule cleanup for terminal states
         if status in ["cancelled", "failed"]:
@@ -540,7 +591,7 @@ class ProgressTracker:
             self.state["duration"] = str(duration)  # Convert to string for Pydantic model
             self.state["duration_formatted"] = self._format_duration(duration)
 
-        self._update_state()
+        await self._update_state()
         safe_logfire_info(
             f"Progress completed | progress_id={self.progress_id} | type={self.operation_type} | duration={self.state.get('duration_formatted', 'unknown')}"
         )
@@ -567,7 +618,7 @@ class ProgressTracker:
         if error_details:
             self.state["error_details"] = error_details
 
-        self._update_state()
+        await self._update_state()
         safe_logfire_error(
             f"Progress error | progress_id={self.progress_id} | type={self.operation_type} | error={error_message}"
         )
@@ -689,24 +740,24 @@ class ProgressTracker:
             current_file=current_file,
         )
 
-    def _update_state(self):
+    async def _update_state(self):
         """Update progress state in memory storage and persist to database."""
         # Update the class-level dictionary
         ProgressTracker._progress_states[self.progress_id] = self.state
 
         # Persist to database for restart/resume capability
-        self._persist_to_database()
+        await self._persist_to_database()
 
         safe_logfire_info(
             f"📊 [PROGRESS] Updated {self.operation_type} | ID: {self.progress_id} | "
             f"Status: {self.state.get('status')} | Progress: {self.state.get('progress')}%"
         )
 
-    def _persist_to_database(self):
+    async def _persist_to_database(self):
         """Persist progress state to database (atomic operation)."""
         try:
-            supabase = get_supabase_client()
-            table_name = "archon_operation_progress"
+            db = get_database_connector()
+            import json
 
             # Extract stats from state
             stats = {
@@ -718,39 +769,58 @@ class ProgressTracker:
                 "errors": self.state.get("errors", 0),
             }
 
-            # Build the record
-            record = {
-                "progress_id": self.progress_id,
-                "operation_type": self.operation_type,
-                "source_id": self.state.get("source_id"),
-                "status": self.state.get("status", "in_progress"),
-                "progress": self.state.get("progress", 0),
-                "current_url": self.state.get("current_url"),
-                "total_pages": self.state.get("total_pages", 0),
-                "processed_pages": self.state.get("processed_pages", 0),
-                "documents_created": self.state.get("documents_created", 0),
-                "code_blocks_found": self.state.get("code_blocks_found", 0),
-                "stats": stats,
-                "error_message": self.state.get("error"),
-                "updated_at": datetime.now().isoformat(),
-            }
-
             # Upsert - atomic operation
-            supabase.table(table_name).upsert(record, on_conflict="progress_id").execute()
+            await db.execute(
+                """
+                INSERT INTO archon_operation_progress
+                (progress_id, operation_type, source_id, status, progress, current_url,
+                 total_pages, processed_pages, documents_created, code_blocks_found, stats, error_message, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                ON CONFLICT (progress_id) DO UPDATE SET
+                    operation_type = EXCLUDED.operation_type,
+                    source_id = EXCLUDED.source_id,
+                    status = EXCLUDED.status,
+                    progress = EXCLUDED.progress,
+                    current_url = EXCLUDED.current_url,
+                    total_pages = EXCLUDED.total_pages,
+                    processed_pages = EXCLUDED.processed_pages,
+                    documents_created = EXCLUDED.documents_created,
+                    code_blocks_found = EXCLUDED.code_blocks_found,
+                    stats = EXCLUDED.stats,
+                    error_message = EXCLUDED.error_message,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                self.progress_id,
+                self.operation_type,
+                self.state.get("source_id"),
+                self.state.get("status", "in_progress"),
+                self.state.get("progress", 0),
+                self.state.get("current_url"),
+                self.state.get("total_pages", 0),
+                self.state.get("processed_pages", 0),
+                self.state.get("documents_created", 0),
+                self.state.get("code_blocks_found", 0),
+                json.dumps(stats),
+                self.state.get("error"),
+                datetime.now().isoformat()
+            )
 
         except Exception as e:
             # Log but don't fail - in-memory is primary
             safe_logfire_error(f"Failed to persist progress to database: {e}")
 
     @classmethod
-    def _restore_from_database(cls, progress_id: str) -> dict[str, Any] | None:
+    async def _restore_from_database(cls, progress_id: str) -> dict[str, Any] | None:
         """Restore progress state from database if it exists."""
         try:
-            supabase = get_supabase_client()
-            result = supabase.table("archon_operation_progress").select("*").eq("progress_id", progress_id).execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                "SELECT * FROM archon_operation_progress WHERE progress_id = $1",
+                progress_id
+            )
 
-            if result.data and len(result.data) > 0:
-                record = result.data[0]
+            if result and len(result) > 0:
+                record = dict(result[0])
                 safe_logfire_info(f"Restored progress from database | progress_id={progress_id}")
                 return record
 
@@ -761,18 +831,19 @@ class ProgressTracker:
             return None
 
     @classmethod
-    def get_active_operations(cls) -> list[dict[str, Any]]:
+    async def get_active_operations(cls) -> list[dict[str, Any]]:
         """Get all active operations (in_progress or paused) from database."""
         try:
-            supabase = get_supabase_client()
-            result = (
-                supabase.table("archon_operation_progress")
-                .select("*")
-                .in_("status", ["in_progress", "paused"])
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                """
+                SELECT * FROM archon_operation_progress
+                WHERE status = ANY($1)
+                """,
+                ["in_progress", "paused"]
             )
 
-            operations = result.data or []
+            operations = [dict(row) for row in result] if result else []
             safe_logfire_info(f"Found {len(operations)} active operations from database")
             return operations
 
@@ -781,19 +852,35 @@ class ProgressTracker:
             return []
 
     @classmethod
-    def get_operation_by_source(cls, source_id: str, operation_type: str | None = None) -> dict[str, Any] | None:
+    async def get_operation_by_source(cls, source_id: str, operation_type: str | None = None) -> dict[str, Any] | None:
         """Get the most recent operation for a source."""
         try:
-            supabase = get_supabase_client()
-            query = supabase.table("archon_operation_progress").select("*").eq("source_id", source_id)
+            db = get_database_connector()
 
             if operation_type:
-                query = query.eq("operation_type", operation_type)
+                result = await db.fetch(
+                    """
+                    SELECT * FROM archon_operation_progress
+                    WHERE source_id = $1 AND operation_type = $2
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    source_id,
+                    operation_type
+                )
+            else:
+                result = await db.fetch(
+                    """
+                    SELECT * FROM archon_operation_progress
+                    WHERE source_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    source_id
+                )
 
-            result = query.order("created_at", desc=True).limit(1).execute()
-
-            if result.data and len(result.data) > 0:
-                return result.data[0]
+            if result and len(result) > 0:
+                return dict(result[0])
 
             return None
 
