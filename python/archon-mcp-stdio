@@ -1,0 +1,13 @@
+#!/bin/bash
+# Archon MCP Server - STDIO Entry Point
+# Runs the Archon MCP server with stdio transport for OctoFriend
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Set PYTHONPATH to include src directory for module imports
+export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
+
+# Run the stdio server directly as a script
+cd "$SCRIPT_DIR" && exec uv run --group mcp \
+    python "$SCRIPT_DIR/src/mcp_server/mcp_server_stdio.py" "$@"

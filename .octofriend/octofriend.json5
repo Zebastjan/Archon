@@ -1,0 +1,9 @@
+{
+  // Archon Codebase Intelligence MCP Server
+  mcpServers: {
+    archon: {
+      command: "curl",
+      arguments: ["-s", "http://localhost:8051/mcp"],
+    },
+  },
+}

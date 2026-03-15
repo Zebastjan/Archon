@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ..config.logfire_config import get_logger, safe_logfire_error
-from ..utils import get_supabase_client
+from ..services.database import get_database_connector
 
 # Get logger for this module
 logger = get_logger(__name__)
@@ -105,25 +105,33 @@ async def list_pages(
         PageListResponse with list of pages and metadata
     """
     try:
-        client = get_supabase_client()
+        db = get_database_connector()
 
-        # Build query - select only summary fields (no full_content)
-        query = client.table("archon_page_metadata").select(
-            "id, url, section_title, section_order, word_count, char_count, chunk_count"
-        ).eq("source_id", source_id)
-
-        # Add section filter if provided
+        # Build query with optional section filter
         if section:
-            query = query.eq("section_title", section)
-
-        # Order by section_order and created_at
-        query = query.order("section_order").order("created_at")
-
-        # Execute query
-        result = query.execute()
+            result = await db.fetch(
+                """
+                SELECT id, url, section_title, section_order, word_count, char_count, chunk_count
+                FROM archon_page_metadata
+                WHERE source_id = $1 AND section_title = $2
+                ORDER BY section_order, created_at
+                """,
+                source_id,
+                section
+            )
+        else:
+            result = await db.fetch(
+                """
+                SELECT id, url, section_title, section_order, word_count, char_count, chunk_count
+                FROM archon_page_metadata
+                WHERE source_id = $1
+                ORDER BY section_order, created_at
+                """,
+                source_id
+            )
 
         # Use PageSummary (no content handling needed)
-        pages = [PageSummary(**page) for page in result.data]
+        pages = [PageSummary(**page) for page in (result or [])]
 
         return PageListResponse(pages=pages, total=len(pages), source_id=source_id)
 
@@ -147,16 +155,19 @@ async def get_page_by_url(url: str = Query(..., description="The URL of the page
         PageResponse with complete page data
     """
     try:
-        client = get_supabase_client()
+        db = get_database_connector()
 
         # Query by URL
-        result = client.table("archon_page_metadata").select("*").eq("url", url).single().execute()
+        result = await db.fetch(
+            "SELECT * FROM archon_page_metadata WHERE url = $1",
+            url
+        )
 
-        if not result.data:
+        if not result:
             raise HTTPException(status_code=404, detail=f"Page not found for URL: {url}")
 
         # Handle large pages
-        page_data = _handle_large_page_content(result.data.copy())
+        page_data = _handle_large_page_content(dict(result[0]))
         return PageResponse(**page_data)
 
     except HTTPException:
@@ -179,16 +190,19 @@ async def get_page_by_id(page_id: str):
         PageResponse with complete page data
     """
     try:
-        client = get_supabase_client()
+        db = get_database_connector()
 
         # Query by ID
-        result = client.table("archon_page_metadata").select("*").eq("id", page_id).single().execute()
+        result = await db.fetch(
+            "SELECT * FROM archon_page_metadata WHERE id = $1",
+            page_id
+        )
 
-        if not result.data:
+        if not result:
             raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
 
         # Handle large pages
-        page_data = _handle_large_page_content(result.data.copy())
+        page_data = _handle_large_page_content(dict(result[0]))
         return PageResponse(**page_data)
 
     except HTTPException:

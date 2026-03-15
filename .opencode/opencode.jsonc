@@ -1,0 +1,45 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  
+  // MCP Servers - Archon Codebase Intelligence
+  "mcp": {
+    "archon-codebase": {
+      "type": "remote",
+      "url": "http://localhost:8051/sse",
+      "enabled": true
+    }
+  },
+  
+  // Custom commands for Archon
+  "command": {
+    "codebase-search": {
+      "template": "Search the codebase for: $ARGUMENTS",
+      "description": "Search code using semantic embeddings",
+      "agent": "build"
+    },
+    "find-entity": {
+      "template": "Find entity in codebase: $ARGUMENTS",
+      "description": "Find code entity by name",
+      "agent": "build"
+    }
+  },
+  
+  // Agents for code analysis
+  "agent": {
+    "codebase-analyzer": {
+      "description": "Analyzes codebase structure and relationships",
+      "model": "anthropic/claude-sonnet-4-5",
+      "prompt": "You are a codebase analyzer. Use the archon-codebase MCP tools to explore and understand code. Always use semantic_search for finding code by concept, find_entity for exact names, and get_entity_context for understanding relationships.",
+      "tools": {
+        // Enable all archon tools
+        "archon-codebase_*": true
+      }
+    }
+  },
+  
+  // Instructions for AI
+  "instructions": [
+    ".opencode/AGENTS.md",
+    "docs/MCP_AGENT_GUIDE.md"
+  ]
+}

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 # Import logging
 from ..config.logfire_config import logfire
 from ..services.credential_service import credential_service, initialize_credentials
-from ..utils import get_supabase_client
+from ..services.database import get_database_connector
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -276,33 +276,33 @@ async def database_metrics():
     """Get database metrics and statistics."""
     try:
         logfire.info("Getting database metrics")
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get various table counts
         tables_info = {}
 
         # Get projects count
-        projects_response = supabase_client.table("archon_projects").select("id", count="exact").execute()
-        tables_info["projects"] = projects_response.count if projects_response.count is not None else 0
+        projects_response = await db.fetch("SELECT COUNT(*) as count FROM archon_projects")
+        tables_info["projects"] = projects_response[0]["count"] if projects_response else 0
 
         # Get tasks count
-        tasks_response = supabase_client.table("archon_tasks").select("id", count="exact").execute()
-        tables_info["tasks"] = tasks_response.count if tasks_response.count is not None else 0
+        tasks_response = await db.fetch("SELECT COUNT(*) as count FROM archon_tasks")
+        tables_info["tasks"] = tasks_response[0]["count"] if tasks_response else 0
 
         # Get crawled pages count
-        pages_response = supabase_client.table("archon_crawled_pages").select("id", count="exact").execute()
-        tables_info["crawled_pages"] = pages_response.count if pages_response.count is not None else 0
+        pages_response = await db.fetch("SELECT COUNT(*) as count FROM archon_crawled_pages")
+        tables_info["crawled_pages"] = pages_response[0]["count"] if pages_response else 0
 
         # Get settings count
-        settings_response = supabase_client.table("archon_settings").select("id", count="exact").execute()
-        tables_info["settings"] = settings_response.count if settings_response.count is not None else 0
+        settings_response = await db.fetch("SELECT COUNT(*) as count FROM archon_settings")
+        tables_info["settings"] = settings_response[0]["count"] if settings_response else 0
 
         total_records = sum(tables_info.values())
         logfire.info(f"Database metrics retrieved | total_records={total_records} | tables={tables_info}")
 
         return {
             "status": "healthy",
-            "database": "supabase",
+            "database": "postgresql",
             "tables": tables_info,
             "total_records": total_records,
             "timestamp": datetime.now().isoformat(),

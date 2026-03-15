@@ -471,6 +471,45 @@ class CodeEntityService:
             self._logger.exception(f"search_entities_failed dimension={embedding_dimension} error={e}")
             return []
     
+    async def list_entities_in_file(
+        self,
+        repo_id: str,
+        file_path: str,
+        entity_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all code entities in a specific file.
+        
+        Args:
+            repo_id: Repository UUID
+            file_path: Path to the file within the repository
+            entity_type: Optional filter by entity type
+            
+        Returns:
+            List of entities in the file
+        """
+        try:
+            db = await self._get_db()
+            
+            query = """
+                SELECT * FROM archon_code_entities 
+                WHERE repo_id = $1 
+                AND file_path = $2
+            """
+            params = [repo_id, file_path]
+            
+            if entity_type:
+                query += " AND entity_type = $3"
+                params.append(entity_type)
+            
+            query += " ORDER BY line_start"
+            
+            records = await db.fetch(query, *params)
+            return [dict(r) for r in records]
+            
+        except Exception as e:
+            self._logger.exception(f"list_entities_in_file_failed repo_id={repo_id} file={file_path} error={e}")
+            return []
+    
     async def get_repository_stats(self, repo_id: str) -> dict[str, Any]:
         """Get statistics for a repository."""
         try:
@@ -498,6 +537,15 @@ class CodeEntityService:
                 repo_id
             )
             
+            # Total entities
+            total_count = await db.fetchval(
+                """
+                SELECT COUNT(*) FROM archon_code_entities
+                WHERE repo_id = $1
+                """,
+                repo_id
+            )
+            
             # Relationship count
             rel_count = await db.fetchval(
                 """
@@ -508,8 +556,19 @@ class CodeEntityService:
                 repo_id
             )
             
+            # File count (unique files with entities)
+            file_count = await db.fetchval(
+                """
+                SELECT COUNT(DISTINCT file_path) FROM archon_code_entities
+                WHERE repo_id = $1
+                """,
+                repo_id
+            )
+            
             return {
                 "repo_id": repo_id,
+                "total_entities": total_count,
+                "total_files": file_count,
                 "by_type": {r["entity_type"]: r["count"] for r in type_counts},
                 "by_language": {r["language"]: r["count"] for r in lang_counts},
                 "total_relationships": rel_count,

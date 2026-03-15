@@ -1,0 +1,22 @@
+// OctoFriend MCP Configuration
+// Place this at ~/.config/octofriend/octofriend.json5
+
+{
+  mcpServers: {
+    // Archon Codebase Intelligence
+    archon: {
+      // For HTTP/SSE transport (recommended):
+      url: "http://localhost:8051/sse",
+      
+      // Or for stdio transport:
+      // command: "python",
+      // args: ["/home/zebastjan/dev/archon/python/src/server/mcp_server/main.py"],
+    },
+    
+    // Additional MCP servers can be added here
+    // filesystem: {
+    //   command: "npx",
+    //   args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/zebastjan/dev"],
+    // },
+  },
+}

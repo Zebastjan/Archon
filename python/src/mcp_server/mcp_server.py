@@ -548,6 +548,40 @@ def register_modules():
         logger.error(f"✗ Failed to register code entity tools: {e}")
         logger.error(traceback.format_exc())
 
+    # Worktree Safety Tools (Branch isolation and conflict prevention)
+    try:
+        from src.mcp_server.features.worktree import register_worktree_tools
+
+        register_worktree_tools(mcp)
+        modules_registered += 1
+        logger.info("✓ Worktree safety tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Worktree tools module not available (optional): {e}")
+    except (SyntaxError, NameError, AttributeError) as e:
+        logger.error(f"✗ Code error in worktree tools - MUST FIX: {e}")
+        logger.error(traceback.format_exc())
+        raise
+    except Exception as e:
+        logger.error(f"✗ Failed to register worktree tools: {e}")
+        logger.error(traceback.format_exc())
+
+    # Code Audit Tools (Metrics and quality analysis)
+    try:
+        from src.mcp_server.features.code_audit import register_code_audit_tools
+
+        register_code_audit_tools(mcp)
+        modules_registered += 1
+        logger.info("✓ Code audit tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Code audit tools module not available (optional): {e}")
+    except (SyntaxError, NameError, AttributeError) as e:
+        logger.error(f"✗ Code error in code audit tools - MUST FIX: {e}")
+        logger.error(traceback.format_exc())
+        raise
+    except Exception as e:
+        logger.error(f"✗ Failed to register code audit tools: {e}")
+        logger.error(traceback.format_exc())
+
     logger.info(f"📦 Total modules registered: {modules_registered}")
 
     if modules_registered == 0:

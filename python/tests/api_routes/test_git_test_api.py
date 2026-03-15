@@ -88,7 +88,7 @@ class TestGitTestFixturesAPI:
         from src.server.api_routes.git_test_api import initialize_test_fixture
         from src.server.api_routes.git_test_api import InitializeTestFixtureRequest
 
-        with patch("src.server.api_routes.git_test_api.get_supabase_client", return_value=mock_supabase_with_schema):
+        with patch("src.server.api_routes.git_test_api.get_supabase_client", return_value=mock_supabase_with_schema) as mock_get_client:
             with patch("src.server.api_routes.git_test_api.GitRepositoryService") as mock_git_service:
                 # Mock successful repository registration
                 mock_service = MagicMock()
@@ -111,6 +111,10 @@ class TestGitTestFixturesAPI:
 
                                 # This should NOT raise schema errors
                                 response = await initialize_test_fixture("test-project-id", request)
+                                
+                                # Verify mocks were called
+                                mock_get_client.assert_called_once()
+                                mock_git_service.assert_called_once()
 
                                 # Verify response
                                 assert response.success is True

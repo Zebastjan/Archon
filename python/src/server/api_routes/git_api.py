@@ -15,6 +15,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel
 
 from ..config.logfire_config import get_logger, logfire
+from ..services.database import get_database_connector
 from ..services.git.git_commit_classifier import GitCommitClassifier
 from ..services.git.git_diff_service import GitDiffService
 from ..services.git.git_repository_service import (
@@ -25,7 +26,6 @@ from ..services.git.git_repository_service import (
     GitRepositoryNotFoundError,
     GitRepositoryService,
 )
-from ..utils import get_supabase_client
 
 
 class ExtractCodeEntitiesRequest(BaseModel):
@@ -110,23 +110,27 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
                 },
             )
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Verify project exists
-        project_response = supabase_client.table("archon_projects").select("id").eq("id", project_id).execute()
+        project_response = await db.fetch(
+            "SELECT id FROM archon_projects WHERE id = $1",
+            project_id
+        )
 
-        if not project_response.data:
+        if not project_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"Project not found: {project_id}",
             )
 
         # Check if repository already exists for this project
-        existing_repo_response = (
-            supabase_client.table("archon_git_repositories").select("id").eq("source_id", project_id).execute()
+        existing_repo_response = await db.fetch(
+            "SELECT id FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if existing_repo_response.data:
+        if existing_repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Repository already initialized for this project. Delete existing repository first.",
@@ -134,28 +138,33 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
 
         # Create source entry for repository
         repo_name = Path(request.repo_path).name
-        source_data = {
-            "source_type": "git_repository",
-            "source_url": request.repo_path,
-            "source_display_name": repo_name,
-            "title": repo_name,
-            "status": "pending",
-        }
 
-        source_response = supabase_client.table("archon_sources").insert(source_data).execute()
+        source_response = await db.fetch(
+            """
+            INSERT INTO archon_sources
+            (source_type, source_url, source_display_name, title, status)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+            """,
+            "git_repository",
+            request.repo_path,
+            repo_name,
+            repo_name,
+            "pending"
+        )
 
-        if not source_response.data:
+        if not source_response:
             raise HTTPException(
                 status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create source entry",
             )
 
-        source_record = source_response.data[0]
+        source_record = source_response[0]
         source_id = str(source_record["id"])
 
         # Register repository using GitRepositoryService
-        git_service = GitRepositoryService(supabase_client)
-        success, result = git_service.register_repository(
+        git_service = GitRepositoryService()
+        success, result = await git_service.register_repository(
             repo_path=request.repo_path,
             source_id=source_id,
             config=request.config,
@@ -163,7 +172,10 @@ async def initialize_repository(project_id: str, request: InitializeRepositoryRe
 
         if not success:
             # Cleanup source entry if registration failed
-            supabase_client.table("archon_sources").delete().eq("id", source_id).execute()
+            await db.execute(
+                "DELETE FROM archon_sources WHERE id = $1",
+                source_id
+            )
             raise HTTPException(
                 status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=result.get("error", "Failed to register repository"),
@@ -215,17 +227,18 @@ async def get_repository(project_id: str):
     try:
         logfire.debug(f"Getting repository metadata for project {project_id}")
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository by source_id (which links to project)
-        repo_response = (
-            supabase_client.table("archon_git_repositories").select("*").eq("source_id", project_id).execute()
+        repo_response = await db.fetch(
+            "SELECT * FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             return None
 
-        return repo_response.data[0]
+        return repo_response[0]
 
     except Exception as e:
         logger.error(f"Error getting repository: {e}", exc_info=True)
@@ -253,28 +266,26 @@ async def list_repository_branches(project_id: str):
     try:
         logfire.info(f"Listing branches for project {project_id}")
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository for project
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, repo_url, default_branch, source_id")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, repo_url, default_branch, source_id FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data or len(repo_response.data) == 0:
+        if not repo_response or len(repo_response) == 0:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for project",
             )
 
-        repo_record = repo_response.data[0]
+        repo_record = repo_response[0]
         repo_path = str(repo_record["repo_url"])
         default_branch = str(repo_record["default_branch"])
 
         # List branches using service
-        service = GitRepositoryService(supabase_client)
+        service = GitRepositoryService()
         branches = service.list_branches(repo_path)
 
         return {
@@ -322,31 +333,35 @@ async def delete_repository(project_id: str):
     try:
         logfire.info(f"Deleting repository for project {project_id}")
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, source_id")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, source_id FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_record = repo_response.data[0]
+        repo_record = repo_response[0]
         repo_id = str(repo_record["id"])
         source_id = str(repo_record["source_id"])
 
         # Delete repository (cascade deletes commits and files via DB constraints)
-        supabase_client.table("archon_git_repositories").delete().eq("id", repo_id).execute()
+        await db.execute(
+            "DELETE FROM archon_git_repositories WHERE id = $1",
+            repo_id
+        )
 
         # Delete source entry
-        supabase_client.table("archon_sources").delete().eq("id", source_id).execute()
+        await db.execute(
+            "DELETE FROM archon_sources WHERE id = $1",
+            source_id
+        )
 
         logger.info(f"Successfully deleted repository {repo_id} for project {project_id}")
 
@@ -390,50 +405,72 @@ async def get_commits(
             f"Getting commits for project {project_id} | branch={branch_name}, limit={limit}, offset={offset}"
         )
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, default_branch")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, default_branch FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_id = repo_response.data[0]["id"]
-        default_branch = repo_response.data[0]["default_branch"]
+        repo_id = repo_response[0]["id"]
+        default_branch = repo_response[0]["default_branch"]
 
         # Use default branch if none specified
         if branch_name is None:
             branch_name = default_branch
 
-        # Query commits
-        query = supabase_client.table("archon_git_commits").select("*").eq("repo_id", repo_id)
-
-        # Filter by branch if specified
+        # Query commits with optional branch filter
+        import json
         if branch_name:
-            query = query.contains("branches", [branch_name])
+            commits_response = await db.fetch(
+                """
+                SELECT * FROM archon_git_commits
+                WHERE repo_id = $1 AND branches @> $2
+                ORDER BY commit_date DESC
+                LIMIT $3 OFFSET $4
+                """,
+                repo_id,
+                json.dumps([branch_name]),
+                limit,
+                offset
+            )
 
-        # Apply pagination and ordering
-        commits_response = query.order("commit_date", desc=True).range(offset, offset + limit - 1).execute()
+            # Get total count
+            count_response = await db.fetch(
+                "SELECT COUNT(*) as count FROM archon_git_commits WHERE repo_id = $1 AND branches @> $2",
+                repo_id,
+                json.dumps([branch_name])
+            )
+        else:
+            commits_response = await db.fetch(
+                """
+                SELECT * FROM archon_git_commits
+                WHERE repo_id = $1
+                ORDER BY commit_date DESC
+                LIMIT $2 OFFSET $3
+                """,
+                repo_id,
+                limit,
+                offset
+            )
 
-        # Get total count (for pagination metadata)
-        count_query = supabase_client.table("archon_git_commits").select("id", count="exact").eq("repo_id", repo_id)
+            # Get total count
+            count_response = await db.fetch(
+                "SELECT COUNT(*) as count FROM archon_git_commits WHERE repo_id = $1",
+                repo_id
+            )
 
-        if branch_name:
-            count_query = count_query.contains("branches", [branch_name])
-
-        count_response = count_query.execute()
-        total_count = count_response.count if hasattr(count_response, "count") else 0
+        total_count = count_response[0]["count"] if count_response else 0
 
         return {
-            "commits": commits_response.data or [],
+            "commits": commits_response or [],
             "pagination": {
                 "total": total_count,
                 "limit": limit,
@@ -480,31 +517,29 @@ async def sync_commits(project_id: str, request: SyncCommitsRequest | None = Non
             f"Syncing commits for project {project_id} | branch={request.branch_name}, max_commits={request.max_commits}"
         )
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, default_branch")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, default_branch FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_id = repo_response.data[0]["id"]
-        default_branch = repo_response.data[0]["default_branch"]
+        repo_id = repo_response[0]["id"]
+        default_branch = repo_response[0]["default_branch"]
 
         # Use default branch if none specified
         branch_name = request.branch_name or default_branch
 
         # Sync commits using GitRepositoryService
-        git_service = GitRepositoryService(supabase_client)
-        success, result = git_service.sync_commits(
+        git_service = GitRepositoryService()
+        success, result = await git_service.sync_commits(
             repo_id=repo_id,
             branch_name=branch_name,
             max_commits=request.max_commits,
@@ -564,32 +599,30 @@ async def get_file_tree(
     try:
         logfire.debug(f"Getting file tree for project {project_id} | commit={commit_sha}, path_prefix={path_prefix}")
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, current_head_sha")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, current_head_sha FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_id = repo_response.data[0]["id"]
-        current_head_sha = repo_response.data[0]["current_head_sha"]
+        repo_id = repo_response[0]["id"]
+        current_head_sha = repo_response[0]["current_head_sha"]
 
         # Resolve "HEAD" to actual SHA
         if commit_sha.upper() == "HEAD":
             commit_sha = current_head_sha
 
         # Get file tree using GitRepositoryService
-        git_service = GitRepositoryService(supabase_client)
-        success, result = git_service.get_file_tree(
+        git_service = GitRepositoryService()
+        success, result = await git_service.get_file_tree(
             repo_id=repo_id,
             commit_sha=commit_sha,
             path_prefix=path_prefix,
@@ -648,32 +681,30 @@ async def get_file_content(
     try:
         logfire.debug(f"Getting file content for project {project_id} | commit={commit_sha}, file_path={file_path}")
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, current_head_sha")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, current_head_sha FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_id = repo_response.data[0]["id"]
-        current_head_sha = repo_response.data[0]["current_head_sha"]
+        repo_id = repo_response[0]["id"]
+        current_head_sha = repo_response[0]["current_head_sha"]
 
         # Resolve "HEAD" to actual SHA
         if commit_sha.upper() == "HEAD":
             commit_sha = current_head_sha
 
         # Get file content using GitRepositoryService
-        git_service = GitRepositoryService(supabase_client)
-        success, result = git_service.get_file_content(
+        git_service = GitRepositoryService()
+        success, result = await git_service.get_file_content(
             repo_id=repo_id,
             commit_sha=commit_sha,
             file_path=file_path,
@@ -773,20 +804,21 @@ async def get_diff(
         500: Internal server error
     """
     try:
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get project's source_id
-        project_response = (
-            supabase_client.table("archon_projects").select("*").eq("id", project_id).execute()
+        project_response = await db.fetch(
+            "SELECT * FROM archon_projects WHERE id = $1",
+            project_id
         )
 
-        if not project_response.data:
+        if not project_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"Project not found: {project_id}",
             )
 
-        project = project_response.data[0]
+        project = project_response[0]
         source_id = project.get("source_id")
 
         if not source_id:
@@ -796,24 +828,22 @@ async def get_diff(
             )
 
         # Get repository by source_id
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("*")
-            .eq("source_id", source_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT * FROM archon_git_repositories WHERE source_id = $1",
+            source_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"Git repository not found for project: {project_id}",
             )
 
-        repo_record = repo_response.data[0]
+        repo_record = repo_response[0]
         repo_path = repo_record["repo_url"]
 
         # Generate diff using GitDiffService
-        git_service = GitRepositoryService(supabase_client)
+        git_service = GitRepositoryService()
         diff_service = GitDiffService(git_service)
 
         structured_diff = diff_service.get_diff(
@@ -900,30 +930,28 @@ async def extract_code_entities(project_id: str, request: ExtractCodeEntitiesReq
     try:
         logfire.info(f"Extracting code entities for project {project_id} | commit={request.commit_sha}")
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, current_head_sha")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, current_head_sha FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_id = repo_response.data[0]["id"]
-        current_head_sha = repo_response.data[0]["current_head_sha"]
+        repo_id = repo_response[0]["id"]
+        current_head_sha = repo_response[0]["current_head_sha"]
 
         # Use HEAD if no commit SHA specified
         commit_sha = request.commit_sha or current_head_sha
 
         # Extract entities using GitRepositoryService
-        git_service = GitRepositoryService(supabase_client)
+        git_service = GitRepositoryService()
         result = await git_service.extract_code_entities(
             repo_id=repo_id,
             commit_sha=commit_sha,
@@ -983,28 +1011,26 @@ async def sync_commits_with_entities(project_id: str, request: SyncCommitsWithEn
             f"branch={request.branch_name}, extract={request.extract_entities}"
         )
 
-        supabase_client = get_supabase_client()
+        db = get_database_connector()
 
         # Get repository
-        repo_response = (
-            supabase_client.table("archon_git_repositories")
-            .select("id, default_branch")
-            .eq("source_id", project_id)
-            .execute()
+        repo_response = await db.fetch(
+            "SELECT id, default_branch FROM archon_git_repositories WHERE source_id = $1",
+            project_id
         )
 
-        if not repo_response.data:
+        if not repo_response:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Repository not found for this project",
             )
 
-        repo_id = repo_response.data[0]["id"]
-        default_branch = repo_response.data[0]["default_branch"]
+        repo_id = repo_response[0]["id"]
+        default_branch = repo_response[0]["default_branch"]
         branch_name = request.branch_name or default_branch
 
         # Sync commits with entity extraction
-        git_service = GitRepositoryService(supabase_client)
+        git_service = GitRepositoryService()
         success, result = await git_service.sync_commits_with_code_entities(
             repo_id=repo_id,
             branch_name=branch_name,

@@ -2,6 +2,7 @@
 Consolidated task management tools for Archon MCP Server.
 
 Reduces the number of individual CRUD operations while maintaining full functionality.
+Includes automatic worktree safety validation.
 """
 
 import json
@@ -15,6 +16,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from src.mcp_server.utils.error_handling import MCPErrorFormatter
 from src.mcp_server.utils.timeout_config import get_default_timeout
 from src.server.config.service_discovery import get_api_url
+from src.server.services.worktree_service import get_worktree_service
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +209,10 @@ def register_task_tools(mcp: FastMCP):
         status: str | None = None,
         assignee: str | None = None,
         task_order: int | None = None,
-        feature: str | None = None
+        feature: str | None = None,
+        file_paths: list[str] | None = None,  # Files this task will modify
+        entity_ids: list[str] | None = None,  # Entities this task will modify
+        skip_worktree_validation: bool = False,  # Skip validation (use with caution)
     ) -> str:
         """
         Manage tasks (consolidated: create/update/delete).
@@ -240,10 +245,44 @@ def register_task_tools(mcp: FastMCP):
           manage_task("delete", task_id="t-1")
 
         Returns: {success: bool, task?: object, message: string}
+        
+        Worktree Safety:
+          Automatically validates worktree safety before create/update operations.
+          Set skip_worktree_validation=true only if you explicitly want to bypass.
         """
         try:
             api_url = get_api_url()
             timeout = get_default_timeout()
+            
+            # Automatic worktree validation for create/update operations
+            if action in ("create", "update") and not skip_worktree_validation:
+                worktree_service = get_worktree_service()
+                
+                # Detect current context
+                context = worktree_service.detect_worktree_context()
+                
+                # Validate safety
+                validation = worktree_service.validate_safe_to_work(
+                    task_id=task_id,
+                    file_paths=file_paths,
+                    entity_ids=entity_ids,
+                )
+                
+                if not validation.is_safe:
+                    logger.warning(f"Worktree safety validation failed: {validation.issues}")
+                    return json.dumps({
+                        "success": False,
+                        "error": "Worktree safety validation failed",
+                        "error_type": "worktree_conflict",
+                        "issues": validation.issues,
+                        "warnings": validation.warnings,
+                        "context": validation.context.to_dict() if validation.context else None,
+                        "suggestion": "Resolve conflicts or set skip_worktree_validation=true to bypass (use with caution)",
+                    })
+                
+                # Log warnings if any
+                if validation.warnings:
+                    logger.info(f"Worktree validation warnings: {validation.warnings}")
 
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if action == "create":
@@ -254,18 +293,34 @@ def register_task_tools(mcp: FastMCP):
                             suggestion="Provide both project_id and title"
                         )
 
+                    # Build task data with worktree context
+                    task_data = {
+                        "project_id": project_id,
+                        "title": title,
+                        "description": description or "",
+                        "assignee": assignee or "User",
+                        "task_order": task_order or 0,
+                        "feature": feature,
+                        "sources": [],
+                        "code_examples": [],
+                    }
+                    
+                    # Add worktree context if available
+                    if 'context' in dir() and context and context.worktree_id:
+                        task_data.update({
+                            "worktree_id": context.worktree_id,
+                            "branch_name": context.branch_name,
+                            "repo_path": context.repo_path,
+                            "base_branch": context.base_branch,
+                            "is_isolated": True,
+                            "worktree_status": "active",
+                            "merge_conflicts_expected": json.dumps(file_paths or []),
+                            "entities_affected": json.dumps(entity_ids or []),
+                        })
+                    
                     response = await client.post(
                         urljoin(api_url, "/api/tasks"),
-                        json={
-                            "project_id": project_id,
-                            "title": title,
-                            "description": description or "",
-                            "assignee": assignee or "User",
-                            "task_order": task_order or 0,
-                            "feature": feature,
-                            "sources": [],
-                            "code_examples": [],
-                        },
+                        json=task_data,
                     )
 
                     if response.status_code == 200:
@@ -369,5 +424,5 @@ def register_task_tools(mcp: FastMCP):
                 e, f"{action} task", {"task_id": task_id, "project_id": project_id}
             )
         except Exception as e:
-            logger.error(f"Error managing task ({action}): {e}", exc_info=True)
+            logger.error(f"Error managing task ({action}): {e}")
             return MCPErrorFormatter.from_exception(e, f"{action} task")

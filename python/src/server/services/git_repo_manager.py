@@ -14,8 +14,12 @@ from typing import Any
 
 import logging
 
-from src.server.services.code_entity_service import CodeEntityService
-from src.server.services.database.db_connector import get_database_connector, initialize_database
+try:
+    from server.services.code_entity_service import CodeEntityService
+    from server.services.database.db_connector import get_database_connector, initialize_database
+except ImportError:
+    from src.server.services.code_entity_service import CodeEntityService
+    from src.server.services.database.db_connector import get_database_connector, initialize_database
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +223,7 @@ REPO_PATH="{repo_path}"
 echo "[Archon] Detected commit, triggering incremental update..."
 
 # Get changed files
-CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD | grep -E '\.(py|ts|tsx|js|jsx)$' || true)
+CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD | grep -E "\\.(py|ts|tsx|js|jsx)$" || true)
 
 if [ -n "$CHANGED_FILES" ]; then
     echo "[Archon] Changed files:"
@@ -470,6 +474,37 @@ fi
         }
         
         self._config_file.write_text(json.dumps(data, indent=2))
+
+    async def get_registered_repos(self) -> list[dict]:
+        """Get all registered repositories from database."""
+        db = await self._ensure_db()
+        
+        try:
+            rows = await db.fetch("""
+                SELECT id, name, local_path, github_owner, github_repo, github_url, 
+                       branch, last_commit_sha, last_synced, created_at
+                FROM archon_code_repos
+                ORDER BY created_at DESC
+            """)
+            
+            return [
+                {
+                    "repo_id": str(row["id"]),
+                    "name": row["name"],
+                    "local_path": row["local_path"],
+                    "github_owner": row["github_owner"],
+                    "github_repo": row["github_repo"],
+                    "github_url": row["github_url"],
+                    "branch": row["branch"],
+                    "last_commit": row["last_commit_sha"],
+                    "last_synced": row["last_synced"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get registered repos: {e}")
+            return []
 
 
 # Singleton

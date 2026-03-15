@@ -8,8 +8,10 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from ....server.config.logfire_config import get_logger
-from ....server.services.code_entity_service import CodeEntityService
+from src.mcp_server.utils.error_handling import MCPErrorFormatter
+from src.server.config.logfire_config import get_logger
+from src.server.services.code_entity_service import CodeEntityService
+from src.server.services.embedding_service import EmbeddingService
 
 logger = get_logger(__name__)
 
@@ -82,7 +84,7 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             }
 
         except Exception as e:
-            logger.exception("codebase_find_entity_failed", error=str(e))
+            logger.exception("codebase_find_entity_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
@@ -117,16 +119,40 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             service = CodeEntityService()
 
             # Get entity from database
-            # Note: This requires adding a get_entity_by_id method to CodeEntityService
-            # For now, we'll return an error indicating this needs implementation
-
+            entity = await service.get_entity_by_id(entity_id)
+            
+            if not entity:
+                return {
+                    "success": False,
+                    "error": f"Entity not found: {entity_id}",
+                }
+            
+            # Build response
+            result = {
+                "id": entity["id"],
+                "name": entity["name"],
+                "entity_type": entity["entity_type"],
+                "language": entity["language"],
+                "file_path": entity["file_path"],
+                "line_start": entity["line_start"],
+                "line_end": entity["line_end"],
+                "signature": entity.get("signature"),
+                "docstring": entity.get("docstring"),
+                "commit_sha": entity.get("commit_sha"),
+                "repo_id": entity.get("repo_id"),
+            }
+            
+            # Include source code if requested
+            if include_source:
+                result["source_code"] = entity.get("source_code")
+            
             return {
-                "success": False,
-                "error": "Method not yet implemented - needs get_entity_by_id in CodeEntityService",
+                "success": True,
+                "entity": result,
             }
 
         except Exception as e:
-            logger.exception("codebase_get_entity_details_failed", error=str(e))
+            logger.exception("codebase_get_entity_details_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
@@ -202,7 +228,7 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             }
 
         except Exception as e:
-            logger.exception("codebase_get_entity_context_failed", error=str(e))
+            logger.exception("codebase_get_entity_context_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
@@ -241,20 +267,69 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             ... )
         """
         try:
-            # Note: This requires integration with embedding service
-            # For now, return a placeholder indicating this needs implementation
-
+            service = CodeEntityService()
+            embedding_service = EmbeddingService()
+            
+            # Generate embedding for the query
+            embedding_result = await embedding_service.get_embeddings(
+                texts=[query],
+                model_preference=None,  # Use default
+            )
+            
+            if not embedding_result.success or not embedding_result.embeddings:
+                return {
+                    "success": False,
+                    "error": f"Failed to generate embedding: {embedding_result.error}",
+                    "query": query,
+                }
+            
+            query_embedding = embedding_result.embeddings[0]
+            embedding_dimension = len(query_embedding)
+            
+            # Search for similar entities
+            entities = await service.search_entities(
+                query_embedding=query_embedding,
+                embedding_dimension=embedding_dimension,
+                match_count=top_k * 2,  # Fetch extra for filtering
+                repo_filter=repo_id,
+            )
+            
+            # Apply filters
+            if entity_type:
+                entities = [e for e in entities if e.get("entity_type") == entity_type]
+            if language:
+                entities = [e for e in entities if e.get("language") == language]
+            
+            # Limit results
+            entities = entities[:top_k]
+            
             return {
-                "success": False,
-                "error": "Semantic search not yet implemented - requires embedding generation",
+                "success": True,
                 "query": query,
+                "count": len(entities),
+                "entities": [
+                    {
+                        "id": e["id"],
+                        "name": e["name"],
+                        "entity_type": e["entity_type"],
+                        "language": e["language"],
+                        "file_path": e["file_path"],
+                        "line_start": e["line_start"],
+                        "line_end": e["line_end"],
+                        "signature": e.get("signature"),
+                        "docstring": e.get("docstring"),
+                        "similarity": round(e.get("similarity", 0), 4),
+                    }
+                    for e in entities
+                ],
             }
 
         except Exception as e:
-            logger.exception("codebase_search_by_semantics_failed", error=str(e))
+            logger.exception("codebase_search_by_semantics_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
+                "query": query,
             }
 
     @mcp.tool()
@@ -285,22 +360,39 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         """
         try:
             service = CodeEntityService()
-
-            # This requires adding a method to CodeEntityService
-            # For now, we'll use find_entity_by_name with empty filter
-            # or we need to add a new method
-
+            
+            entities = await service.list_entities_in_file(
+                repo_id=repo_id,
+                file_path=file_path,
+                entity_type=entity_type,
+            )
+            
             return {
-                "success": False,
-                "error": "Method not yet implemented - needs list_entities_in_file in CodeEntityService",
+                "success": True,
+                "repo_id": repo_id,
                 "file_path": file_path,
+                "count": len(entities),
+                "entities": [
+                    {
+                        "id": e["id"],
+                        "name": e["name"],
+                        "entity_type": e["entity_type"],
+                        "language": e["language"],
+                        "line_start": e["line_start"],
+                        "line_end": e["line_end"],
+                        "signature": e.get("signature"),
+                        "docstring": e.get("docstring"),
+                    }
+                    for e in entities
+                ],
             }
 
         except Exception as e:
-            logger.exception("codebase_list_entities_in_file_failed", error=str(e))
+            logger.exception("codebase_list_entities_in_file_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
+                "file_path": file_path,
             }
 
     @mcp.tool()
@@ -323,17 +415,22 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         """
         try:
             service = CodeEntityService()
-
-            # This would require adding aggregate query methods
-            # For now, return placeholder
-
+            
+            stats = await service.get_repository_stats(repo_id)
+            
+            if not stats:
+                return {
+                    "success": False,
+                    "error": f"Failed to get statistics for repository: {repo_id}",
+                }
+            
             return {
-                "success": False,
-                "error": "Method not yet implemented - needs aggregate queries in CodeEntityService",
+                "success": True,
+                "stats": stats,
             }
 
         except Exception as e:
-            logger.exception("codebase_get_repository_stats_failed", error=str(e))
+            logger.exception("codebase_get_repository_stats_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),

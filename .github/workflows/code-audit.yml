@@ -1,0 +1,264 @@
+name: Code Audit
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+env:
+  ORCHESTRATOR_URL: http://localhost:8080
+  LOCAL_LLM_URL: http://localhost:11434
+  DATABASE_URL: postgresql://archon:archon_local_dev@localhost:5434/archon
+
+jobs:
+  code-audit:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_USER: archon
+          POSTGRES_PASSWORD: archon_local_dev
+          POSTGRES_DB: archon
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Full history for metrics
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install Ollama
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        
+    - name: Pull LLM Model
+      run: |
+        ollama serve &
+        sleep 5
+        ollama pull llama3.2
+
+    - name: Install dependencies
+      run: |
+        cd python
+        uv sync --all-extras
+
+    - name: Set up database schema
+      run: |
+        PGPASSWORD=archon_local_dev psql -h localhost -p 5434 -U archon -d archon -f migration/complete_setup.sql || true
+        PGPASSWORD=archon_local_dev psql -h localhost -p 5434 -U archon -d archon -f migration/015_add_metrics_and_audit_tables.sql || true
+        PGPASSWORD=archon_local_dev psql -h localhost -p 5434 -U archon -d archon -f migration/016_expand_audit_rules_and_methodology.sql || true
+
+    - name: Start Orchestrator
+      run: |
+        cd python
+        ollama serve &
+        sleep 3
+        python scripts/start_orchestrator.py &
+        sleep 5
+
+    - name: Index Repository
+      run: |
+        cd python
+        uv run python -c "
+import sys
+sys.path.insert(0, '.')
+import asyncio
+from src.server.services.code_entity_service import CodeEntityService
+
+async def index():
+    service = CodeEntityService()
+    # Check if repo exists
+    import psycopg2
+    conn = psycopg2.connect('$DATABASE_URL')
+    cur = conn.cursor()
+    cur.execute(\"SELECT id FROM archon_code_repos WHERE local_path = %s\", ('/home/runner/work/archon/archon',))
+    result = cur.fetchone()
+    if result:
+        repo_id = result[0]
+        print(f'Found existing repo: {repo_id}')
+    else:
+        cur.execute(\"INSERT INTO archon_code_repos (name, local_path) VALUES (%s, %s) RETURNING id\", ('archon-ci', '/home/runner/work/archon/archon'))
+        repo_id = cur.fetchone()[0]
+        conn.commit()
+        print(f'Created repo: {repo_id}')
+    cur.close()
+    conn.close()
+    
+asyncio.run(index())
+        "
+
+    - name: Run Code Audit
+      run: |
+        cd python
+        uv run python -c "
+import sys
+sys.path.insert(0, '.')
+import httpx
+import asyncio
+import json
+
+async def run_audit():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            # Try orchestrated endpoint
+            response = await client.post(
+                'http://localhost:8080/orchestrator/repo_health_check',
+                params={'repo_id': '5ee23b74-d01e-43c4-84ec-6935f8e9e744', 'focus': 'full'}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                orchestrated = True
+            else:
+                # Fallback to direct call
+                from src.mcp_server.features.code_audit.repo_health_super_tool import run_repo_health_check
+                result = run_repo_health_check(
+                    repo_id='5ee23b74-d01e-43c4-84ec-6935f8e9e744',
+                    focus='full',
+                    skip_worktree_validation=True
+                )
+                orchestrated = False
+            
+            # Save results
+            with open('/tmp/audit_results.json', 'w') as f:
+                json.dump(result, f, indent=2)
+            
+            # Print summary
+            print('=' * 70)
+            print('CODE AUDIT RESULTS')
+            print('=' * 70)
+            print(f\"Health Score: {result.get('health_score', 'N/A')}/100\")
+            print(f\"Orchestrated: {orchestrated}\")
+            print(f\"Focus: {result.get('focus', 'N/A')}\")
+            
+            if 'findings_summary' in result:
+                fs = result['findings_summary']
+                print(f\"Findings: {fs.get('total', 0)} total\")
+                print(f\"  Critical: {fs.get('critical', 0)}\")
+                print(f\"  Error: {fs.get('error', 0)}\")
+                print(f\"  Warning: {fs.get('warning', 0)}\")
+            
+            if 'executive_summary' in result:
+                print(f\"\\nExecutive Summary:\")
+                print(result['executive_summary'])
+            
+            print('=' * 70)
+            
+            # Check for critical issues
+            findings = result.get('findings_summary', {})
+            if findings.get('critical', 0) > 0:
+                print(f\"::error::{findings['critical']} critical issues found\")
+                exit(1)
+            elif findings.get('error', 0) > 10:
+                print(f\"::warning::{findings['error']} errors found\")
+            
+        except Exception as e:
+            print(f'::error::Audit failed: {e}')
+            import traceback
+            traceback.print_exc()
+            exit(1)
+
+asyncio.run(run_audit())
+        "
+
+    - name: Generate Markdown Report
+      run: |
+        cd python
+        uv run python -c "
+import json
+import sys
+sys.path.insert(0, '.')
+
+# Load results
+with open('/tmp/audit_results.json') as f:
+    result = json.load(f)
+
+from src.cli.audit_cli import generate_markdown_report
+
+# Generate report
+report = generate_markdown_report(
+    repo_id='archon-ci',
+    metrics=result.get('metrics_summary', {}),
+    findings=result.get('highlights', []),
+    summary=result.get('findings_summary', {}),
+    output_path='/tmp/audit_report.md'
+)
+
+print('Report generated at /tmp/audit_report.md')
+"
+
+    - name: Upload Audit Artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: code-audit-results
+        path: |
+          /tmp/audit_results.json
+          /tmp/audit_report.md
+        retention-days: 30
+
+    - name: Comment on PR
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          let summary = '## Code Audit Results\n\n';
+          
+          try {
+            const results = JSON.parse(fs.readFileSync('/tmp/audit_results.json', 'utf8'));
+            const score = results.health_score || 'N/A';
+            const findings = results.findings_summary || {};
+            
+            summary += `**Health Score:** ${score}/100\n\n`;
+            summary += `**Findings:**\n`;
+            summary += `- 🔴 Critical: ${findings.critical || 0}\n`;
+            summary += `- 🟠 Error: ${findings.error || 0}\n`;
+            summary += `- 🟡 Warning: ${findings.warning || 0}\n`;
+            summary += `- 🔵 Info: ${findings.info || 0}\n\n`;
+            
+            if (results.executive_summary) {
+              summary += `**Summary:** ${results.executive_summary}\n\n`;
+            }
+            
+            if (findings.critical > 0) {
+              summary += '⚠️ **Critical issues must be addressed before merge.**\n';
+            } else if (findings.error > 10) {
+              summary += '⚠️ **High number of errors - please review.**\n';
+            } else {
+              summary += '✅ **No critical issues found.**\n';
+            }
+            
+            summary += '\n[View Full Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})';
+          } catch (e) {
+            summary += '❌ **Audit failed or no results available.**\n';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });

@@ -19,10 +19,14 @@ async def test_verify_repository_access_success():
     mock_process.returncode = 0
     mock_process.communicate = AsyncMock(return_value=(b"Repository info", b""))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_subprocess:
         result = await client.verify_repository_access("https://github.com/owner/repo")
-
+    
     assert result is True
+    mock_subprocess.assert_called_once_with(
+        "gh", "repo", "view", "https://github.com/owner/repo",
+        stdout=-1, stderr=-1
+    )
 
 
 @pytest.mark.asyncio
@@ -35,10 +39,14 @@ async def test_verify_repository_access_failure():
     mock_process.returncode = 1
     mock_process.communicate = AsyncMock(return_value=(b"", b"Error: Not found"))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_subprocess:
         result = await client.verify_repository_access("https://github.com/owner/nonexistent")
-
+    
     assert result is False
+    mock_subprocess.assert_called_once_with(
+        "gh", "repo", "view", "https://github.com/owner/nonexistent",
+        stdout=-1, stderr=-1
+    )
 
 
 @pytest.mark.asyncio
@@ -52,13 +60,17 @@ async def test_get_repository_info_success():
     mock_output = b'{"name": "repo", "owner": {"login": "owner"}, "defaultBranchRef": {"name": "main"}}'
     mock_process.communicate = AsyncMock(return_value=(mock_output, b""))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_subprocess:
         repo_info = await client.get_repository_info("https://github.com/owner/repo")
-
+    
     assert repo_info.name == "repo"
     assert repo_info.owner == "owner"
     assert repo_info.default_branch == "main"
     assert repo_info.url == "https://github.com/owner/repo"
+    mock_subprocess.assert_called_once_with(
+        "gh", "repo", "view", "https://github.com/owner/repo",
+        stdout=-1, stderr=-1
+    )
 
 
 @pytest.mark.asyncio
@@ -71,9 +83,14 @@ async def test_get_repository_info_failure():
     mock_process.returncode = 1
     mock_process.communicate = AsyncMock(return_value=(b"", b"Error: Not found"))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_subprocess:
         with pytest.raises(GitHubOperationError):
             await client.get_repository_info("https://github.com/owner/nonexistent")
+    
+    mock_subprocess.assert_called_once_with(
+        "gh", "repo", "view", "https://github.com/owner/nonexistent",
+        stdout=-1, stderr=-1
+    )
 
 
 @pytest.mark.asyncio
@@ -88,7 +105,7 @@ async def test_create_pull_request_success():
         return_value=(b"https://github.com/owner/repo/pull/42", b"")
     )
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_subprocess:
         pr = await client.create_pull_request(
             repository_url="https://github.com/owner/repo",
             head_branch="feat-wo-test123",
@@ -96,12 +113,21 @@ async def test_create_pull_request_success():
             title="Test PR",
             body="PR body",
         )
-
+    
     assert pr.pull_request_url == "https://github.com/owner/repo/pull/42"
     assert pr.pull_request_number == 42
     assert pr.title == "Test PR"
     assert pr.head_branch == "feat-wo-test123"
     assert pr.base_branch == "main"
+    mock_subprocess.assert_called_once_with(
+        "gh", "pr", "create",
+        "--repo", "https://github.com/owner/repo",
+        "--head", "feat-wo-test123",
+        "--base", "main",
+        "--title", "Test PR",
+        "--body", "PR body",
+        stdout=-1, stderr=-1
+    )
 
 
 @pytest.mark.asyncio
@@ -114,7 +140,7 @@ async def test_create_pull_request_failure():
     mock_process.returncode = 1
     mock_process.communicate = AsyncMock(return_value=(b"", b"Error: PR creation failed"))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_subprocess:
         with pytest.raises(GitHubOperationError):
             await client.create_pull_request(
                 repository_url="https://github.com/owner/repo",
@@ -123,6 +149,16 @@ async def test_create_pull_request_failure():
                 title="Test PR",
                 body="PR body",
             )
+    
+    mock_subprocess.assert_called_once_with(
+        "gh", "pr", "create",
+        "--repo", "https://github.com/owner/repo",
+        "--head", "feat-wo-test123",
+        "--base", "main",
+        "--title", "Test PR",
+        "--body", "PR body",
+        stdout=-1, stderr=-1
+    )
 
 
 def test_parse_repository_url_https():

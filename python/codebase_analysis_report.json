@@ -1,0 +1,388 @@
+{
+  "overview": {
+    "files_analyzed": 195,
+    "total_entities": 1508,
+    "total_relationships": 25896,
+    "errors_encountered": 0
+  },
+  "language_distribution": {
+    "by_language": {
+      "python": 1508
+    },
+    "primary_language": "python",
+    "language_diversity": 1
+  },
+  "entity_breakdown": {
+    "by_type": {
+      "method": 756,
+      "function": 481,
+      "class": 271
+    },
+    "total_functions": 481,
+    "total_classes": 271,
+    "total_methods": 756,
+    "avg_function_length_lines": 45.1,
+    "avg_methods_per_class": 2.79
+  },
+  "complexity_metrics": {
+    "size_distribution": {
+      "min_lines": 1,
+      "max_lines": 1761,
+      "avg_lines": 51.24,
+      "median_lines": 23
+    },
+    "large_entities_count": 381,
+    "largest_entities": [
+      {
+        "name": "CodeExtractionService",
+        "type": "class",
+        "lines": 1761,
+        "file": "src/server/services/crawling/code_extraction_service.py"
+      },
+      {
+        "name": "CrawlingService",
+        "type": "class",
+        "lines": 1171,
+        "file": "src/server/services/crawling/crawling_service.py"
+      },
+      {
+        "name": "ModelDiscoveryService",
+        "type": "class",
+        "lines": 1033,
+        "file": "src/server/services/ollama/model_discovery_service.py"
+      },
+      {
+        "name": "TypeScriptLanguageSupport",
+        "type": "class",
+        "lines": 979,
+        "file": "src/server/services/languages/typescript_support.py"
+      },
+      {
+        "name": "GitRepositoryService",
+        "type": "class",
+        "lines": 929,
+        "file": "src/server/services/git/git_repository_service.py"
+      },
+      {
+        "name": "DocumentAgent",
+        "type": "class",
+        "lines": 802,
+        "file": "src/agents/document_agent.py"
+      },
+      {
+        "name": "ProgressTracker",
+        "type": "class",
+        "lines": 801,
+        "file": "src/server/utils/progress/progress_tracker.py"
+      },
+      {
+        "name": "URLHandler",
+        "type": "class",
+        "lines": 690,
+        "file": "src/server/services/crawling/helpers/url_handler.py"
+      },
+      {
+        "name": "DocumentStorageOperations",
+        "type": "class",
+        "lines": 661,
+        "file": "src/server/services/crawling/document_storage_operations.py"
+      },
+      {
+        "name": "DocumentAgent._create_agent",
+        "type": "method",
+        "lines": 587,
+        "file": "src/agents/document_agent.py"
+      }
+    ]
+  },
+  "documentation_coverage": {
+    "overall_coverage_pct": 86.8,
+    "entities_with_docstrings": 1309,
+    "entities_without_docstrings": 199,
+    "by_entity_type": {
+      "function": {
+        "total": 481,
+        "with_docs": 438,
+        "coverage_pct": 91.1
+      },
+      "class": {
+        "total": 271,
+        "with_docs": 222,
+        "coverage_pct": 81.9
+      },
+      "method": {
+        "total": 756,
+        "with_docs": 649,
+        "coverage_pct": 85.8
+      }
+    },
+    "well_documented_entities": [
+      {
+        "name": "get_project_root",
+        "type": "function",
+        "file": "src/agent_work_orders/config.py"
+      },
+      {
+        "name": "AgentWorkOrdersConfig.get_archon_server_url",
+        "type": "method",
+        "file": "src/agent_work_orders/config.py"
+      },
+      {
+        "name": "AgentWorkOrdersConfig.get_archon_mcp_url",
+        "type": "method",
+        "file": "src/agent_work_orders/config.py"
+      },
+      {
+        "name": "lifespan",
+        "type": "function",
+        "file": "src/agent_work_orders/server.py"
+      },
+      {
+        "name": "AgentWorkOrderState",
+        "type": "class",
+        "file": "src/agent_work_orders/models.py"
+      },
+      {
+        "name": "AgentWorkOrder",
+        "type": "class",
+        "file": "src/agent_work_orders/models.py"
+      },
+      {
+        "name": "CreateAgentWorkOrderRequest",
+        "type": "class",
+        "file": "src/agent_work_orders/models.py"
+      },
+      {
+        "name": "CreateAgentWorkOrderRequest.validate_commands",
+        "type": "method",
+        "file": "src/agent_work_orders/models.py"
+      },
+      {
+        "name": "ConfiguredRepository",
+        "type": "class",
+        "file": "src/agent_work_orders/models.py"
+      },
+      {
+        "name": "CreateRepositoryRequest",
+        "type": "class",
+        "file": "src/agent_work_orders/models.py"
+      }
+    ]
+  },
+  "module_structure": {
+    "total_files_with_entities": 154,
+    "avg_entities_per_file": 9.79,
+    "most_complex_files": [
+      {
+        "file": "src/server/api_routes/knowledge_api.py",
+        "entity_count": 39,
+        "functions": 33,
+        "classes": 6,
+        "methods": 0
+      },
+      {
+        "file": "src/server/services/crawling/code_extraction_service.py",
+        "entity_count": 34,
+        "functions": 5,
+        "classes": 1,
+        "methods": 28
+      },
+      {
+        "file": "src/server/services/crawling/crawling_service.py",
+        "entity_count": 34,
+        "functions": 12,
+        "classes": 2,
+        "methods": 20
+      },
+      {
+        "file": "src/server/api_routes/ollama_api.py",
+        "entity_count": 33,
+        "functions": 22,
+        "classes": 11,
+        "methods": 0
+      },
+      {
+        "file": "src/server/api_routes/projects_api.py",
+        "entity_count": 32,
+        "functions": 24,
+        "classes": 8,
+        "methods": 0
+      },
+      {
+        "file": "src/server/services/threading_service.py",
+        "entity_count": 30,
+        "functions": 4,
+        "classes": 7,
+        "methods": 19
+      },
+      {
+        "file": "src/agent_work_orders/models.py",
+        "entity_count": 28,
+        "functions": 0,
+        "classes": 26,
+        "methods": 2
+      },
+      {
+        "file": "src/server/services/llm_provider_service.py",
+        "entity_count": 28,
+        "functions": 28,
+        "classes": 0,
+        "methods": 0
+      },
+      {
+        "file": "src/server/services/ingestion/ingestion_state_service.py",
+        "entity_count": 28,
+        "functions": 1,
+        "classes": 10,
+        "methods": 17
+      },
+      {
+        "file": "src/server/utils/progress/progress_tracker.py",
+        "entity_count": 26,
+        "functions": 1,
+        "classes": 1,
+        "methods": 24
+      }
+    ],
+    "module_distribution": {
+      "src": 154
+    }
+  },
+  "relationship_graph": {
+    "total_relationships": 25896,
+    "by_type": {
+      "CALLS": 24492,
+      "DEFINES": 756,
+      "DECORATES": 291,
+      "IMPORTS": 191,
+      "INHERITS": 166
+    },
+    "most_connected_entities": [
+      {
+        "name": "len",
+        "total_connections": 524,
+        "incoming": 524,
+        "outgoing": 0
+      },
+      {
+        "name": "str",
+        "total_connections": 479,
+        "incoming": 479,
+        "outgoing": 0
+      },
+      {
+        "name": "logger.info",
+        "total_connections": 426,
+        "incoming": 426,
+        "outgoing": 0
+      },
+      {
+        "name": "logger.error",
+        "total_connections": 412,
+        "incoming": 412,
+        "outgoing": 0
+      },
+      {
+        "name": "initialize_test_fixture",
+        "total_connections": 298,
+        "incoming": 0,
+        "outgoing": 298
+      },
+      {
+        "name": "CrawlingService._async_orchestrate_crawl",
+        "total_connections": 288,
+        "incoming": 1,
+        "outgoing": 287
+      },
+      {
+        "name": "result.get",
+        "total_connections": 260,
+        "incoming": 260,
+        "outgoing": 0
+      },
+      {
+        "name": "logger.warning",
+        "total_connections": 256,
+        "incoming": 256,
+        "outgoing": 0
+      },
+      {
+        "name": "add_documents_to_supabase",
+        "total_connections": 233,
+        "incoming": 2,
+        "outgoing": 231
+      },
+      {
+        "name": "os.getenv",
+        "total_connections": 224,
+        "incoming": 224,
+        "outgoing": 0
+      }
+    ]
+  },
+  "quality_indicators": {
+    "score": 90,
+    "findings": [
+      {
+        "type": "very_long_entities",
+        "severity": "warning",
+        "count": 159,
+        "description": "Found 159 entities longer than 100 lines",
+        "examples": [
+          "health_check",
+          "DocumentAgent",
+          "DocumentAgent._create_agent"
+        ]
+      },
+      {
+        "type": "undocumented_public_api",
+        "severity": "info",
+        "count": 87,
+        "description": "87 public classes/functions lack docstrings"
+      },
+      {
+        "type": "large_classes",
+        "severity": "warning",
+        "count": 48,
+        "description": "Found 48 classes larger than 200 lines"
+      }
+    ]
+  },
+  "architecture_insights": {
+    "detected_layers": {
+      "mcp": 91,
+      "api": 233,
+      "database": 2,
+      "git": 25,
+      "services": 837
+    },
+    "architectural_patterns": [
+      {
+        "pattern": "service_layer",
+        "description": "Detected service layer pattern with 135 service classes",
+        "examples": [
+          "CrawlerManager",
+          "MCPServiceClient",
+          "SimplifiedSessionManager",
+          "OpenRouterEmbeddingModel",
+          "OpenRouterModelListResponse"
+        ]
+      },
+      {
+        "pattern": "mcp_architecture",
+        "description": "MCP server architecture with 39 tool-related entities",
+        "examples": [
+          "CodebaseMCPTools.__init__",
+          "register_project_tools.find_projects",
+          "register_version_tools.find_versions",
+          "CodebaseMCPTools.codebase_repo_stats",
+          "CodebaseMCPTools.codebase_list_repos"
+        ]
+      },
+      {
+        "pattern": "api_surface",
+        "description": "API layer with 176 functions"
+      }
+    ]
+  }
+}

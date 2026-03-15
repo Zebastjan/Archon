@@ -13,6 +13,7 @@ from .language_registry import (
     LanguageSupportRegistry,
     language_registry,
     get_language_for_file,
+    get_language_registry,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "LanguageSupportRegistry",
     "language_registry",
     "get_language_for_file",
+    "get_language_registry",
 ]
