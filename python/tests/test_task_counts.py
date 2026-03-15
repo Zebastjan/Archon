@@ -1,6 +1,6 @@
 """Test suite for batch task counts endpoint - Performance optimization tests."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def test_batch_task_counts_endpoint_exists(client):
@@ -15,7 +15,7 @@ def test_batch_task_counts_endpoint_exists(client):
         assert isinstance(data, dict)
 
 
-def test_batch_task_counts_endpoint(client, mock_supabase_client):
+def test_batch_task_counts_endpoint(client, mock_db_client):
     """Test that batch task counts endpoint returns counts for all projects."""
     # Set up mock to return tasks for multiple projects
     mock_tasks = [
@@ -31,18 +31,12 @@ def test_batch_task_counts_endpoint(client, mock_supabase_client):
         {"project_id": "project-3", "status": "todo", "archived": False},
     ]
 
-    # Configure mock to return our test data with proper chaining
-    mock_select = MagicMock()
-    mock_or = MagicMock()
-    mock_execute = MagicMock()
-    mock_execute.data = mock_tasks
-    mock_or.execute.return_value = mock_execute
-    mock_select.or_.return_value = mock_or
-    mock_supabase_client.table.return_value.select.return_value = mock_select
+    # Configure mock to return our test data
+    mock_db_client.fetch = AsyncMock(return_value=mock_tasks)
 
-    # Explicitly patch the client creation for this specific test to ensure isolation
-    with patch("src.server.utils.get_supabase_client", return_value=mock_supabase_client):
-        with patch("src.server.services.client_manager.get_supabase_client", return_value=mock_supabase_client):
+    # Explicitly patch the database connector for this specific test to ensure isolation
+    with patch("src.server.services.database.db_connector.get_database_connector", return_value=mock_db_client):
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db_client):
             # Make the request
             response = client.get("/api/projects/task-counts")
 
@@ -78,7 +72,7 @@ def test_batch_task_counts_endpoint(client, mock_supabase_client):
     assert data["project-3"]["done"] == 0
 
 
-def test_batch_task_counts_etag_caching(client, mock_supabase_client):
+def test_batch_task_counts_etag_caching(client, mock_db_client):
     """Test that ETag caching works correctly for task counts."""
     # Set up mock data
     mock_tasks = [
@@ -86,18 +80,12 @@ def test_batch_task_counts_etag_caching(client, mock_supabase_client):
         {"project_id": "project-1", "status": "doing", "archived": False},
     ]
 
-    # Configure mock with proper chaining
-    mock_select = MagicMock()
-    mock_or = MagicMock()
-    mock_execute = MagicMock()
-    mock_execute.data = mock_tasks
-    mock_or.execute.return_value = mock_execute
-    mock_select.or_.return_value = mock_or
-    mock_supabase_client.table.return_value.select.return_value = mock_select
+    # Configure mock
+    mock_db_client.fetch = AsyncMock(return_value=mock_tasks)
 
-    # Explicitly patch the client creation for this specific test to ensure isolation
-    with patch("src.server.utils.get_supabase_client", return_value=mock_supabase_client):
-        with patch("src.server.services.client_manager.get_supabase_client", return_value=mock_supabase_client):
+    # Explicitly patch the database connector for this specific test to ensure isolation
+    with patch("src.server.services.database.db_connector.get_database_connector", return_value=mock_db_client):
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db_client):
             # First request - should return data with ETag
             response1 = client.get("/api/projects/task-counts")
             assert response1.status_code == 200

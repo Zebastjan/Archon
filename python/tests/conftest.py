@@ -1,7 +1,7 @@
 """Simple test configuration for Archon - Essential tests only."""
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,31 +10,30 @@ from fastapi.testclient import TestClient
 os.environ["TEST_MODE"] = "true"
 os.environ["TESTING"] = "true"
 # Set fake database credentials to prevent connection attempts
-os.environ["SUPABASE_URL"] = "https://test.supabase.co"
-os.environ["SUPABASE_SERVICE_KEY"] = "test-key"
+os.environ["ARCHON_DATABASE_URL"] = "postgresql://test:test@localhost:5434/test"
+os.environ["SUPABASE_URL"] = ""  # Disable Supabase
+os.environ["SUPABASE_SERVICE_KEY"] = ""
 # Set required port environment variables for ServiceDiscovery
 os.environ["ARCHON_SERVER_PORT"] = "8181"
 os.environ["ARCHON_MCP_PORT"] = "8051"
 os.environ["ARCHON_AGENTS_PORT"] = "8052"
+os.environ["ARCHON_DB_PORT"] = "5434"
 
-# Global patches that need to be active during module imports and app initialization
-# This ensures that any code that runs during FastAPI app startup is mocked
-mock_client = MagicMock()
-mock_table = MagicMock()
-mock_select = MagicMock()
-mock_execute = MagicMock()
-mock_execute.data = []
-mock_select.execute.return_value = mock_execute
-mock_select.eq.return_value = mock_select
-mock_select.order.return_value = mock_select
-mock_table.select.return_value = mock_select
-mock_client.table.return_value = mock_table
+# Create mock database connector for global patches
+mock_db = MagicMock()
+mock_db.fetch = AsyncMock(return_value=[])
+mock_db.fetchrow = AsyncMock(return_value=None)
+mock_db.fetchval = AsyncMock(return_value=None)
+mock_db.execute = AsyncMock(return_value="INSERT 0 1")
+mock_db.insert = AsyncMock(return_value={"id": "test-id"})
+mock_db.update = AsyncMock(return_value=[{"id": "test-id"}])
+mock_db.delete = AsyncMock(return_value=[])
+mock_db.select = AsyncMock(return_value=[])
 
-# Apply global patches immediately
+# Apply global patches immediately for module imports
 _global_patches = [
-    patch("supabase.create_client", return_value=mock_client),
-    patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client),
-    # Note: src.server.utils doesn't exist, removed patch
+    patch("src.server.services.database.db_connector.get_database_connector", return_value=mock_db),
+    patch("src.server.services.database.get_database_connector", return_value=mock_db),
 ]
 
 for p in _global_patches:
@@ -47,47 +46,71 @@ def ensure_test_environment():
     # Force test environment settings - this runs before each test
     os.environ["TEST_MODE"] = "true"
     os.environ["TESTING"] = "true"
-    os.environ["SUPABASE_URL"] = "https://test.supabase.co"
-    os.environ["SUPABASE_SERVICE_KEY"] = "test-key"
+    os.environ["ARCHON_DATABASE_URL"] = "postgresql://test:test@localhost:5434/test"
+    os.environ["SUPABASE_URL"] = ""
+    os.environ["SUPABASE_SERVICE_KEY"] = ""
     os.environ["ARCHON_SERVER_PORT"] = "8181"
     os.environ["ARCHON_MCP_PORT"] = "8051"
     os.environ["ARCHON_AGENTS_PORT"] = "8052"
+    os.environ["ARCHON_DB_PORT"] = "5434"
     yield
 
 
 @pytest.fixture(autouse=True)
 def prevent_real_db_calls():
     """Automatically prevent any real database calls in all tests."""
-    # Create a mock client to use everywhere
-    mock_client = MagicMock()
-
-    # Mock table operations with chaining support
-    mock_table = MagicMock()
-    mock_select = MagicMock()
-    mock_or = MagicMock()
-    mock_execute = MagicMock()
-
-    # Setup basic chaining
-    mock_execute.data = []
-    mock_or.execute.return_value = mock_execute
-    mock_select.or_.return_value = mock_or
-    mock_select.execute.return_value = mock_execute
-    mock_select.eq.return_value = mock_select
-    mock_select.order.return_value = mock_select
-    mock_table.select.return_value = mock_select
-    mock_table.insert.return_value.execute.return_value.data = [{"id": "test-id"}]
-    mock_client.table.return_value = mock_table
-
-    # Patch all the common ways to get a Supabase client
-    with patch("supabase.create_client", return_value=mock_client):
-        with patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client):
-            # Note: src.server.utils doesn't exist, removed patch
+    # Create a mock database connector to use everywhere
+    mock_db = MagicMock()
+    
+    # Setup async methods with proper return values
+    mock_db.fetch = AsyncMock(return_value=[])
+    mock_db.fetchrow = AsyncMock(return_value=None)
+    mock_db.fetchval = AsyncMock(return_value=None)
+    mock_db.execute = AsyncMock(return_value="INSERT 0 1")
+    mock_db.insert = AsyncMock(return_value={"id": "test-id"})
+    mock_db.update = AsyncMock(return_value=[{"id": "test-id"}])
+    mock_db.delete = AsyncMock(return_value=[])
+    mock_db.select = AsyncMock(return_value=[])
+    mock_db.initialize = AsyncMock()
+    mock_db.close = AsyncMock()
+    
+    # Patch all the common ways to get a database connector
+    with patch("src.server.services.database.db_connector.get_database_connector", return_value=mock_db):
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
             yield
 
 
 @pytest.fixture
+def mock_db_client():
+    """Mock PostgreSQL database connector for testing.
+    
+    Returns a mock that mimics asyncpg-style database operations.
+    Use this for PostgreSQL-based tests.
+    """
+    mock_db = MagicMock()
+    
+    # Setup async methods
+    mock_db.fetch = AsyncMock(return_value=[])
+    mock_db.fetchrow = AsyncMock(return_value=None)
+    mock_db.fetchval = AsyncMock(return_value=None)
+    mock_db.execute = AsyncMock(return_value="INSERT 0 1")
+    mock_db.insert = AsyncMock(return_value={"id": "test-id"})
+    mock_db.update = AsyncMock(return_value=[{"id": "test-id"}])
+    mock_db.delete = AsyncMock(return_value=[])
+    mock_db.select = AsyncMock(return_value=[])
+    mock_db.initialize = AsyncMock()
+    mock_db.close = AsyncMock()
+    
+    return mock_db
+
+
+@pytest.fixture
 def mock_supabase_client():
-    """Mock Supabase client for testing."""
+    """Mock Supabase client for testing (DEPRECATED - use mock_db_client instead).
+    
+    This fixture is kept for backward compatibility during migration.
+    New tests should use mock_db_client.
+    """
     mock_client = MagicMock()
 
     # Mock table operations with chaining support
@@ -133,31 +156,29 @@ def mock_supabase_client():
 
 
 @pytest.fixture
-def client(mock_supabase_client):
+def client(mock_db_client):
     """FastAPI test client with mocked database."""
-    # Patch all the ways Supabase client can be created
+    # Patch database connector
     with patch(
-        "src.server.services.client_manager.get_supabase_client",
-        return_value=mock_supabase_client,
+        "src.server.services.database.db_connector.get_database_connector",
+        return_value=mock_db_client,
     ):
-        # Note: src.server.utils doesn't exist, removed patch
         with patch(
-            "src.server.services.credential_service.create_client",
-            return_value=mock_supabase_client,
+            "src.server.services.database.get_database_connector",
+            return_value=mock_db_client,
         ):
-            with patch("supabase.create_client", return_value=mock_supabase_client):
-                from unittest.mock import AsyncMock
+            from unittest.mock import AsyncMock
 
-                import src.server.main as server_main
+            import src.server.main as server_main
 
-                # Mark initialization as complete for testing (before accessing app)
-                server_main._initialization_complete = True
-                app = server_main.app
+            # Mark initialization as complete for testing (before accessing app)
+            server_main._initialization_complete = True
+            app = server_main.app
 
-                # Mock the schema check to always return valid
-                mock_schema_check = AsyncMock(return_value={"valid": True, "message": "Schema is up to date"})
-                with patch("src.server.main._check_database_schema", new=mock_schema_check):
-                    return TestClient(app)
+            # Mock the schema check to always return valid
+            mock_schema_check = AsyncMock(return_value={"valid": True, "message": "Schema is up to date"})
+            with patch("src.server.main._check_database_schema", new=mock_schema_check):
+                return TestClient(app)
 
 
 @pytest.fixture
