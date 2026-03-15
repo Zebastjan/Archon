@@ -246,7 +246,7 @@ async def get_knowledge_items(
     """Get knowledge items with pagination and filtering."""
     try:
         # Use KnowledgeItemService
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         result = await service.list_items(page=page, per_page=per_page, knowledge_type=knowledge_type, search=search)
         return result
 
@@ -273,7 +273,7 @@ async def get_knowledge_items_summary(
         # Input guards
         page = max(1, page)
         per_page = min(100, max(1, per_page))
-        service = KnowledgeSummaryService(get_supabase_client())
+        service = KnowledgeSummaryService()
         result = await service.get_summaries(page=page, per_page=per_page, knowledge_type=knowledge_type, search=search)
         return result
 
@@ -287,7 +287,7 @@ async def update_knowledge_item(source_id: str, updates: dict):
     """Update a knowledge item's metadata."""
     try:
         # Use KnowledgeItemService
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         success, result = await service.update_item(source_id, updates)
 
         if success:
@@ -316,7 +316,7 @@ async def delete_knowledge_item(source_id: str):
         logger.debug("Creating SourceManagementService...")
         from ..services.source_management_service import SourceManagementService
 
-        source_service = SourceManagementService(get_supabase_client())
+        source_service = SourceManagementService()
         logger.debug("Successfully created SourceManagementService")
 
         logger.debug("Calling delete_source function...")
@@ -591,7 +591,7 @@ async def refresh_knowledge_item(source_id: str):
         safe_logfire_info(f"Starting knowledge item refresh | source_id={source_id}")
 
         # Get the existing knowledge item
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         existing_item = await service.get_item(source_id)
 
         if not existing_item:
@@ -638,7 +638,7 @@ async def refresh_knowledge_item(source_id: str):
             raise HTTPException(status_code=500, detail={"error": f"Failed to initialize crawler: {str(e)}"})
 
         # Use the same crawl orchestration as regular crawl
-        crawl_service = CrawlingService(crawler=crawler, supabase_client=get_supabase_client())
+        crawl_service = CrawlingService(crawler=crawler)
         crawl_service.set_progress_id(progress_id)
 
         # Start the crawl task with proper request format
@@ -722,7 +722,7 @@ async def revectorize_knowledge_item(source_id: str):
         await _validate_provider_api_key(provider)
 
         # Get the existing knowledge item
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         existing_item = await service.get_item(source_id)
 
         if not existing_item:
@@ -922,7 +922,7 @@ async def resummarize_knowledge_item(source_id: str):
         await _validate_provider_api_key(provider)
 
         # Get the existing knowledge item
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         existing_item = await service.get_item(source_id)
 
         if not existing_item:
@@ -1384,7 +1384,7 @@ async def _perform_upload_with_progress(
             return
 
         # Use DocumentStorageService to handle the upload
-        doc_storage_service = DocumentStorageService(get_supabase_client())
+        doc_storage_service = DocumentStorageService()
 
         # Generate source_id from filename with UUID to prevent collisions
         source_id = f"file_{filename.replace(' ', '_').replace('.', '_')}_{uuid.uuid4().hex[:8]}"
@@ -1473,7 +1473,7 @@ async def perform_rag_query(request: RagQueryRequest):
 
     try:
         # Use RAGService for unified RAG query with return_mode support
-        search_service = RAGService(get_supabase_client())
+        search_service = RAGService()
         success, result = await search_service.perform_rag_query(
             query=request.query, source=request.source, match_count=request.match_count, return_mode=request.return_mode
         )
@@ -1496,7 +1496,7 @@ async def search_code_examples(request: RagQueryRequest):
     """Search for code examples relevant to the query using dedicated code examples service."""
     try:
         # Use RAGService for code examples search
-        search_service = RAGService(get_supabase_client())
+        search_service = RAGService()
         success, result = await search_service.search_code_examples_service(
             query=request.query,
             source_id=request.source,  # This is Optional[str] which matches the method signature
@@ -1537,7 +1537,7 @@ async def get_available_sources():
     """Get all available sources for RAG queries."""
     try:
         # Use KnowledgeItemService
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         result = await service.get_available_sources()
 
         # Parse result if it's a string
@@ -1559,7 +1559,7 @@ async def delete_source(source_id: str):
         # Use SourceManagementService directly
         from ..services.source_management_service import SourceManagementService
 
-        source_service = SourceManagementService(get_supabase_client())
+        source_service = SourceManagementService()
 
         success, result_data = source_service.delete_source(source_id)
 
@@ -1586,7 +1586,7 @@ async def get_database_metrics():
     """Get database metrics and statistics."""
     try:
         # Use DatabaseMetricsService
-        service = DatabaseMetricsService(get_supabase_client())
+        service = DatabaseMetricsService()
         metrics = await service.get_metrics()
         return metrics
     except Exception as e:
@@ -1810,7 +1810,7 @@ async def resume_operation(progress_id: str):
                 raise HTTPException(status_code=500, detail={"error": "Failed to update operation status"})
 
             # Create crawl service and start orchestration
-            crawl_service = CrawlingService(crawler=crawler, supabase_client=supabase, progress_id=progress_id)
+            crawl_service = CrawlingService(crawler=crawler, progress_id=progress_id)
 
             # Create wrapper task with semaphore (same pattern as crawl endpoint)
             async def _perform_resume_with_semaphore():

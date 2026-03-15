@@ -22,15 +22,8 @@ logger = get_logger(__name__)
 class BaseStorageService(ABC):
     """Base class for all storage services with common functionality."""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client and threading service."""
-        # Lazy import to avoid circular dependency
-        if supabase_client is None:
-            from ...utils import get_supabase_client
-
-            supabase_client = get_supabase_client()
-        self.supabase_client = supabase_client
-
+    def __init__(self):
+        """Initialize with threading service."""
         # Lazy import threading service
         from ...utils import get_utils_threading_service
 

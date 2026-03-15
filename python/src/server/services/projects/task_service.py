@@ -78,11 +78,11 @@ class TaskService:
             # Automatic worktree safety validation
             if not skip_worktree_validation:
                 worktree_service = get_worktree_service()
-                validation = worktree_service.validate_safe_to_work(
+                validation = await worktree_service.validate_safe_to_work(
                     file_paths=file_paths,
                     entity_ids=entity_ids,
                 )
-                
+
                 if not validation.is_safe:
                     logger.warning(f"Worktree validation failed for task creation: {validation.issues}")
                     return False, {
@@ -434,10 +434,10 @@ class TaskService:
             # Validate worktree safety when status changes to "doing" (active work)
             if not skip_worktree_validation and update_fields.get("status") == "doing":
                 worktree_service = get_worktree_service()
-                validation = worktree_service.validate_safe_to_work(
+                validation = await worktree_service.validate_safe_to_work(
                     task_id=task_id,
                 )
-                
+
                 if not validation.is_safe:
                     logger.warning(f"Worktree validation failed for task update: {validation.issues}")
                     return False, {
