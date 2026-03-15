@@ -11,31 +11,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Mock problematic imports at module level
-with patch.dict(
-    os.environ,
-    {
-        "SUPABASE_URL": "http://test.supabase.co",
-        "SUPABASE_SERVICE_KEY": "test_key",
-        "OPENAI_API_KEY": "test_openai_key",
-    },
-):
-    # Mock credential service to prevent database calls
-    with patch("src.server.services.credential_service.credential_service") as mock_cred:
-        mock_cred._cache_initialized = False
-        mock_cred.get_setting.return_value = "false"
-        mock_cred.get_bool_setting.return_value = False
+# Set test environment variables
+os.environ.update({
+    "ARCHON_DATABASE_URL": "postgresql://test:test@localhost:5434/test",
+    "SUPABASE_URL": "",
+    "SUPABASE_SERVICE_KEY": "",
+    "OPENAI_API_KEY": "test_openai_key",
+    "USE_HYBRID_SEARCH": "false",
+    "USE_RERANKING": "false",
+    "USE_AGENTIC_RAG": "false",
+})
 
-        # Mock supabase client creation
-        with patch("src.server.utils.get_supabase_client") as mock_supabase:
-            mock_client = MagicMock()
-            mock_supabase.return_value = mock_client
 
-            # Mock embedding service to prevent API calls
-            with patch(
-                "src.server.services.embeddings.embedding_service.create_embedding"
-            ) as mock_embed:
-                mock_embed.return_value = [0.1] * 1536
+@pytest.fixture
+def mock_db():
+    """Mock database connector"""
+    client = MagicMock()
+    client.fetch = AsyncMock(return_value=[])
+    client.fetchrow = AsyncMock(return_value=None)
+    client.execute = AsyncMock(return_value="INSERT 0 1")
+    return client
 
 
 # Test RAGService core functionality
@@ -43,16 +38,11 @@ class TestRAGService:
     """Test core RAGService functionality"""
 
     @pytest.fixture
-    def mock_supabase_client(self):
-        """Mock Supabase client"""
-        return MagicMock()
-
-    @pytest.fixture
-    def rag_service(self, mock_supabase_client):
+    def rag_service(self, mock_db):
         """Create RAGService instance"""
-        from src.server.services.search import RAGService
-
-        return RAGService(supabase_client=mock_supabase_client)
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
+            from src.server.services.search import RAGService
+            return RAGService()
 
     def test_rag_service_initialization(self, rag_service):
         """Test RAGService initializes correctly"""
@@ -149,18 +139,14 @@ class TestHybridSearchStrategy:
     """Test hybrid search strategy implementation"""
 
     @pytest.fixture
-    def mock_supabase_client(self):
-        """Mock Supabase client"""
-        return MagicMock()
-
-    @pytest.fixture
-    def hybrid_strategy(self, mock_supabase_client):
+    def hybrid_strategy(self, mock_db):
         """Create HybridSearchStrategy instance"""
-        from src.server.services.search import HybridSearchStrategy
-        from src.server.services.search.base_search_strategy import BaseSearchStrategy
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
+            from src.server.services.search import HybridSearchStrategy
+            from src.server.services.search.base_search_strategy import BaseSearchStrategy
 
-        base_strategy = BaseSearchStrategy(mock_supabase_client)
-        return HybridSearchStrategy(mock_supabase_client, base_strategy)
+            base_strategy = BaseSearchStrategy()
+            return HybridSearchStrategy(base_strategy)
 
     def test_hybrid_strategy_initialization(self, hybrid_strategy):
         """Test HybridSearchStrategy initializes correctly"""
@@ -236,18 +222,14 @@ class TestAgenticRAGStrategy:
     """Test agentic RAG strategy implementation"""
 
     @pytest.fixture
-    def mock_supabase_client(self):
-        """Mock Supabase client"""
-        return MagicMock()
-
-    @pytest.fixture
-    def agentic_strategy(self, mock_supabase_client):
+    def agentic_strategy(self, mock_db):
         """Create AgenticRAGStrategy instance"""
-        from src.server.services.search import AgenticRAGStrategy
-        from src.server.services.search.base_search_strategy import BaseSearchStrategy
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
+            from src.server.services.search import AgenticRAGStrategy
+            from src.server.services.search.base_search_strategy import BaseSearchStrategy
 
-        base_strategy = BaseSearchStrategy(mock_supabase_client)
-        return AgenticRAGStrategy(mock_supabase_client, base_strategy)
+            base_strategy = BaseSearchStrategy()
+            return AgenticRAGStrategy(base_strategy)
 
     def test_agentic_strategy_initialization(self, agentic_strategy):
         """Test AgenticRAGStrategy initializes correctly"""
@@ -261,16 +243,11 @@ class TestRAGIntegration:
     """Integration tests for RAG strategies working together"""
 
     @pytest.fixture
-    def mock_supabase_client(self):
-        """Mock Supabase client"""
-        return MagicMock()
-
-    @pytest.fixture
-    def rag_service(self, mock_supabase_client):
+    def rag_service(self, mock_db):
         """Create RAGService instance"""
-        from src.server.services.search import RAGService
-
-        return RAGService(supabase_client=mock_supabase_client)
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
+            from src.server.services.search import RAGService
+            return RAGService()
 
     @pytest.mark.asyncio
     async def test_full_rag_pipeline(self, rag_service):
@@ -355,14 +332,11 @@ class TestRAGPerformance:
     """Test RAG performance and optimization features"""
 
     @pytest.fixture
-    def rag_service(self):
+    def rag_service(self, mock_db):
         """Create RAGService instance"""
-        from unittest.mock import MagicMock
-
-        from src.server.services.search import RAGService
-
-        mock_client = MagicMock()
-        return RAGService(supabase_client=mock_client)
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
+            from src.server.services.search import RAGService
+            return RAGService()
 
     @pytest.mark.asyncio
     async def test_concurrent_rag_queries(self, rag_service):
@@ -436,14 +410,11 @@ class TestRAGConfiguration:
     """Test RAG configuration and settings"""
 
     @pytest.fixture
-    def rag_service(self):
+    def rag_service(self, mock_db):
         """Create RAGService instance"""
-        from unittest.mock import MagicMock
-
-        from src.server.services.search import RAGService
-
-        mock_client = MagicMock()
-        return RAGService(supabase_client=mock_client)
+        with patch("src.server.services.database.get_database_connector", return_value=mock_db):
+            from src.server.services.search import RAGService
+            return RAGService()
 
     def test_environment_variable_settings(self, rag_service):
         """Test reading settings from environment variables"""
@@ -486,3 +457,7 @@ class TestRAGConfiguration:
             assert success is True
             # Should still return results from basic search
             assert "results" in result
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
