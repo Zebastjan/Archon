@@ -261,8 +261,8 @@ def register_task_tools(mcp: FastMCP):
                 # Detect current context
                 context = worktree_service.detect_worktree_context()
                 
-                # Validate safety
-                validation = worktree_service.validate_safe_to_work(
+                # Validate safety (async method)
+                validation = await worktree_service.validate_safe_to_work(
                     task_id=task_id,
                     file_paths=file_paths,
                     entity_ids=entity_ids,

@@ -3,8 +3,9 @@
 Tests the unified tool that combines metrics, audit, and worktree safety.
 """
 
+import asyncio
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from uuid import uuid4
 
 from src.mcp_server.features.code_audit.repo_health_super_tool import (
@@ -42,14 +43,14 @@ class TestRepoHealthSuperTool:
     def test_repo_health_check_success(self, mock_get_metrics, mock_get_worktree):
         """Test successful repo health check."""
         
-        # Mock worktree validation
+        # Mock worktree validation - use AsyncMock since validate_safe_to_work is async
         mock_worktree_service = MagicMock()
         mock_validation = MagicMock()
         mock_validation.is_safe = True
         mock_validation.issues = []
         mock_validation.warnings = []
         mock_validation.context = None
-        mock_worktree_service.validate_safe_to_work.return_value = mock_validation
+        mock_worktree_service.validate_safe_to_work = AsyncMock(return_value=mock_validation)
         mock_get_worktree.return_value = mock_worktree_service
         
         # Mock metrics service
@@ -73,11 +74,11 @@ class TestRepoHealthSuperTool:
         
         mock_get_metrics.return_value = mock_metrics_service
         
-        # Run the tool
-        result = run_repo_health_check(
+        # Run the tool - now async
+        result = asyncio.run(run_repo_health_check(
             repo_id=str(uuid4()),
             focus="full",
-        )
+        ))
         
         # Verify structure
         assert result["success"] is True
@@ -102,10 +103,10 @@ class TestRepoHealthSuperTool:
         mock_validation.issues = [{"message": "Conflict detected"}]
         mock_validation.warnings = []
         mock_validation.context.to_dict.return_value = {"is_worktree": True}
-        mock_worktree_service.validate_safe_to_work.return_value = mock_validation
+        mock_worktree_service.validate_safe_to_work = AsyncMock(return_value=mock_validation)
         mock_get_worktree.return_value = mock_worktree_service
         
-        result = run_repo_health_check(repo_id=str(uuid4()))
+        result = asyncio.run(run_repo_health_check(repo_id=str(uuid4())))
         
         assert result["success"] is False
         assert "Worktree safety validation failed" in result["error"]
@@ -120,7 +121,7 @@ class TestRepoHealthSuperTool:
         mock_worktree_service = MagicMock()
         mock_validation = MagicMock()
         mock_validation.is_safe = True
-        mock_worktree_service.validate_safe_to_work.return_value = mock_validation
+        mock_worktree_service.validate_safe_to_work = AsyncMock(return_value=mock_validation)
         mock_get_worktree.return_value = mock_worktree_service
         
         # Mock metrics
@@ -131,10 +132,10 @@ class TestRepoHealthSuperTool:
         mock_metrics_service.get_audit_findings.return_value = []
         mock_get_metrics.return_value = mock_metrics_service
         
-        result = run_repo_health_check(
+        result = asyncio.run(run_repo_health_check(
             repo_id=str(uuid4()),
             focus="security",
-        )
+        ))
         
         assert result["success"] is True
         assert result["focus"] == "security"
@@ -154,7 +155,7 @@ class TestRepoHealthSuperTool:
         mock_worktree_service = MagicMock()
         mock_validation = MagicMock()
         mock_validation.is_safe = True
-        mock_worktree_service.validate_safe_to_work.return_value = mock_validation
+        mock_worktree_service.validate_safe_to_work = AsyncMock(return_value=mock_validation)
         mock_get_worktree.return_value = mock_worktree_service
         
         # Mock metrics
@@ -165,10 +166,10 @@ class TestRepoHealthSuperTool:
         mock_metrics_service.get_audit_findings.return_value = []
         mock_get_metrics.return_value = mock_metrics_service
         
-        result = run_repo_health_check(
+        result = asyncio.run(run_repo_health_check(
             repo_id=str(uuid4()),
             ruleset="complexity-high,missing-docstring",
-        )
+        ))
         
         assert result["success"] is True
         
