@@ -8,8 +8,6 @@ This is a separate pass that can be run independently of the download/chunk flow
 import uuid
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..embeddings.embedding_service import EmbeddingBatchResult, create_embeddings_batch
 from .ingestion_state_service import (
@@ -21,9 +19,8 @@ logger = get_logger(__name__)
 
 
 class EmbeddingWorker:
-    def __init__(self, supabase_client: Client):
-        self.supabase = supabase_client
-        self.state_service = get_ingestion_state_service(supabase_client)
+    def __init__(self):
+        self.state_service = get_ingestion_state_service()
 
     async def process_pending_embeddings(
         self,
@@ -115,18 +112,28 @@ class EmbeddingWorker:
             return False
 
     async def retry_failed_embeddings(self, embedder_id: str | None = None) -> dict[str, Any]:
-        query = self.supabase.table("archon_embedding_sets").select("*").eq("status", "failed")
+        from ..database import get_database_connector
+        db = get_database_connector()
+
         if embedder_id:
-            query = query.eq("embedder_id", embedder_id)
-        response = query.execute()
+            result = await db.fetch(
+                "SELECT * FROM archon_embedding_sets WHERE status = $1 AND embedder_id = $2",
+                "failed",
+                embedder_id
+            )
+        else:
+            result = await db.fetch(
+                "SELECT * FROM archon_embedding_sets WHERE status = $1",
+                "failed"
+            )
 
         updated = 0
-        for row in response.data:
+        for row in result:
             await self.state_service.update_embedding_set_status(uuid.UUID(row["id"]), EmbeddingStatus.PENDING)
             updated += 1
 
         return {"reset": updated}
 
 
-def get_embedding_worker(supabase_client: Client) -> EmbeddingWorker:
-    return EmbeddingWorker(supabase_client)
+def get_embedding_worker() -> EmbeddingWorker:
+    return EmbeddingWorker()

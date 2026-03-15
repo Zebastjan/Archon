@@ -8,8 +8,6 @@ This is a separate pass that can be run independently of the download/chunk/embe
 import uuid
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..llm_provider_service import extract_message_text, get_llm_client
 from .ingestion_state_service import (
@@ -57,9 +55,8 @@ Provide a very brief one-sentence summary of what this documentation is about.""
 
 
 class SummaryWorker:
-    def __init__(self, supabase_client: Client):
-        self.supabase = supabase_client
-        self.state_service = get_ingestion_state_service(supabase_client)
+    def __init__(self):
+        self.state_service = get_ingestion_state_service()
 
     async def process_pending_summaries(
         self,
@@ -178,27 +175,54 @@ class SummaryWorker:
             return summary_text.strip()
 
     async def _update_source_summary(self, source_id: str, summary: str) -> None:
-        self.supabase.table("archon_sources").update({"summary": summary}).eq("source_id", source_id).execute()
+        from ..database import get_database_connector
+        db = get_database_connector()
+        await db.execute(
+            "UPDATE archon_sources SET summary = $1 WHERE source_id = $2",
+            summary,
+            source_id
+        )
 
     async def retry_failed_summaries(
         self,
         summarizer_model_id: str | None = None,
         style: str | None = None,
     ) -> dict[str, Any]:
-        query = self.supabase.table("archon_summaries").select("*").eq("status", "failed")
-        if summarizer_model_id:
-            query = query.eq("summarizer_model_id", summarizer_model_id)
-        if style:
-            query = query.eq("style", style)
-        response = query.execute()
+        from ..database import get_database_connector
+        db = get_database_connector()
+
+        if summarizer_model_id and style:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1 AND summarizer_model_id = $2 AND style = $3",
+                "failed",
+                summarizer_model_id,
+                style
+            )
+        elif summarizer_model_id:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1 AND summarizer_model_id = $2",
+                "failed",
+                summarizer_model_id
+            )
+        elif style:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1 AND style = $2",
+                "failed",
+                style
+            )
+        else:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1",
+                "failed"
+            )
 
         updated = 0
-        for row in response.data:
+        for row in result:
             await self.state_service.update_summary(uuid.UUID(row["id"]), SummaryStatus.PENDING)
             updated += 1
 
         return {"reset": updated}
 
 
-def get_summary_worker(supabase_client: Client) -> SummaryWorker:
-    return SummaryWorker(supabase_client)
+def get_summary_worker() -> SummaryWorker:
+    return SummaryWorker()

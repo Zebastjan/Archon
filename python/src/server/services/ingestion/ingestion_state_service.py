@@ -16,9 +16,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger
+from ..database import get_database_connector
 
 logger = get_logger(__name__)
 
@@ -120,8 +119,8 @@ class Summary:
 
 
 class IngestionStateService:
-    def __init__(self, supabase_client: Client):
-        self.supabase = supabase_client
+    def __init__(self):
+        pass
 
     async def create_document_blob(
         self,
@@ -133,23 +132,24 @@ class IngestionStateService:
         content_hash = hashlib.sha256(content.encode()).hexdigest()
         content_length = len(content)
 
-        response = (
-            self.supabase.table("archon_document_blobs")
-            .insert(
-                {
-                    "source_id": source_id,
-                    "source_type": source_type,
-                    "blob_uri": blob_uri,
-                    "content_hash": content_hash,
-                    "content_length": content_length,
-                    "download_status": "downloaded",
-                }
-            )
-            .execute()
+        db = get_database_connector()
+        result = await db.fetch(
+            """
+            INSERT INTO archon_document_blobs
+            (source_id, source_type, blob_uri, content_hash, content_length, download_status)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            """,
+            source_id,
+            source_type,
+            blob_uri,
+            content_hash,
+            content_length,
+            "downloaded",
         )
 
-        if response.data:
-            row = response.data[0]
+        if result:
+            row = dict(result[0])
             return DocumentBlob(
                 id=uuid.UUID(row["id"]),
                 source_id=row["source_id"],
@@ -164,9 +164,13 @@ class IngestionStateService:
         raise Exception("Failed to create document blob")
 
     async def get_document_blob(self, blob_id: uuid.UUID) -> DocumentBlob | None:
-        response = self.supabase.table("archon_document_blobs").select("*").eq("id", str(blob_id)).execute()
-        if response.data:
-            row = response.data[0]
+        db = get_database_connector()
+        result = await db.fetch(
+            "SELECT * FROM archon_document_blobs WHERE id = $1",
+            str(blob_id)
+        )
+        if result:
+            row = dict(result[0])
             return DocumentBlob(
                 id=uuid.UUID(row["id"]),
                 source_id=row["source_id"],
@@ -182,10 +186,18 @@ class IngestionStateService:
         return None
 
     async def get_blobs_by_source(self, source_id: str, status: str | None = None) -> list[DocumentBlob]:
-        query = self.supabase.table("archon_document_blobs").select("*").eq("source_id", source_id)
+        db = get_database_connector()
         if status:
-            query = query.eq("download_status", status)
-        response = query.execute()
+            result = await db.fetch(
+                "SELECT * FROM archon_document_blobs WHERE source_id = $1 AND download_status = $2",
+                source_id,
+                status
+            )
+        else:
+            result = await db.fetch(
+                "SELECT * FROM archon_document_blobs WHERE source_id = $1",
+                source_id
+            )
         return [
             DocumentBlob(
                 id=uuid.UUID(row["id"]),
@@ -199,7 +211,7 @@ class IngestionStateService:
                 created_at=row.get("created_at"),
                 updated_at=row.get("updated_at"),
             )
-            for row in response.data
+            for row in result
         ]
 
     async def create_chunks(
@@ -208,20 +220,31 @@ class IngestionStateService:
         chunks: list[str],
         start_offsets: list[int] | None = None,
     ) -> list[Chunk]:
-        chunk_records = []
-        for i, content in enumerate(chunks):
-            record = {
-                "blob_id": str(blob_id),
-                "chunk_index": i,
-                "content": content,
-                "token_count": len(content.split()) * 4 // 3,
-            }
-            if start_offsets and i < len(start_offsets):
-                record["start_offset"] = start_offsets[i]
-                record["end_offset"] = start_offsets[i] + len(content)
-            chunk_records.append(record)
+        db = get_database_connector()
+        results = []
 
-        response = self.supabase.table("archon_chunks").insert(chunk_records).execute()
+        for i, content in enumerate(chunks):
+            start_offset = start_offsets[i] if start_offsets and i < len(start_offsets) else None
+            end_offset = (start_offsets[i] + len(content)) if start_offset is not None else None
+            token_count = len(content.split()) * 4 // 3
+
+            result = await db.fetch(
+                """
+                INSERT INTO archon_chunks
+                (blob_id, chunk_index, content, token_count, start_offset, end_offset)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+                """,
+                str(blob_id),
+                i,
+                content,
+                token_count,
+                start_offset,
+                end_offset,
+            )
+
+            if result:
+                results.append(dict(result[0]))
 
         return [
             Chunk(
@@ -234,12 +257,14 @@ class IngestionStateService:
                 token_count=row.get("token_count"),
                 created_at=row.get("created_at"),
             )
-            for row in response.data
+            for row in results
         ]
 
     async def get_chunks_by_blob(self, blob_id: uuid.UUID) -> list[Chunk]:
-        response = (
-            self.supabase.table("archon_chunks").select("*").eq("blob_id", str(blob_id)).order("chunk_index").execute()
+        db = get_database_connector()
+        result = await db.fetch(
+            "SELECT * FROM archon_chunks WHERE blob_id = $1 ORDER BY chunk_index",
+            str(blob_id)
         )
         return [
             Chunk(
@@ -252,37 +277,31 @@ class IngestionStateService:
                 token_count=row.get("token_count"),
                 created_at=row.get("created_at"),
             )
-            for row in response.data
+            for row in result
         ]
 
     async def get_chunks_by_source(self, source_id: str) -> list[Chunk]:
         # First get all blob_ids for this source
-        blobs_response = (
-            self.supabase.table("archon_document_blobs")
-            .select("id")
-            .eq("source_id", source_id)
-            .execute()
+        db = get_database_connector()
+        blobs_response = await db.fetch(
+            "SELECT id FROM archon_document_blobs WHERE source_id = $1",
+            source_id
         )
 
-        if not blobs_response.data:
+        if not blobs_response:
             return []
 
-        blob_ids = [row["id"] for row in blobs_response.data]
+        blob_ids = [row["id"] for row in blobs_response]
 
-        # Batch the query to avoid URI too long error
-        # PostgREST has URL length limits, so query in batches of 50
-        all_chunks = []
-        batch_size = 50
-
-        for i in range(0, len(blob_ids), batch_size):
-            batch = blob_ids[i : i + batch_size]
-            response = (
-                self.supabase.table("archon_chunks")
-                .select("*")
-                .in_("blob_id", batch)
-                .execute()
-            )
-            all_chunks.extend(response.data)
+        # Use a JOIN query to get all chunks efficiently instead of batching
+        chunks_response = await db.fetch(
+            """
+            SELECT c.* FROM archon_chunks c
+            INNER JOIN archon_document_blobs b ON c.blob_id = b.id
+            WHERE b.source_id = $1
+            """,
+            source_id
+        )
 
         return [
             Chunk(
@@ -295,7 +314,7 @@ class IngestionStateService:
                 token_count=row.get("token_count"),
                 created_at=row.get("created_at"),
             )
-            for row in all_chunks
+            for row in chunks_response
         ]
 
     async def create_embedding_set(
@@ -307,24 +326,26 @@ class IngestionStateService:
         total_chunk_count: int,
         embedding_dimension: int,
     ) -> EmbeddingSet:
-        response = (
-            self.supabase.table("archon_embedding_sets")
-            .insert(
-                {
-                    "source_id": source_id,
-                    "embedder_id": embedder_id,
-                    "embedder_version": embedder_version,
-                    "embedder_config": embedder_config,
-                    "status": "pending",
-                    "total_chunk_count": total_chunk_count,
-                    "embedding_dimension": embedding_dimension,
-                }
-            )
-            .execute()
+        import json
+        db = get_database_connector()
+        result = await db.fetch(
+            """
+            INSERT INTO archon_embedding_sets
+            (source_id, embedder_id, embedder_version, embedder_config, status, total_chunk_count, embedding_dimension)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *
+            """,
+            source_id,
+            embedder_id,
+            embedder_version,
+            json.dumps(embedder_config),
+            "pending",
+            total_chunk_count,
+            embedding_dimension,
         )
 
-        if response.data:
-            row = response.data[0]
+        if result:
+            row = dict(result[0])
             return EmbeddingSet(
                 id=uuid.UUID(row["id"]),
                 source_id=row["source_id"],
@@ -341,9 +362,13 @@ class IngestionStateService:
         raise Exception("Failed to create embedding set")
 
     async def get_embedding_set(self, set_id: uuid.UUID) -> EmbeddingSet | None:
-        response = self.supabase.table("archon_embedding_sets").select("*").eq("id", str(set_id)).execute()
-        if response.data:
-            row = response.data[0]
+        db = get_database_connector()
+        result = await db.fetch(
+            "SELECT * FROM archon_embedding_sets WHERE id = $1",
+            str(set_id)
+        )
+        if result:
+            row = dict(result[0])
             return EmbeddingSet(
                 id=uuid.UUID(row["id"]),
                 source_id=row["source_id"],
@@ -361,10 +386,18 @@ class IngestionStateService:
         return None
 
     async def get_pending_embedding_sets(self, embedder_id: str | None = None) -> list[EmbeddingSet]:
-        query = self.supabase.table("archon_embedding_sets").select("*").eq("status", "pending")
+        db = get_database_connector()
         if embedder_id:
-            query = query.eq("embedder_id", embedder_id)
-        response = query.execute()
+            result = await db.fetch(
+                "SELECT * FROM archon_embedding_sets WHERE status = $1 AND embedder_id = $2",
+                "pending",
+                embedder_id
+            )
+        else:
+            result = await db.fetch(
+                "SELECT * FROM archon_embedding_sets WHERE status = $1",
+                "pending"
+            )
         return [
             EmbeddingSet(
                 id=uuid.UUID(row["id"]),
@@ -379,7 +412,7 @@ class IngestionStateService:
                 created_at=row.get("created_at"),
                 updated_at=row.get("updated_at"),
             )
-            for row in response.data
+            for row in result
         ]
 
     async def update_embedding_set_status(
@@ -389,40 +422,85 @@ class IngestionStateService:
         processed_chunk_count: int | None = None,
         error_info: dict | None = None,
     ) -> None:
-        update_data: dict[str, Any] = {
-            "status": status,
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        if processed_chunk_count is not None:
-            update_data["processed_chunk_count"] = processed_chunk_count
-        if error_info is not None:
-            update_data["error_info"] = error_info
+        import json
+        db = get_database_connector()
 
-        self.supabase.table("archon_embedding_sets").update(update_data).eq("id", str(set_id)).execute()
+        if processed_chunk_count is not None and error_info is not None:
+            await db.execute(
+                """
+                UPDATE archon_embedding_sets
+                SET status = $1, processed_chunk_count = $2, error_info = $3, updated_at = $4
+                WHERE id = $5
+                """,
+                status,
+                processed_chunk_count,
+                json.dumps(error_info),
+                datetime.now(UTC).isoformat(),
+                str(set_id),
+            )
+        elif processed_chunk_count is not None:
+            await db.execute(
+                """
+                UPDATE archon_embedding_sets
+                SET status = $1, processed_chunk_count = $2, updated_at = $3
+                WHERE id = $4
+                """,
+                status,
+                processed_chunk_count,
+                datetime.now(UTC).isoformat(),
+                str(set_id),
+            )
+        elif error_info is not None:
+            await db.execute(
+                """
+                UPDATE archon_embedding_sets
+                SET status = $1, error_info = $2, updated_at = $3
+                WHERE id = $4
+                """,
+                status,
+                json.dumps(error_info),
+                datetime.now(UTC).isoformat(),
+                str(set_id),
+            )
+        else:
+            await db.execute(
+                """
+                UPDATE archon_embedding_sets
+                SET status = $1, updated_at = $2
+                WHERE id = $3
+                """,
+                status,
+                datetime.now(UTC).isoformat(),
+                str(set_id),
+            )
 
     async def store_embeddings(
         self, embedding_set_id: uuid.UUID, chunk_embeddings: list[tuple[uuid.UUID, list[float]]]
     ) -> int:
-        records = [
-            {
-                "chunk_id": str(chunk_id),
-                "embedding_set_id": str(embedding_set_id),
-                "vector": embedding,
-            }
-            for chunk_id, embedding in chunk_embeddings
-        ]
+        db = get_database_connector()
+        count = 0
 
-        response = self.supabase.table("archon_embeddings").insert(records).execute()
-        return len(response.data) if response.data else 0
+        for chunk_id, embedding in chunk_embeddings:
+            await db.execute(
+                """
+                INSERT INTO archon_embeddings (chunk_id, embedding_set_id, vector)
+                VALUES ($1, $2, $3)
+                """,
+                str(chunk_id),
+                str(embedding_set_id),
+                embedding,
+            )
+            count += 1
+
+        return count
 
     async def get_embeddings_by_set(self, embedding_set_id: uuid.UUID) -> list[tuple[uuid.UUID, list[float]]]:
-        response = (
-            self.supabase.table("archon_embeddings")
-            .select("chunk_id, vector")
-            .eq("embedding_set_id", str(embedding_set_id))
-            .execute()
+        db = get_database_connector()
+        result = await db.fetch(
+            "SELECT chunk_id, vector FROM archon_embeddings WHERE embedding_set_id = $1",
+            str(embedding_set_id)
         )
-        return [(uuid.UUID(row["chunk_id"]), row["vector"]) for row in response.data]
+        return [(uuid.UUID(row["chunk_id"]), row["vector"]) for row in result]
 
     async def create_summary(
         self,
@@ -435,24 +513,25 @@ class IngestionStateService:
     ) -> Summary:
         prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
 
-        response = (
-            self.supabase.table("archon_summaries")
-            .insert(
-                {
-                    "source_id": source_id,
-                    "summarizer_model_id": summarizer_model_id,
-                    "summarizer_version": summarizer_version,
-                    "prompt_template_id": prompt_template_id,
-                    "prompt_hash": prompt_hash,
-                    "style": style,
-                    "status": "pending",
-                }
-            )
-            .execute()
+        db = get_database_connector()
+        result = await db.fetch(
+            """
+            INSERT INTO archon_summaries
+            (source_id, summarizer_model_id, summarizer_version, prompt_template_id, prompt_hash, style, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *
+            """,
+            source_id,
+            summarizer_model_id,
+            summarizer_version,
+            prompt_template_id,
+            prompt_hash,
+            style,
+            "pending",
         )
 
-        if response.data:
-            row = response.data[0]
+        if result:
+            row = dict(result[0])
             return Summary(
                 id=uuid.UUID(row["id"]),
                 source_id=row["source_id"],
@@ -472,12 +551,33 @@ class IngestionStateService:
         summarizer_model_id: str | None = None,
         style: str | None = None,
     ) -> list[Summary]:
-        query = self.supabase.table("archon_summaries").select("*").eq("status", "pending")
-        if summarizer_model_id:
-            query = query.eq("summarizer_model_id", summarizer_model_id)
-        if style:
-            query = query.eq("style", style)
-        response = query.execute()
+        db = get_database_connector()
+
+        if summarizer_model_id and style:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1 AND summarizer_model_id = $2 AND style = $3",
+                "pending",
+                summarizer_model_id,
+                style
+            )
+        elif summarizer_model_id:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1 AND summarizer_model_id = $2",
+                "pending",
+                summarizer_model_id
+            )
+        elif style:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1 AND style = $2",
+                "pending",
+                style
+            )
+        else:
+            result = await db.fetch(
+                "SELECT * FROM archon_summaries WHERE status = $1",
+                "pending"
+            )
+
         return [
             Summary(
                 id=uuid.UUID(row["id"]),
@@ -492,7 +592,7 @@ class IngestionStateService:
                 created_at=row.get("created_at"),
                 updated_at=row.get("updated_at"),
             )
-            for row in response.data
+            for row in result
         ]
 
     async def update_summary(
@@ -502,16 +602,57 @@ class IngestionStateService:
         summary_content: str | None = None,
         error_info: dict | None = None,
     ) -> None:
-        update_data: dict[str, Any] = {
-            "status": status,
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        if summary_content is not None:
-            update_data["summary_content"] = summary_content
-        if error_info is not None:
-            update_data["error_info"] = error_info
+        import json
+        db = get_database_connector()
 
-        self.supabase.table("archon_summaries").update(update_data).eq("id", str(summary_id)).execute()
+        if summary_content is not None and error_info is not None:
+            await db.execute(
+                """
+                UPDATE archon_summaries
+                SET status = $1, summary_content = $2, error_info = $3, updated_at = $4
+                WHERE id = $5
+                """,
+                status,
+                summary_content,
+                json.dumps(error_info),
+                datetime.now(UTC).isoformat(),
+                str(summary_id),
+            )
+        elif summary_content is not None:
+            await db.execute(
+                """
+                UPDATE archon_summaries
+                SET status = $1, summary_content = $2, updated_at = $3
+                WHERE id = $4
+                """,
+                status,
+                summary_content,
+                datetime.now(UTC).isoformat(),
+                str(summary_id),
+            )
+        elif error_info is not None:
+            await db.execute(
+                """
+                UPDATE archon_summaries
+                SET status = $1, error_info = $2, updated_at = $3
+                WHERE id = $4
+                """,
+                status,
+                json.dumps(error_info),
+                datetime.now(UTC).isoformat(),
+                str(summary_id),
+            )
+        else:
+            await db.execute(
+                """
+                UPDATE archon_summaries
+                SET status = $1, updated_at = $2
+                WHERE id = $3
+                """,
+                status,
+                datetime.now(UTC).isoformat(),
+                str(summary_id),
+            )
 
     async def update_source_pipeline_status(
         self,
@@ -519,16 +660,53 @@ class IngestionStateService:
         status: str,
         error_info: dict | None = None,
     ) -> None:
-        update_data: dict[str, Any] = {"pipeline_status": status}
-        if error_info:
-            update_data["pipeline_error"] = error_info
+        import json
+        db = get_database_connector()
+
         if status == "complete":
-            update_data["pipeline_completed_at"] = datetime.now(UTC).isoformat()
-        elif status == "error":
-            update_data["pipeline_error"] = error_info
+            await db.execute(
+                """
+                UPDATE archon_sources
+                SET pipeline_status = $1, pipeline_completed_at = $2
+                WHERE source_id = $3
+                """,
+                status,
+                datetime.now(UTC).isoformat(),
+                source_id,
+            )
+        elif status == "error" and error_info:
+            await db.execute(
+                """
+                UPDATE archon_sources
+                SET pipeline_status = $1, pipeline_error = $2
+                WHERE source_id = $3
+                """,
+                status,
+                json.dumps(error_info),
+                source_id,
+            )
+        elif error_info:
+            await db.execute(
+                """
+                UPDATE archon_sources
+                SET pipeline_status = $1, pipeline_error = $2
+                WHERE source_id = $3
+                """,
+                status,
+                json.dumps(error_info),
+                source_id,
+            )
+        else:
+            await db.execute(
+                """
+                UPDATE archon_sources
+                SET pipeline_status = $1
+                WHERE source_id = $2
+                """,
+                status,
+                source_id,
+            )
 
-        self.supabase.table("archon_sources").update(update_data).eq("source_id", source_id).execute()
 
-
-def get_ingestion_state_service(supabase_client: Client) -> IngestionStateService:
-    return IngestionStateService(supabase_client)
+def get_ingestion_state_service() -> IngestionStateService:
+    return IngestionStateService()

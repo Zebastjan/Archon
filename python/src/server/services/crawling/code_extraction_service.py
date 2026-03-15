@@ -56,14 +56,8 @@ class CodeExtractionService:
         },
     }
 
-    def __init__(self, supabase_client):
-        """
-        Initialize the code extraction service.
-
-        Args:
-            supabase_client: The Supabase client for database operations
-        """
-        self.supabase_client = supabase_client
+    def __init__(self):
+        """Initialize the code extraction service."""
         self._settings_cache = {}
 
     async def _get_setting(self, key: str, default: Any) -> Any:
@@ -1750,7 +1744,6 @@ class CodeExtractionService:
 
         try:
             await add_code_examples_to_supabase(
-                client=self.supabase_client,
                 urls=storage_data["urls"],
                 chunk_numbers=storage_data["chunk_numbers"],
                 code_examples=storage_data["examples"],

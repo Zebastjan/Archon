@@ -4,10 +4,10 @@ Crawl URL State Service
 Tracks per-URL crawl progress to enable checkpoint/resume functionality.
 """
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
-from ...utils import get_supabase_client
+from ..database import get_database_connector
 
 logger = get_logger(__name__)
 
@@ -17,17 +17,11 @@ class CrawlUrlStateService:
     Service for tracking crawl URL state to enable resumable crawls.
     """
 
-    def __init__(self, supabase_client=None):
-        """
-        Initialize the crawl URL state service.
-
-        Args:
-            supabase_client: Optional Supabase client for database operations
-        """
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self):
+        """Initialize the crawl URL state service."""
         self.table_name = "archon_crawl_url_state"
 
-    def initialize_urls(self, source_id: str, urls: list[str], max_retries: int = 3) -> dict[str, int]:
+    async def initialize_urls(self, source_id: str, urls: list[str], max_retries: int = 3) -> dict[str, int]:
         """
         Initialize URLs in pending state for a crawl.
 
@@ -42,28 +36,31 @@ class CrawlUrlStateService:
         if not urls:
             return {"inserted": 0, "skipped": 0}
 
-        now = UTC
-        records = [
-            {
-                "source_id": source_id,
-                "url": url,
-                "status": "pending",
-                "max_retries": max_retries,
-                "created_at": now,
-                "updated_at": now,
-            }
-            for url in urls
-        ]
+        db = get_database_connector()
+        now = datetime.now(UTC).isoformat()
+        inserted = 0
 
         try:
-            # Upsert: insert new, skip existing
-            result = (
-                self.supabase_client.table(self.table_name)
-                .upsert(records, on_conflict="source_id,url", ignore_duplicates=True)
-                .execute()
-            )
+            # Insert each URL with ON CONFLICT DO NOTHING for upsert behavior
+            for url in urls:
+                result = await db.fetch(
+                    f"""
+                    INSERT INTO {self.table_name}
+                    (source_id, url, status, max_retries, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (source_id, url) DO NOTHING
+                    RETURNING id
+                    """,
+                    source_id,
+                    url,
+                    "pending",
+                    max_retries,
+                    now,
+                    now,
+                )
+                if result:
+                    inserted += 1
 
-            inserted = len(result.data) if result.data else 0
             skipped = len(urls) - inserted
 
             safe_logfire_info(
@@ -75,7 +72,7 @@ class CrawlUrlStateService:
             safe_logfire_error(f"Failed to initialize URL state: {e}")
             raise
 
-    def mark_fetched(self, source_id: str, url: str) -> bool:
+    async def mark_fetched(self, source_id: str, url: str) -> bool:
         """
         Mark a URL as fetched.
 
@@ -86,9 +83,9 @@ class CrawlUrlStateService:
         Returns:
             True if successful
         """
-        return self._update_status(source_id, url, "fetched")
+        return await self._update_status(source_id, url, "fetched")
 
-    def mark_embedded(self, source_id: str, url: str) -> bool:
+    async def mark_embedded(self, source_id: str, url: str) -> bool:
         """
         Mark a URL as embedded (complete).
 
@@ -99,9 +96,9 @@ class CrawlUrlStateService:
         Returns:
             True if successful
         """
-        return self._update_status(source_id, url, "embedded")
+        return await self._update_status(source_id, url, "embedded")
 
-    def mark_failed(self, source_id: str, url: str, error_message: str) -> bool:
+    async def mark_failed(self, source_id: str, url: str, error_message: str) -> bool:
         """
         Mark a URL as failed and increment retry count.
 
@@ -115,34 +112,39 @@ class CrawlUrlStateService:
         """
         try:
             # Get current state
-            result = (
-                self.supabase_client.table(self.table_name)
-                .select("retry_count, max_retries")
-                .match({"source_id": source_id, "url": url})
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                f"SELECT retry_count, max_retries FROM {self.table_name} WHERE source_id = $1 AND url = $2",
+                source_id,
+                url
             )
 
-            if not result.data:
+            if not result:
                 return False
 
-            current = result.data[0]
+            current = dict(result[0])
             retry_count = current.get("retry_count", 0) + 1
             max_retries = current.get("max_retries", 3)
 
             # Check if we should keep trying or give up
             if retry_count >= max_retries:
                 # Max retries exceeded - mark as permanently failed
-                return self._update_status(source_id, url, "failed", error_message)
+                return await self._update_status(source_id, url, "failed", error_message)
             else:
                 # Increment retry count, keep as pending for retry
-                self.supabase_client.table(self.table_name).update(
-                    {
-                        "retry_count": retry_count,
-                        "error_message": error_message,
-                        "status": "pending",  # Reset to pending for retry
-                        "updated_at": UTC,
-                    }
-                ).match({"source_id": source_id, "url": url}).execute()
+                await db.execute(
+                    f"""
+                    UPDATE {self.table_name}
+                    SET retry_count = $1, error_message = $2, status = $3, updated_at = $4
+                    WHERE source_id = $5 AND url = $6
+                    """,
+                    retry_count,
+                    error_message,
+                    "pending",
+                    datetime.now(UTC).isoformat(),
+                    source_id,
+                    url,
+                )
 
                 safe_logfire_info(f"URL will retry | url={url} | retry={retry_count}/{max_retries}")
                 return True
@@ -151,7 +153,7 @@ class CrawlUrlStateService:
             safe_logfire_error(f"Failed to mark URL as failed: {e}")
             return False
 
-    def _update_status(self, source_id: str, url: str, status: str, error_message: str | None = None) -> bool:
+    async def _update_status(self, source_id: str, url: str, status: str, error_message: str | None = None) -> bool:
         """
         Update the status of a URL.
 
@@ -165,20 +167,33 @@ class CrawlUrlStateService:
             True if successful
         """
         try:
-            update_data = {"status": status, "updated_at": UTC}
-            if error_message:
-                update_data["error_message"] = error_message
+            db = get_database_connector()
+            now = datetime.now(UTC).isoformat()
 
-            self.supabase_client.table(self.table_name).update(update_data).match(
-                {"source_id": source_id, "url": url}
-            ).execute()
+            if error_message:
+                await db.execute(
+                    f"UPDATE {self.table_name} SET status = $1, error_message = $2, updated_at = $3 WHERE source_id = $4 AND url = $5",
+                    status,
+                    error_message,
+                    now,
+                    source_id,
+                    url,
+                )
+            else:
+                await db.execute(
+                    f"UPDATE {self.table_name} SET status = $1, updated_at = $2 WHERE source_id = $3 AND url = $4",
+                    status,
+                    now,
+                    source_id,
+                    url,
+                )
 
             return True
         except Exception as e:
             safe_logfire_error(f"Failed to update URL status: {e}")
             return False
 
-    def get_pending_urls(self, source_id: str) -> list[str]:
+    async def get_pending_urls(self, source_id: str) -> list[str]:
         """
         Get URLs that are still pending for a source.
 
@@ -188,9 +203,9 @@ class CrawlUrlStateService:
         Returns:
             List of pending URLs
         """
-        return self._get_urls_by_status(source_id, "pending")
+        return await self._get_urls_by_status(source_id, "pending")
 
-    def get_fetched_urls(self, source_id: str) -> list[str]:
+    async def get_fetched_urls(self, source_id: str) -> list[str]:
         """
         Get URLs that have been fetched but not embedded.
 
@@ -200,9 +215,9 @@ class CrawlUrlStateService:
         Returns:
             List of fetched URLs
         """
-        return self._get_urls_by_status(source_id, "fetched")
+        return await self._get_urls_by_status(source_id, "fetched")
 
-    def get_embedded_urls(self, source_id: str) -> list[str]:
+    async def get_embedded_urls(self, source_id: str) -> list[str]:
         """
         Get URLs that have been embedded (completed).
 
@@ -212,9 +227,9 @@ class CrawlUrlStateService:
         Returns:
             List of embedded URLs
         """
-        return self._get_urls_by_status(source_id, "embedded")
+        return await self._get_urls_by_status(source_id, "embedded")
 
-    def get_failed_urls(self, source_id: str) -> list[str]:
+    async def get_failed_urls(self, source_id: str) -> list[str]:
         """
         Get URLs that have permanently failed.
 
@@ -224,9 +239,9 @@ class CrawlUrlStateService:
         Returns:
             List of failed URLs
         """
-        return self._get_urls_by_status(source_id, "failed")
+        return await self._get_urls_by_status(source_id, "failed")
 
-    def _get_urls_by_status(self, source_id: str, status: str) -> list[str]:
+    async def _get_urls_by_status(self, source_id: str, status: str) -> list[str]:
         """
         Get URLs by status.
 
@@ -238,19 +253,19 @@ class CrawlUrlStateService:
             List of URLs
         """
         try:
-            result = (
-                self.supabase_client.table(self.table_name)
-                .select("url")
-                .match({"source_id": source_id, "status": status})
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                f"SELECT url FROM {self.table_name} WHERE source_id = $1 AND status = $2",
+                source_id,
+                status
             )
 
-            return [row["url"] for row in (result.data or [])]
+            return [row["url"] for row in result]
         except Exception as e:
             safe_logfire_error(f"Failed to get URLs by status: {e}")
             return []
 
-    def get_crawl_state(self, source_id: str) -> dict[str, int]:
+    async def get_crawl_state(self, source_id: str) -> dict[str, int]:
         """
         Get the current state of a crawl.
 
@@ -260,13 +275,15 @@ class CrawlUrlStateService:
         Returns:
             Dict with counts by status: {pending, fetched, embedded, failed, total}
         """
+        counts = {"pending": 0, "fetched": 0, "embedded": 0, "failed": 0, "total": 0}
         try:
-            result = (
-                self.supabase_client.table(self.table_name).select("status").match({"source_id": source_id}).execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                f"SELECT status FROM {self.table_name} WHERE source_id = $1",
+                source_id
             )
 
-            counts = {"pending": 0, "fetched": 0, "embedded": 0, "failed": 0, "total": 0}
-            for row in result.data or []:
+            for row in result:
                 status = row.get("status", "pending")
                 if status in counts:
                     counts[status] += 1
@@ -277,7 +294,7 @@ class CrawlUrlStateService:
             safe_logfire_error(f"Failed to get crawl state: {e}")
             return counts
 
-    def has_existing_state(self, source_id: str) -> bool:
+    async def has_existing_state(self, source_id: str) -> bool:
         """
         Check if there is existing crawl state for a source.
 
@@ -288,19 +305,18 @@ class CrawlUrlStateService:
             True if there is existing state
         """
         try:
-            result = (
-                self.supabase_client.table(self.table_name)
-                .select("id", count="exact")
-                .match({"source_id": source_id})
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                f"SELECT COUNT(*) as count FROM {self.table_name} WHERE source_id = $1",
+                source_id
             )
 
-            return (result.count or 0) > 0
+            return (result[0]["count"] if result else 0) > 0
         except Exception as e:
             safe_logfire_error(f"Failed to check existing state: {e}")
             return False
 
-    def clear_state(self, source_id: str) -> bool:
+    async def clear_state(self, source_id: str) -> bool:
         """
         Clear all state for a source (for fresh start).
 
@@ -311,7 +327,11 @@ class CrawlUrlStateService:
             True if successful
         """
         try:
-            self.supabase_client.table(self.table_name).delete().match({"source_id": source_id}).execute()
+            db = get_database_connector()
+            await db.execute(
+                f"DELETE FROM {self.table_name} WHERE source_id = $1",
+                source_id
+            )
 
             safe_logfire_info(f"Cleared crawl URL state | source_id={source_id}")
             return True
@@ -324,17 +344,14 @@ class CrawlUrlStateService:
 crawl_url_state_service: CrawlUrlStateService | None = None
 
 
-def get_crawl_url_state_service(supabase_client=None) -> CrawlUrlStateService:
+def get_crawl_url_state_service() -> CrawlUrlStateService:
     """
     Get the singleton crawl URL state service instance.
-
-    Args:
-        supabase_client: Optional Supabase client
 
     Returns:
         CrawlUrlStateService instance
     """
     global crawl_url_state_service
     if crawl_url_state_service is None:
-        crawl_url_state_service = CrawlUrlStateService(supabase_client)
+        crawl_url_state_service = CrawlUrlStateService()
     return crawl_url_state_service

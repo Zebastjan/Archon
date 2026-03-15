@@ -13,10 +13,9 @@ from typing import Any
 
 from git import Repo
 from git.exc import GitError as GitPythonError
-from supabase import Client
 
 from ...config.logfire_config import get_logger
-from ..client_manager import get_supabase_client
+from ..database import get_database_connector
 
 logger = get_logger(__name__)
 
@@ -277,14 +276,9 @@ LANGUAGE_MAPPING = {
 class GitRepositoryService:
     """Service for managing git repositories and their metadata."""
 
-    def __init__(self, supabase_client: Client | None = None):
-        """
-        Initialize git repository service.
-
-        Args:
-            supabase_client: Optional Supabase client instance
-        """
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self):
+        """Initialize git repository service."""
+        pass
 
     def _validate_repository(self, repo_path: str) -> Repo:
         """
@@ -489,7 +483,7 @@ class GitRepositoryService:
                 original_error=str(e),
             ) from e
 
-    def register_repository(
+    async def register_repository(
         self, repo_path: str, source_id: str, config: dict | None = None
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -545,17 +539,34 @@ class GitRepositoryService:
             }
 
             # Insert into database
-            response = (
-                self.supabase_client.table("archon_git_repositories")
-                .insert(repo_data)
-                .execute()
+            db = get_database_connector()
+            import json
+
+            result = await db.fetch(
+                """
+                INSERT INTO archon_git_repositories
+                (source_id, repo_url, repo_name, owner, default_branch, current_head_sha,
+                 crawl_status, config, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING *
+                """,
+                repo_data["source_id"],
+                repo_data["repo_url"],
+                repo_data["repo_name"],
+                repo_data["owner"],
+                repo_data["default_branch"],
+                repo_data["current_head_sha"],
+                repo_data["crawl_status"],
+                json.dumps(repo_data["config"]),
+                repo_data["created_at"],
+                repo_data["updated_at"],
             )
 
-            if not response.data:
+            if not result:
                 logger.error("Failed to register repository - database returned no data")
                 return False, {"error": "Failed to register repository"}
 
-            repo_record = response.data[0]
+            repo_record = dict(result[0])
             repo_id = repo_record["id"]
 
             logger.info(
@@ -577,7 +588,7 @@ class GitRepositoryService:
                 f"Failed to register repository: {e}", repo_path=repo_path, original_error=str(e)
             ) from e
 
-    def sync_commits(
+    async def sync_commits(
         self, repo_id: str, branch_name: str, max_commits: int | None = None
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -594,17 +605,16 @@ class GitRepositoryService:
         repo_path: str | None = None
         try:
             # Get repository record
-            repo_response = (
-                self.supabase_client.table("archon_git_repositories")
-                .select("*")
-                .eq("id", repo_id)
-                .execute()
+            db = get_database_connector()
+            repo_records = await db.fetch(
+                "SELECT * FROM archon_git_repositories WHERE id = $1",
+                repo_id
             )
 
-            if not repo_response.data:
+            if not repo_records:
                 return False, {"error": f"Repository not found: {repo_id}"}
 
-            repo_record = repo_response.data[0]
+            repo_record = dict(repo_records[0])
             repo_path = str(repo_record["repo_url"])
 
             # Validate repository
@@ -657,6 +667,7 @@ class GitRepositoryService:
 
             # Use RPC function to upsert commits with branch array merging
             if commit_records:
+                import json as json_lib
                 BATCH_SIZE = 500
                 inserted_count = 0
 
@@ -667,19 +678,17 @@ class GitRepositoryService:
                     # Call RPC function for each commit to properly merge branches array
                     for commit_data in batch:
                         try:
-                            self.supabase_client.rpc(
-                                "upsert_git_commit_with_branch_merge",
-                                {
-                                    "p_repo_id": commit_data["repo_id"],
-                                    "p_commit_sha": commit_data["commit_sha"],
-                                    "p_author_name": commit_data["author_name"],
-                                    "p_author_email": commit_data["author_email"],
-                                    "p_commit_date": commit_data["commit_date"],
-                                    "p_message": commit_data["message"],
-                                    "p_parent_shas": commit_data["parent_shas"],
-                                    "p_branches": commit_data["branches"],
-                                },
-                            ).execute()
+                            await db.execute(
+                                "SELECT upsert_git_commit_with_branch_merge($1, $2, $3, $4, $5, $6, $7, $8)",
+                                commit_data["repo_id"],
+                                commit_data["commit_sha"],
+                                commit_data["author_name"],
+                                commit_data["author_email"],
+                                commit_data["commit_date"],
+                                commit_data["message"],
+                                json_lib.dumps(commit_data["parent_shas"]),
+                                json_lib.dumps(commit_data["branches"]),
+                            )
                             inserted_count += 1
                         except Exception as e:
                             logger.error(f"Failed to upsert commit {commit_data['commit_sha']}: {e}")
@@ -693,13 +702,17 @@ class GitRepositoryService:
                 logger.warning(f"No commits found for branch '{branch_name}'")
 
             # Update repository crawl status
-            self.supabase_client.table("archon_git_repositories").update(
-                {
-                    "last_crawled_at": datetime.now(UTC).isoformat(),
-                    "crawl_status": "completed",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                }
-            ).eq("id", repo_id).execute()
+            await db.execute(
+                """
+                UPDATE archon_git_repositories
+                SET last_crawled_at = $1, crawl_status = $2, updated_at = $3
+                WHERE id = $4
+                """,
+                datetime.now(UTC).isoformat(),
+                "completed",
+                datetime.now(UTC).isoformat(),
+                repo_id,
+            )
 
             return True, {
                 "commit_count": inserted_count,
@@ -711,14 +724,19 @@ class GitRepositoryService:
         except Exception as e:
             logger.error(f"Error syncing commits: {e}")
             # Update crawl status to failed
+            import json as json_lib
             try:
-                self.supabase_client.table("archon_git_repositories").update(
-                    {
-                        "crawl_status": "failed",
-                        "crawl_error": {"error": str(e), "timestamp": datetime.now(UTC).isoformat()},
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    }
-                ).eq("id", repo_id).execute()
+                await db.execute(
+                    """
+                    UPDATE archon_git_repositories
+                    SET crawl_status = $1, crawl_error = $2, updated_at = $3
+                    WHERE id = $4
+                    """,
+                    "failed",
+                    json_lib.dumps({"error": str(e), "timestamp": datetime.now(UTC).isoformat()}),
+                    datetime.now(UTC).isoformat(),
+                    repo_id,
+                )
             except Exception as update_error:
                 logger.error(f"Failed to update crawl status: {update_error}")
 
@@ -726,7 +744,7 @@ class GitRepositoryService:
                 f"Failed to sync commits: {e}", repo_path=repo_path or "unknown", original_error=str(e)
             ) from e
 
-    def get_file_tree(
+    async def get_file_tree(
         self, repo_id: str, commit_sha: str, path_prefix: str = ""
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -743,17 +761,16 @@ class GitRepositoryService:
         repo_path: str | None = None
         try:
             # Get repository record
-            repo_response = (
-                self.supabase_client.table("archon_git_repositories")
-                .select("*")
-                .eq("id", repo_id)
-                .execute()
+            db = get_database_connector()
+            repo_records = await db.fetch(
+                "SELECT * FROM archon_git_repositories WHERE id = $1",
+                repo_id
             )
 
-            if not repo_response.data:
+            if not repo_records:
                 return False, {"error": f"Repository not found: {repo_id}"}
 
-            repo_record = repo_response.data[0]
+            repo_record = dict(repo_records[0])
             repo_path = str(repo_record["repo_url"])
 
             # Validate repository
@@ -812,7 +829,7 @@ class GitRepositoryService:
                 original_error=str(e),
             ) from e
 
-    def get_file_content(
+    async def get_file_content(
         self, repo_id: str, commit_sha: str, file_path: str
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -829,17 +846,16 @@ class GitRepositoryService:
         repo_path_str: str | None = None
         try:
             # Get repository record
-            repo_response = (
-                self.supabase_client.table("archon_git_repositories")
-                .select("*")
-                .eq("id", repo_id)
-                .execute()
+            db = get_database_connector()
+            repo_records = await db.fetch(
+                "SELECT * FROM archon_git_repositories WHERE id = $1",
+                repo_id
             )
 
-            if not repo_response.data:
+            if not repo_records:
                 return False, {"error": f"Repository not found: {repo_id}"}
 
-            repo_record = repo_response.data[0]
+            repo_record = dict(repo_records[0])
             repo_path_str = str(repo_record["repo_url"])
 
             # Validate repository
@@ -907,7 +923,7 @@ class GitRepositoryService:
                 original_error=str(e),
             ) from e
 
-    def get_repository_by_project_id(self, project_id: str) -> dict | None:
+    async def get_repository_by_project_id(self, project_id: str) -> dict | None:
         """
         Get repository information by project ID.
 
@@ -918,17 +934,16 @@ class GitRepositoryService:
             dict with repo_path and other repository metadata, or None if not found
         """
         try:
-            result = (
-                self.supabase_client.table("archon_git_repositories")
-                .select("*")
-                .eq("project_id", project_id)
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                "SELECT * FROM archon_git_repositories WHERE project_id = $1",
+                project_id
             )
 
-            if not result.data:
+            if not result:
                 return None
 
-            return result.data[0]
+            return dict(result[0])
 
         except Exception as e:
             logger.error(f"Error fetching repository for project {project_id}: {e}")
@@ -937,7 +952,7 @@ class GitRepositoryService:
                 original_error=str(e),
             ) from e
 
-    def get_commit_by_sha(
+    async def get_commit_by_sha(
         self, project_id: str, commit_sha: str
     ) -> dict[str, Any] | None:
         """
@@ -951,18 +966,17 @@ class GitRepositoryService:
             dict with commit metadata, or None if not found
         """
         try:
-            result = (
-                self.supabase_client.table("archon_git_commits")
-                .select("*")
-                .eq("repo_id", project_id)
-                .eq("commit_sha", commit_sha)
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                "SELECT * FROM archon_git_commits WHERE repo_id = $1 AND commit_sha = $2",
+                project_id,
+                commit_sha
             )
 
-            if not result.data:
+            if not result:
                 return None
 
-            return result.data[0]
+            return dict(result[0])
 
         except Exception as e:
             logger.error(f"Error fetching commit {commit_sha}: {e}")
@@ -972,7 +986,7 @@ class GitRepositoryService:
                 original_error=str(e),
             ) from e
 
-    def update_commit_metadata(
+    async def update_commit_metadata(
         self, project_id: str, commit_sha: str, metadata: dict[str, Any]
     ) -> None:
         """
@@ -984,9 +998,14 @@ class GitRepositoryService:
             metadata: Metadata dictionary to merge into existing metadata
         """
         try:
-            self.supabase_client.table("archon_git_commits").update(
-                {"metadata": metadata}
-            ).eq("repo_id", project_id).eq("commit_sha", commit_sha).execute()
+            import json as json_lib
+            db = get_database_connector()
+            await db.execute(
+                "UPDATE archon_git_commits SET metadata = $1 WHERE repo_id = $2 AND commit_sha = $3",
+                json_lib.dumps(metadata),
+                project_id,
+                commit_sha
+            )
 
             logger.info(
                 f"Updated metadata for commit {commit_sha} in project {project_id}"
@@ -1041,11 +1060,11 @@ class GitRepositoryService:
         from ..code_entity_service import CodeEntityService
         from ..languages import get_language_for_file
 
-        code_entity_service = CodeEntityService(self.supabase_client)
+        code_entity_service = CodeEntityService()
 
         # If no file paths specified, get all supported source files
         if file_paths is None:
-            success, result = self.get_file_tree(repo_id, commit_sha)
+            success, result = await self.get_file_tree(repo_id, commit_sha)
             if not success:
                 return {
                     "processed": 0,
@@ -1078,7 +1097,7 @@ class GitRepositoryService:
 
         # Create async file content getter
         async def get_file_content(repo_id: str, commit_sha: str, file_path: str) -> str:
-            success, result = self.get_file_content(repo_id, commit_sha, file_path)
+            success, result = await self.get_file_content(repo_id, commit_sha, file_path)
             if not success:
                 raise Exception(result.get("error", f"Failed to read {file_path}"))
             return result["content"]
@@ -1159,7 +1178,7 @@ class GitRepositoryService:
             extraction results
         """
         # First sync commits
-        sync_success, sync_result = self.sync_commits(repo_id, branch_name, max_commits)
+        sync_success, sync_result = await self.sync_commits(repo_id, branch_name, max_commits)
 
         if not sync_success:
             return False, {
@@ -1175,15 +1194,14 @@ class GitRepositoryService:
         if extract_entities:
             try:
                 # Get the HEAD commit SHA for the branch
-                repo_response = (
-                    self.supabase_client.table("archon_git_repositories")
-                    .select("current_head_sha")
-                    .eq("id", repo_id)
-                    .execute()
+                db = get_database_connector()
+                repo_response = await db.fetch(
+                    "SELECT current_head_sha FROM archon_git_repositories WHERE id = $1",
+                    repo_id
                 )
 
-                if repo_response.data:
-                    head_sha = repo_response.data[0].get("current_head_sha")
+                if repo_response:
+                    head_sha = repo_response[0].get("current_head_sha")
                     if head_sha:
                         entity_result = await self.extract_code_entities(
                             repo_id=repo_id,

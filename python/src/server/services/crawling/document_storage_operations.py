@@ -11,6 +11,7 @@ from typing import Any
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..chunking import get_chunker
+from ..database import get_database_connector
 from ..source_management_service import extract_source_summary, update_source_info
 from ..storage.document_storage_service import add_documents_to_supabase
 from ..storage.storage_services import DocumentStorageService
@@ -25,16 +26,10 @@ class DocumentStorageOperations:
     Handles document storage operations for crawled content.
     """
 
-    def __init__(self, supabase_client):
-        """
-        Initialize document storage operations.
-
-        Args:
-            supabase_client: The Supabase client for database operations
-        """
-        self.supabase_client = supabase_client
-        self.doc_storage_service = DocumentStorageService(supabase_client)
-        self.code_extraction_service = CodeExtractionService(supabase_client)
+    def __init__(self):
+        """Initialize document storage operations."""
+        self.doc_storage_service = DocumentStorageService()
+        self.code_extraction_service = CodeExtractionService()
 
     async def process_and_store_documents(
         self,
@@ -469,7 +464,21 @@ class DocumentStorageOperations:
                     if source_display_name:
                         fallback_data["source_display_name"] = source_display_name
 
-                    self.supabase_client.table("archon_sources").upsert(fallback_data).execute()
+                    db = get_database_connector()
+                    import json
+                    await db.execute(
+                        """
+                        INSERT INTO archon_sources (source_id, source_display_name, source_type, configuration)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (source_id) DO UPDATE SET
+                            source_display_name = EXCLUDED.source_display_name,
+                            configuration = EXCLUDED.configuration
+                        """,
+                        fallback_data["source_id"],
+                        fallback_data.get("source_display_name"),
+                        fallback_data.get("source_type", "documentation"),
+                        json.dumps(fallback_data.get("configuration", {})),
+                    )
                     safe_logfire_info(f"Fallback source creation succeeded for '{source_id}'")
                 except Exception as fallback_error:
                     logger.error(f"Both source creation attempts failed for '{source_id}'", exc_info=True)
@@ -482,13 +491,12 @@ class DocumentStorageOperations:
         if unique_source_ids:
             for source_id in unique_source_ids:
                 try:
-                    source_check = (
-                        self.supabase_client.table("archon_sources")
-                        .select("source_id")
-                        .eq("source_id", source_id)
-                        .execute()
+                    db = get_database_connector()
+                    source_check = await db.fetch(
+                        "SELECT source_id FROM archon_sources WHERE source_id = $1",
+                        source_id
                     )
-                    if not source_check.data:
+                    if not source_check:
                         raise Exception(
                             f"Source record verification failed - '{source_id}' does not exist in sources table"
                         )

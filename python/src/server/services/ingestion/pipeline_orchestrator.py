@@ -10,8 +10,6 @@ This is a clean break from the old monolithic pipeline.
 from collections.abc import Callable
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..credential_service import credential_service
 from ..llm_provider_service import get_embedding_model
@@ -36,10 +34,9 @@ class PipelineOrchestrator:
     5. Return immediately - workers process async
     """
 
-    def __init__(self, supabase_client: Client):
-        self.supabase = supabase_client
-        self.state_service = get_ingestion_state_service(supabase_client)
-        self.storage_service = DocumentStorageService(supabase_client)
+    def __init__(self):
+        self.state_service = get_ingestion_state_service()
+        self.storage_service = DocumentStorageService()
 
     async def run_pipeline(
         self,
@@ -206,5 +203,5 @@ class PipelineOrchestrator:
             return None
 
 
-def get_pipeline_orchestrator(supabase_client: Client) -> PipelineOrchestrator:
-    return PipelineOrchestrator(supabase_client)
+def get_pipeline_orchestrator() -> PipelineOrchestrator:
+    return PipelineOrchestrator()

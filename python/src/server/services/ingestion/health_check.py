@@ -6,9 +6,8 @@ Provides health checks and sanity validation for the RAG ingestion pipeline.
 
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger
+from ..database import get_database_connector
 from .ingestion_state_service import get_ingestion_state_service
 
 logger = get_logger(__name__)
@@ -25,9 +24,8 @@ class IngestionHealthCheck:
     - Summaries are not empty
     """
 
-    def __init__(self, supabase_client: Client):
-        self.supabase = supabase_client
-        self.state_service = get_ingestion_state_service(supabase_client)
+    def __init__(self):
+        self.state_service = get_ingestion_state_service()
 
     async def check_source_health(self, source_id: str) -> dict[str, Any]:
         """
@@ -85,11 +83,13 @@ class IngestionHealthCheck:
                 }
             )
 
-        embedding_sets_response = (
-            self.supabase.table("archon_embedding_sets").select("*").eq("source_id", source_id).execute()
+        db = get_database_connector()
+        embedding_sets_response = await db.fetch(
+            "SELECT * FROM archon_embedding_sets WHERE source_id = $1",
+            source_id
         )
 
-        if not embedding_sets_response.data:
+        if not embedding_sets_response:
             warnings.append(
                 {
                     "type": "no_embedding_sets",
@@ -97,7 +97,7 @@ class IngestionHealthCheck:
                 }
             )
         else:
-            for es in embedding_sets_response.data:
+            for es in embedding_sets_response:
                 if es["status"] == "failed":
                     issues.append(
                         {
@@ -131,9 +131,12 @@ class IngestionHealthCheck:
                             }
                         )
 
-        summaries_response = self.supabase.table("archon_summaries").select("*").eq("source_id", source_id).execute()
+        summaries_response = await db.fetch(
+            "SELECT * FROM archon_summaries WHERE source_id = $1",
+            source_id
+        )
 
-        if not summaries_response.data:
+        if not summaries_response:
             warnings.append(
                 {
                     "type": "no_summaries",
@@ -141,7 +144,7 @@ class IngestionHealthCheck:
                 }
             )
         else:
-            for s in summaries_response.data:
+            for s in summaries_response:
                 if s["status"] == "failed":
                     issues.append(
                         {
@@ -168,8 +171,8 @@ class IngestionHealthCheck:
             "source_id": source_id,
             "blobs": len(blobs),
             "chunks": len(chunks),
-            "embedding_sets": len(embedding_sets_response.data or []),
-            "summaries": len(summaries_response.data or []),
+            "embedding_sets": len(embedding_sets_response or []),
+            "summaries": len(summaries_response or []),
             "issues": issues,
             "warnings": warnings,
         }
@@ -178,10 +181,11 @@ class IngestionHealthCheck:
         """
         Check health of all sources.
         """
-        sources_response = self.supabase.table("archon_sources").select("source_id").execute()
+        db = get_database_connector()
+        sources_response = await db.fetch("SELECT source_id FROM archon_sources")
 
         results = []
-        for source in sources_response.data:
+        for source in sources_response:
             health = await self.check_source_health(source["source_id"])
             results.append(health)
 
@@ -196,5 +200,5 @@ class IngestionHealthCheck:
         }
 
 
-def get_ingestion_health_check(supabase_client: Client) -> IngestionHealthCheck:
-    return IngestionHealthCheck(supabase_client)
+def get_ingestion_health_check() -> IngestionHealthCheck:
+    return IngestionHealthCheck()
