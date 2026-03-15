@@ -3,15 +3,16 @@ Task Service Module for Archon
 
 This module provides core business logic for task operations that can be
 shared between MCP tools and FastAPI endpoints.
+Includes automatic worktree safety validation.
 """
 
 # Removed direct logging import - using unified config
 from datetime import datetime
 from typing import Any
 
-from src.server.utils import get_supabase_client
-
 from ...config.logfire_config import get_logger
+from ..database import get_database_connector
+from ..worktree_service import get_worktree_service
 
 logger = get_logger(__name__)
 
@@ -23,9 +24,9 @@ class TaskService:
 
     VALID_STATUSES = ["todo", "doing", "review", "done"]
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self):
+        """Initialize task service"""
+        pass
 
     def validate_status(self, status: str) -> tuple[bool, str]:
         """Validate task status"""
@@ -63,14 +64,39 @@ class TaskService:
         feature: str | None = None,
         sources: list[dict[str, Any]] = None,
         code_examples: list[dict[str, Any]] = None,
+        file_paths: list[str] = None,
+        entity_ids: list[str] = None,
+        skip_worktree_validation: bool = False,
     ) -> tuple[bool, dict[str, Any]]:
         """
-        Create a new task under a project with automatic reordering.
+        Create a new task under a project with automatic reordering and worktree safety.
 
         Returns:
             Tuple of (success, result_dict)
         """
         try:
+            # Automatic worktree safety validation
+            if not skip_worktree_validation:
+                worktree_service = get_worktree_service()
+                validation = worktree_service.validate_safe_to_work(
+                    file_paths=file_paths,
+                    entity_ids=entity_ids,
+                )
+                
+                if not validation.is_safe:
+                    logger.warning(f"Worktree validation failed for task creation: {validation.issues}")
+                    return False, {
+                        "error": "Worktree safety validation failed",
+                        "error_type": "worktree_conflict",
+                        "issues": validation.issues,
+                        "warnings": validation.warnings,
+                        "context": validation.context.to_dict() if validation.context else None,
+                    }
+                
+                # Log warnings
+                if validation.warnings:
+                    logger.info(f"Worktree validation warnings: {validation.warnings}")
+            
             # Validate inputs
             if not title or not isinstance(title, str) or len(title.strip()) == 0:
                 return False, {"error": "Task title is required and must be a non-empty string"}
@@ -93,25 +119,33 @@ class TaskService:
             # REORDERING LOGIC: If inserting at a specific position, increment existing tasks
             if task_order > 0:
                 # Get all tasks in the same project and status with task_order >= new task's order
-                existing_tasks_response = (
-                    self.supabase_client.table("archon_tasks")
-                    .select("id, task_order")
-                    .eq("project_id", project_id)
-                    .eq("status", task_status)
-                    .gte("task_order", task_order)
-                    .execute()
+                db = get_database_connector()
+                existing_tasks_response = await db.fetch(
+                    """
+                    SELECT id, task_order FROM archon_tasks
+                    WHERE project_id = $1 AND status = $2 AND task_order >= $3
+                    """,
+                    project_id,
+                    task_status,
+                    task_order
                 )
 
-                if existing_tasks_response.data:
-                    logger.info(f"Reordering {len(existing_tasks_response.data)} existing tasks")
+                if existing_tasks_response:
+                    logger.info(f"Reordering {len(existing_tasks_response)} existing tasks")
 
                     # Increment task_order for all affected tasks
-                    for existing_task in existing_tasks_response.data:
+                    for existing_task in existing_tasks_response:
                         new_order = existing_task["task_order"] + 1
-                        self.supabase_client.table("archon_tasks").update({
-                            "task_order": new_order,
-                            "updated_at": datetime.now().isoformat(),
-                        }).eq("id", existing_task["id"]).execute()
+                        await db.execute(
+                            """
+                            UPDATE archon_tasks
+                            SET task_order = $1, updated_at = $2
+                            WHERE id = $3
+                            """,
+                            new_order,
+                            datetime.now().isoformat(),
+                            existing_task["id"],
+                        )
 
             task_data = {
                 "project_id": project_id,
@@ -130,10 +164,57 @@ class TaskService:
             if feature:
                 task_data["feature"] = feature
 
-            response = self.supabase_client.table("archon_tasks").insert(task_data).execute()
+            # Add worktree context
+            import json
+            if not skip_worktree_validation:
+                worktree_service = get_worktree_service()
+                context = await worktree_service.get_current_context()
+                if context and context.worktree_id:
+                    task_data.update({
+                        "worktree_id": context.worktree_id,
+                        "branch_name": context.branch_name,
+                        "repo_path": context.repo_path,
+                        "base_branch": context.base_branch,
+                        "is_isolated": True,
+                        "worktree_status": "active" if context.is_clean else "conflict",
+                        "merge_conflicts_expected": json.dumps(file_paths or []),
+                        "entities_affected": json.dumps(entity_ids or []),
+                    })
 
-            if response.data:
-                task = response.data[0]
+            db = get_database_connector()
+            response = await db.fetch(
+                """
+                INSERT INTO archon_tasks
+                (project_id, title, description, status, assignee, task_order, priority, sources, code_examples,
+                 feature, worktree_id, branch_name, repo_path, base_branch, is_isolated, worktree_status,
+                 merge_conflicts_expected, entities_affected, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                RETURNING *
+                """,
+                task_data["project_id"],
+                task_data["title"],
+                task_data["description"],
+                task_data["status"],
+                task_data["assignee"],
+                task_data["task_order"],
+                task_data["priority"],
+                json.dumps(task_data.get("sources", [])),
+                json.dumps(task_data.get("code_examples", [])),
+                task_data.get("feature"),
+                task_data.get("worktree_id"),
+                task_data.get("branch_name"),
+                task_data.get("repo_path"),
+                task_data.get("base_branch"),
+                task_data.get("is_isolated"),
+                task_data.get("worktree_status"),
+                task_data.get("merge_conflicts_expected"),
+                task_data.get("entities_affected"),
+                task_data["created_at"],
+                task_data["updated_at"],
+            )
+
+            if response:
+                task = response[0]
 
 
                 return True, {
@@ -156,7 +237,7 @@ class TaskService:
             logger.error(f"Error creating task: {e}")
             return False, {"error": f"Error creating task: {str(e)}"}
 
-    def list_tasks(
+    async def list_tasks(
         self,
         project_id: str = None,
         status: str = None,
@@ -180,24 +261,19 @@ class TaskService:
             Tuple of (success, result_dict)
         """
         try:
-            # Start with base query
-            if exclude_large_fields:
-                # Select all fields except large JSONB ones
-                query = self.supabase_client.table("archon_tasks").select(
-                    "id, project_id, parent_task_id, title, description, "
-                    "status, assignee, task_order, priority, feature, archived, "
-                    "archived_at, archived_by, created_at, updated_at, "
-                    "sources, code_examples"  # Still fetch for counting, but will process differently
-                )
-            else:
-                query = self.supabase_client.table("archon_tasks").select("*")
+            db = get_database_connector()
 
-            # Track filters for debugging
+            # Build WHERE clause dynamically
+            where_clauses = []
+            params = []
+            param_count = 1
             filters_applied = []
 
             # Apply filters
             if project_id:
-                query = query.eq("project_id", project_id)
+                where_clauses.append(f"project_id = ${param_count}")
+                params.append(project_id)
+                param_count += 1
                 filters_applied.append(f"project_id={project_id}")
 
             if status:
@@ -205,62 +281,47 @@ class TaskService:
                 is_valid, error_msg = self.validate_status(status)
                 if not is_valid:
                     return False, {"error": error_msg}
-                query = query.eq("status", status)
+                where_clauses.append(f"status = ${param_count}")
+                params.append(status)
+                param_count += 1
                 filters_applied.append(f"status={status}")
-                # When filtering by specific status, don't apply include_closed filter
-                # as it would be redundant or potentially conflicting
             elif not include_closed:
                 # Only exclude done tasks if no specific status filter is applied
-                query = query.neq("status", "done")
+                where_clauses.append("status != 'done'")
                 filters_applied.append("exclude done tasks")
 
             # Apply keyword search if provided
             if search_query:
-                # Split search query into terms
-                search_terms = search_query.lower().split()
-
-                # Build the filter expression for AND-of-ORs
-                # Each term must match in at least one field (OR), and all terms must match (AND)
-                if len(search_terms) == 1:
-                    # Single term: simple OR across fields
-                    term = search_terms[0]
-                    query = query.or_(
-                        f"title.ilike.%{term}%,"
-                        f"description.ilike.%{term}%,"
-                        f"feature.ilike.%{term}%"
-                    )
-                else:
-                    # Multiple terms: use text search for proper AND logic
-                    # Note: This requires full-text search columns to be set up in the database
-                    # For now, we'll search for the full phrase in any field
-                    full_query = search_query.lower()
-                    query = query.or_(
-                        f"title.ilike.%{full_query}%,"
-                        f"description.ilike.%{full_query}%,"
-                        f"feature.ilike.%{full_query}%"
-                    )
+                search_term = f"%{search_query.lower()}%"
+                where_clauses.append(
+                    f"(LOWER(title) LIKE ${param_count} OR LOWER(description) LIKE ${param_count} OR LOWER(feature) LIKE ${param_count})"
+                )
+                params.append(search_term)
+                param_count += 1
                 filters_applied.append(f"search={search_query}")
 
             # Filter out archived tasks only if not including them
             if not include_archived:
-                query = query.or_("archived.is.null,archived.is.false")
+                where_clauses.append("(archived IS NULL OR archived = false)")
                 filters_applied.append("exclude archived tasks (null or false)")
             else:
                 filters_applied.append("include all tasks (including archived)")
 
             logger.debug(f"Listing tasks with filters: {', '.join(filters_applied)}")
 
-            # Execute query and get raw response
-            response = (
-                query.order("task_order", desc=False).order("created_at", desc=False).execute()
-            )
+            # Build complete query
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            query = f"SELECT * FROM archon_tasks {where_sql} ORDER BY task_order ASC, created_at ASC"
+
+            # Execute query
+            response = await db.fetch(query, *params)
 
             # Debug: Log task status distribution and filter effectiveness
-            if response.data:
+            if response:
                 status_counts = {}
                 archived_counts = {"null": 0, "true": 0, "false": 0}
 
-                for task in response.data:
+                for task in response:
                     task_status = task.get("status", "unknown")
                     status_counts[task_status] = status_counts.get(task_status, 0) + 1
 
@@ -274,13 +335,13 @@ class TaskService:
                         archived_counts["false"] += 1
 
                 logger.debug(
-                    f"Retrieved {len(response.data)} tasks. Status distribution: {status_counts}"
+                    f"Retrieved {len(response)} tasks. Status distribution: {status_counts}"
                 )
                 logger.debug(f"Archived field distribution: {archived_counts}")
 
                 # If we're filtering by status and getting wrong results, log sample
-                if status and len(response.data) > 0:
-                    first_task = response.data[0]
+                if status and len(response) > 0:
+                    first_task = response[0]
                     logger.warning(
                         f"Status filter: {status}, First task status: {first_task.get('status')}, archived: {first_task.get('archived')}"
                     )
@@ -288,7 +349,7 @@ class TaskService:
                 logger.debug("No tasks found with current filters")
 
             tasks = []
-            for task in response.data:
+            for task in response:
                 task_data = {
                     "id": task["id"],
                     "project_id": task["project_id"],
@@ -336,7 +397,7 @@ class TaskService:
             logger.error(f"Error listing tasks: {e}")
             return False, {"error": f"Error listing tasks: {str(e)}"}
 
-    def get_task(self, task_id: str) -> tuple[bool, dict[str, Any]]:
+    async def get_task(self, task_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Get a specific task by ID.
 
@@ -344,12 +405,14 @@ class TaskService:
             Tuple of (success, result_dict)
         """
         try:
-            response = (
-                self.supabase_client.table("archon_tasks").select("*").eq("id", task_id).execute()
+            db = get_database_connector()
+            response = await db.fetch(
+                "SELECT * FROM archon_tasks WHERE id = $1",
+                task_id
             )
 
-            if response.data:
-                task = response.data[0]
+            if response:
+                task = dict(response[0])
                 return True, {"task": task}
             else:
                 return False, {"error": f"Task with ID {task_id} not found"}
@@ -359,15 +422,31 @@ class TaskService:
             return False, {"error": f"Error getting task: {str(e)}"}
 
     async def update_task(
-        self, task_id: str, update_fields: dict[str, Any]
+        self, task_id: str, update_fields: dict[str, Any], skip_worktree_validation: bool = False
     ) -> tuple[bool, dict[str, Any]]:
         """
-        Update task with specified fields.
+        Update task with specified fields and worktree safety validation.
 
         Returns:
             Tuple of (success, result_dict)
         """
         try:
+            # Validate worktree safety when status changes to "doing" (active work)
+            if not skip_worktree_validation and update_fields.get("status") == "doing":
+                worktree_service = get_worktree_service()
+                validation = worktree_service.validate_safe_to_work(
+                    task_id=task_id,
+                )
+                
+                if not validation.is_safe:
+                    logger.warning(f"Worktree validation failed for task update: {validation.issues}")
+                    return False, {
+                        "error": "Worktree safety validation failed",
+                        "error_type": "worktree_conflict",
+                        "issues": validation.issues,
+                        "warnings": validation.warnings,
+                    }
+            
             # Build update data
             update_data = {"updated_at": datetime.now().isoformat()}
 
@@ -403,17 +482,28 @@ class TaskService:
                 update_data["feature"] = update_fields["feature"]
 
             # Update task
-            response = (
-                self.supabase_client.table("archon_tasks")
-                .update(update_data)
-                .eq("id", task_id)
-                .execute()
+            db = get_database_connector()
+
+            # Build SET clause dynamically
+            set_clauses = []
+            params = []
+            param_count = 1
+
+            for key, value in update_data.items():
+                set_clauses.append(f"{key} = ${param_count}")
+                params.append(value)
+                param_count += 1
+
+            # Add task_id as last parameter
+            params.append(task_id)
+
+            response = await db.fetch(
+                f"UPDATE archon_tasks SET {', '.join(set_clauses)} WHERE id = ${param_count} RETURNING *",
+                *params
             )
 
-            if response.data:
-                task = response.data[0]
-
-
+            if response:
+                task = dict(response[0])
                 return True, {"task": task, "message": "Task updated successfully"}
             else:
                 return False, {"error": f"Task with ID {task_id} not found"}
@@ -432,35 +522,37 @@ class TaskService:
             Tuple of (success, result_dict)
         """
         try:
+            db = get_database_connector()
+
             # First, check if task exists and is not already archived
-            task_response = (
-                self.supabase_client.table("archon_tasks").select("*").eq("id", task_id).execute()
+            task_response = await db.fetch(
+                "SELECT * FROM archon_tasks WHERE id = $1",
+                task_id
             )
-            if not task_response.data:
+
+            if not task_response:
                 return False, {"error": f"Task with ID {task_id} not found"}
 
-            task = task_response.data[0]
+            task = dict(task_response[0])
             if task.get("archived") is True:
                 return False, {"error": f"Task with ID {task_id} is already archived"}
 
-            # Archive the task
-            archive_data = {
-                "archived": True,
-                "archived_at": datetime.now().isoformat(),
-                "archived_by": archived_by,
-                "updated_at": datetime.now().isoformat(),
-            }
-
             # Archive the main task
-            response = (
-                self.supabase_client.table("archon_tasks")
-                .update(archive_data)
-                .eq("id", task_id)
-                .execute()
+            response = await db.fetch(
+                """
+                UPDATE archon_tasks
+                SET archived = $1, archived_at = $2, archived_by = $3, updated_at = $4
+                WHERE id = $5
+                RETURNING *
+                """,
+                True,
+                datetime.now().isoformat(),
+                archived_by,
+                datetime.now().isoformat(),
+                task_id
             )
 
-            if response.data:
-
+            if response:
                 return True, {"task_id": task_id, "message": "Task archived successfully"}
             else:
                 return False, {"error": f"Failed to archive task {task_id}"}
@@ -469,12 +561,12 @@ class TaskService:
             logger.error(f"Error archiving task: {e}")
             return False, {"error": f"Error archiving task: {str(e)}"}
 
-    def get_all_project_task_counts(self) -> tuple[bool, dict[str, dict[str, int]]]:
+    async def get_all_project_task_counts(self) -> tuple[bool, dict[str, dict[str, int]]]:
         """
         Get task counts for all projects in a single optimized query.
-        
+
         Returns task counts grouped by project_id and status.
-        
+
         Returns:
             Tuple of (success, counts_dict) where counts_dict is:
             {"project-id": {"todo": 5, "doing": 2, "review": 3, "done": 10}}
@@ -482,22 +574,25 @@ class TaskService:
         try:
             logger.debug("Fetching task counts for all projects in batch")
 
+            db = get_database_connector()
+
             # Query all non-archived tasks grouped by project_id and status
-            response = (
-                self.supabase_client.table("archon_tasks")
-                .select("project_id, status")
-                .or_("archived.is.null,archived.is.false")
-                .execute()
+            response = await db.fetch(
+                """
+                SELECT project_id, status
+                FROM archon_tasks
+                WHERE archived IS NULL OR archived = false
+                """
             )
 
-            if not response.data:
+            if not response:
                 logger.debug("No tasks found")
                 return True, {}
 
             # Process results into counts by project and status
             counts_by_project = {}
 
-            for task in response.data:
+            for task in response:
                 project_id = task.get("project_id")
                 status = task.get("status")
 

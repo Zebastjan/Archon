@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from ...config.logfire_config import safe_logfire_error, safe_logfire_info
+from ..database import get_database_connector
 
 
 class DatabaseMetricsService:
@@ -15,14 +16,9 @@ class DatabaseMetricsService:
     Service for retrieving database metrics and statistics.
     """
 
-    def __init__(self, supabase_client):
-        """
-        Initialize the database metrics service.
-
-        Args:
-            supabase_client: The Supabase client for database operations
-        """
-        self.supabase = supabase_client
+    def __init__(self):
+        """Initialize the database metrics service."""
+        pass
 
     async def get_metrics(self) -> dict[str, Any]:
         """
@@ -34,29 +30,23 @@ class DatabaseMetricsService:
         try:
             safe_logfire_info("Getting database metrics")
 
+            db = get_database_connector()
+
             # Get counts from various tables
             metrics = {}
 
             # Sources count
-            sources_result = (
-                self.supabase.table("archon_sources").select("*", count="exact").execute()
-            )
-            metrics["sources_count"] = sources_result.count if sources_result.count else 0
+            sources_result = await db.fetch("SELECT COUNT(*) as count FROM archon_sources")
+            metrics["sources_count"] = sources_result[0]["count"] if sources_result else 0
 
             # Crawled pages count
-            pages_result = (
-                self.supabase.table("archon_crawled_pages").select("*", count="exact").execute()
-            )
-            metrics["pages_count"] = pages_result.count if pages_result.count else 0
+            pages_result = await db.fetch("SELECT COUNT(*) as count FROM archon_crawled_pages")
+            metrics["pages_count"] = pages_result[0]["count"] if pages_result else 0
 
             # Code examples count
             try:
-                code_examples_result = (
-                    self.supabase.table("archon_code_examples").select("*", count="exact").execute()
-                )
-                metrics["code_examples_count"] = (
-                    code_examples_result.count if code_examples_result.count else 0
-                )
+                code_examples_result = await db.fetch("SELECT COUNT(*) as count FROM archon_code_examples")
+                metrics["code_examples_count"] = code_examples_result[0]["count"] if code_examples_result else 0
             except:
                 metrics["code_examples_count"] = 0
 
@@ -88,32 +78,29 @@ class DatabaseMetricsService:
             Dictionary containing storage statistics
         """
         try:
+            db = get_database_connector()
             stats = {}
 
             # Get knowledge type distribution
-            knowledge_types_result = (
-                self.supabase.table("archon_sources").select("metadata->knowledge_type").execute()
+            knowledge_types_result = await db.fetch(
+                "SELECT metadata->>'knowledge_type' as knowledge_type FROM archon_sources"
             )
 
-            if knowledge_types_result.data:
+            if knowledge_types_result:
                 type_counts = {}
-                for row in knowledge_types_result.data:
+                for row in knowledge_types_result:
                     ktype = row.get("knowledge_type", "unknown")
                     type_counts[ktype] = type_counts.get(ktype, 0) + 1
                 stats["knowledge_type_distribution"] = type_counts
 
             # Get recent activity
-            recent_sources = (
-                self.supabase.table("archon_sources")
-                .select("source_id, created_at")
-                .order("created_at", desc=True)
-                .limit(5)
-                .execute()
+            recent_sources = await db.fetch(
+                "SELECT source_id, created_at FROM archon_sources ORDER BY created_at DESC LIMIT 5"
             )
 
             stats["recent_sources"] = [
                 {"source_id": s["source_id"], "created_at": s["created_at"]}
-                for s in (recent_sources.data or [])
+                for s in (recent_sources or [])
             ]
 
             return stats

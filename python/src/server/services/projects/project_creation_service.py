@@ -9,9 +9,8 @@ AI-assisted documentation generation and progress tracking.
 from datetime import UTC, datetime
 from typing import Any
 
-from src.server.utils import get_supabase_client
-
 from ...config.logfire_config import get_logger
+from ..database import get_database_connector
 
 logger = get_logger(__name__)
 
@@ -19,9 +18,9 @@ logger = get_logger(__name__)
 class ProjectCreationService:
     """Service class for advanced project creation with AI assistance"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self):
+        """Initialize project creation service"""
+        pass
 
     async def create_project_with_ai(
         self,
@@ -68,13 +67,31 @@ class ProjectCreationService:
                     project_data[key] = kwargs[key]
 
             # Create the project in database
-            response = self.supabase_client.table("archon_projects").insert(project_data).execute()
-            if hasattr(response, "error") and response.error:
-                raise RuntimeError(f"Supabase insert failed for project '{title}': {response.error}")
-            if not response.data:
+            db = get_database_connector()
+            import json
+
+            response = await db.fetch(
+                """
+                INSERT INTO archon_projects
+                (title, description, github_repo, created_at, updated_at, docs, features, data, pinned)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING *
+                """,
+                project_data["title"],
+                project_data["description"],
+                project_data.get("github_repo"),
+                project_data["created_at"],
+                project_data["updated_at"],
+                json.dumps(project_data["docs"]),
+                json.dumps(project_data["features"]),
+                json.dumps(project_data["data"]),
+                project_data.get("pinned", False),
+            )
+
+            if not response:
                 raise RuntimeError(f"Insert returned no data for project '{title}'")
 
-            project_id = response.data[0]["id"]
+            project_id = response[0]["id"]
             logger.info(f"Created project {project_id} in database")
 
             # AI processing step
@@ -85,14 +102,13 @@ class ProjectCreationService:
             )
 
             # Final success - fetch complete project data
-            final_project_response = (
-                self.supabase_client.table("archon_projects")
-                .select("*")
-                .eq("id", project_id)
-                .execute()
+            final_project_response = await db.fetch(
+                "SELECT * FROM archon_projects WHERE id = $1",
+                project_id
             )
-            if final_project_response.data:
-                final_project = final_project_response.data[0]
+
+            if final_project_response:
+                final_project = dict(final_project_response[0])
 
                 # Prepare project data for frontend
                 project_data_for_frontend = {

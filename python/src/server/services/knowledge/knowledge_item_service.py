@@ -7,6 +7,7 @@ Handles all knowledge item CRUD operations and data transformations.
 from typing import Any
 
 from ...config.logfire_config import safe_logfire_error, safe_logfire_info
+from ..database import get_database_connector
 
 
 class KnowledgeItemService:
@@ -14,14 +15,9 @@ class KnowledgeItemService:
     Service for managing knowledge items including listing, filtering, updating, and deletion.
     """
 
-    def __init__(self, supabase_client):
-        """
-        Initialize the knowledge item service.
-
-        Args:
-            supabase_client: The Supabase client for database operations
-        """
-        self.supabase = supabase_client
+    def __init__(self):
+        """Initialize the knowledge item service."""
+        pass
 
     async def list_items(
         self,
@@ -43,44 +39,47 @@ class KnowledgeItemService:
             Dict containing items, pagination info, and total count
         """
         try:
-            # Build the query with filters at database level for better performance
-            query = self.supabase.from_("archon_sources").select("*")
+            db = get_database_connector()
+            import json
 
-            # Apply knowledge type filter at database level if provided
+            # Build WHERE clause dynamically
+            where_clauses = []
+            params = []
+            param_count = 1
+
+            # Apply knowledge type filter
             if knowledge_type:
-                query = query.contains("metadata", {"knowledge_type": knowledge_type})
+                where_clauses.append(f"metadata @> ${param_count}")
+                params.append(json.dumps({"knowledge_type": knowledge_type}))
+                param_count += 1
 
-            # Apply search filter at database level if provided
+            # Apply search filter
             if search:
                 search_pattern = f"%{search}%"
-                query = query.or_(
-                    f"title.ilike.{search_pattern},summary.ilike.{search_pattern},source_id.ilike.{search_pattern}"
+                where_clauses.append(
+                    f"(title ILIKE ${param_count} OR summary ILIKE ${param_count} OR source_id ILIKE ${param_count})"
                 )
+                params.append(search_pattern)
+                param_count += 1
 
-            # Get total count before pagination
-            # Clone the query for counting
-            count_query = self.supabase.from_("archon_sources").select("*", count="exact", head=True)
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-            # Apply same filters to count query
-            if knowledge_type:
-                count_query = count_query.contains("metadata", {"knowledge_type": knowledge_type})
+            # Get total count
+            count_result = await db.fetch(
+                f"SELECT COUNT(*) as count FROM archon_sources {where_sql}",
+                *params
+            )
+            total = count_result[0]["count"] if count_result else 0
 
-            if search:
-                search_pattern = f"%{search}%"
-                count_query = count_query.or_(
-                    f"title.ilike.{search_pattern},summary.ilike.{search_pattern},source_id.ilike.{search_pattern}"
-                )
-
-            count_result = count_query.execute()
-            total = count_result.count if hasattr(count_result, "count") else 0
-
-            # Apply pagination at database level
+            # Apply pagination
             start_idx = (page - 1) * per_page
-            query = query.range(start_idx, start_idx + per_page - 1)
+            params.extend([per_page, start_idx])
 
-            # Execute query
-            result = query.execute()
-            sources = result.data if result.data else []
+            # Execute main query with pagination
+            sources = await db.fetch(
+                f"SELECT * FROM archon_sources {where_sql} LIMIT ${param_count} OFFSET ${param_count + 1}",
+                *params
+            )
 
             # Get source IDs for batch queries
             source_ids = [source["source_id"] for source in sources]
@@ -95,28 +94,25 @@ class KnowledgeItemService:
 
             if source_ids:
                 # Batch fetch first URLs
-                urls_result = (
-                    self.supabase.from_("archon_crawled_pages")
-                    .select("source_id, url")
-                    .in_("source_id", source_ids)
-                    .execute()
+                placeholders = ", ".join(f"${i+1}" for i in range(len(source_ids)))
+                urls_result = await db.fetch(
+                    f"SELECT DISTINCT ON (source_id) source_id, url FROM archon_crawled_pages WHERE source_id IN ({placeholders})",
+                    *source_ids
                 )
 
                 # Group URLs by source_id (take first one for each)
-                for item in urls_result.data or []:
+                for item in urls_result:
                     if item["source_id"] not in first_urls:
                         first_urls[item["source_id"]] = item["url"]
 
                 # Get code example counts per source - NO CONTENT, just counts!
                 # Fetch counts individually for each source
                 for source_id in source_ids:
-                    count_result = (
-                        self.supabase.from_("archon_code_examples")
-                        .select("id", count="exact", head=True)
-                        .eq("source_id", source_id)
-                        .execute()
+                    count_result = await db.fetch(
+                        "SELECT COUNT(*) as count FROM archon_code_examples WHERE source_id = $1",
+                        source_id
                     )
-                    code_example_counts[source_id] = count_result.count if hasattr(count_result, "count") else 0
+                    code_example_counts[source_id] = count_result[0]["count"] if count_result else 0
 
                 # Ensure all sources have a count (default to 0)
                 for source_id in source_ids:
@@ -213,13 +209,17 @@ class KnowledgeItemService:
             safe_logfire_info(f"Getting knowledge item | source_id={source_id}")
 
             # Get the source record
-            result = self.supabase.from_("archon_sources").select("*").eq("source_id", source_id).single().execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                "SELECT * FROM archon_sources WHERE source_id = $1",
+                source_id
+            )
 
-            if not result.data:
+            if not result:
                 return None
 
             # Transform the source to item format
-            item = await self._transform_source_to_item(result.data)
+            item = await self._transform_source_to_item(dict(result[0]))
             return item
 
         except Exception as e:
@@ -239,6 +239,9 @@ class KnowledgeItemService:
         """
         try:
             safe_logfire_info(f"Updating knowledge item | source_id={source_id} | updates={updates}")
+
+            db = get_database_connector()
+            import json
 
             # Prepare update data
             update_data = {}
@@ -260,20 +263,40 @@ class KnowledgeItemService:
 
             if metadata_updates:
                 # Get current metadata
-                current_response = (
-                    self.supabase.table("archon_sources").select("metadata").eq("source_id", source_id).execute()
+                current_response = await db.fetch(
+                    "SELECT metadata FROM archon_sources WHERE source_id = $1",
+                    source_id
                 )
-                if current_response.data:
-                    current_metadata = current_response.data[0].get("metadata", {})
+                if current_response:
+                    current_metadata = current_response[0].get("metadata", {})
                     current_metadata.update(metadata_updates)
                     update_data["metadata"] = current_metadata
                 else:
                     update_data["metadata"] = metadata_updates
 
-            # Perform the update
-            result = self.supabase.table("archon_sources").update(update_data).eq("source_id", source_id).execute()
+            # Build dynamic UPDATE query
+            set_clauses = []
+            params = []
+            param_count = 1
 
-            if result.data:
+            for key, value in update_data.items():
+                set_clauses.append(f"{key} = ${param_count}")
+                # Serialize metadata as JSON
+                if key == "metadata":
+                    params.append(json.dumps(value))
+                else:
+                    params.append(value)
+                param_count += 1
+
+            params.append(source_id)
+
+            # Perform the update
+            result = await db.fetch(
+                f"UPDATE archon_sources SET {', '.join(set_clauses)} WHERE source_id = ${param_count} RETURNING *",
+                *params
+            )
+
+            if result:
                 safe_logfire_info(f"Knowledge item updated successfully | source_id={source_id}")
                 return True, {
                     "success": True,
@@ -297,12 +320,13 @@ class KnowledgeItemService:
         """
         try:
             # Query the sources table
-            result = self.supabase.from_("archon_sources").select("*").order("source_id").execute()
+            db = get_database_connector()
+            result = await db.fetch("SELECT * FROM archon_sources ORDER BY source_id")
 
             # Format the sources
             sources = []
-            if result.data:
-                for source in result.data:
+            if result:
+                for source in result:
                     sources.append(
                         {
                             "source_id": source.get("source_id"),
@@ -397,12 +421,14 @@ class KnowledgeItemService:
     async def _get_first_page_url(self, source_id: str) -> str:
         """Get the first page URL for a source."""
         try:
-            pages_response = (
-                self.supabase.from_("archon_crawled_pages").select("url").eq("source_id", source_id).limit(1).execute()
+            db = get_database_connector()
+            pages_response = await db.fetch(
+                "SELECT url FROM archon_crawled_pages WHERE source_id = $1 LIMIT 1",
+                source_id
             )
 
-            if pages_response.data:
-                return pages_response.data[0].get("url", f"source://{source_id}")
+            if pages_response:
+                return pages_response[0].get("url", f"source://{source_id}")
 
         except Exception:
             pass
@@ -412,14 +438,13 @@ class KnowledgeItemService:
     async def _get_code_examples(self, source_id: str) -> list[dict[str, Any]]:
         """Get code examples for a source."""
         try:
-            code_examples_response = (
-                self.supabase.from_("archon_code_examples")
-                .select("id, content, summary, metadata")
-                .eq("source_id", source_id)
-                .execute()
+            db = get_database_connector()
+            code_examples_response = await db.fetch(
+                "SELECT id, content, summary, metadata FROM archon_code_examples WHERE source_id = $1",
+                source_id
             )
 
-            return code_examples_response.data if code_examples_response.data else []
+            return [dict(row) for row in code_examples_response] if code_examples_response else []
 
         except Exception:
             return []
@@ -489,15 +514,14 @@ class KnowledgeItemService:
         """Get the actual number of chunks for a source."""
         try:
             # Count the actual rows in crawled_pages for this source
-            result = (
-                self.supabase.table("archon_crawled_pages")
-                .select("*", count="exact")
-                .eq("source_id", source_id)
-                .execute()
+            db = get_database_connector()
+            result = await db.fetch(
+                "SELECT COUNT(*) as count FROM archon_crawled_pages WHERE source_id = $1",
+                source_id
             )
 
             # Return the count of pages (chunks)
-            return result.count if result.count else 0
+            return result[0]["count"] if result else 0
 
         except Exception as e:
             # If we can't get chunk count, return 0
