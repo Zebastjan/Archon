@@ -85,12 +85,12 @@ class DocumentStorageOperations:
             chunker = get_chunker("basic", chunk_size=chunk_size)
 
         # Initialize URL state tracking if enabled
-        url_state_service = get_crawl_url_state_service(self.supabase_client)
+        url_state_service = get_crawl_url_state_service()
         unique_doc_urls = [doc.get("url", "").strip() for doc in crawl_results if doc.get("url", "").strip()]
         unique_doc_urls = list(set(unique_doc_urls))
         if unique_doc_urls:
             try:
-                url_state_service.initialize_urls(original_source_id, unique_doc_urls)
+                await url_state_service.initialize_urls(original_source_id, unique_doc_urls)
                 safe_logfire_info(f"Initialized URL state tracking for {len(unique_doc_urls)} URLs")
             except Exception as e:
                 safe_logfire_error(f"Failed to initialize URL state: {e}")
@@ -197,7 +197,7 @@ class DocumentStorageOperations:
         # Store pages AFTER source is created but BEFORE chunks (FK constraint requirement)
         from .page_storage_operations import PageStorageOperations
 
-        page_storage_ops = PageStorageOperations(self.supabase_client)
+        page_storage_ops = PageStorageOperations()
 
         # Check if this is an llms-full.txt file
         is_llms_full = crawl_type == "llms-txt" or (
@@ -295,7 +295,6 @@ class DocumentStorageOperations:
 
         # Call add_documents_to_supabase with the correct parameters
         storage_stats = await add_documents_to_supabase(
-            client=self.supabase_client,
             urls=all_urls,  # Now has entry per chunk
             chunk_numbers=all_chunk_numbers,  # Proper chunk numbers (0, 1, 2, etc)
             contents=all_contents,  # Individual chunks
@@ -313,7 +312,7 @@ class DocumentStorageOperations:
         if unique_doc_urls:
             try:
                 for doc_url in unique_doc_urls:
-                    url_state_service.mark_embedded(original_source_id, doc_url)
+                    await url_state_service.mark_embedded(original_source_id, doc_url)
                 safe_logfire_info(f"Marked {len(unique_doc_urls)} URLs as embedded")
             except Exception as e:
                 safe_logfire_error(f"Failed to mark URLs as embedded: {e}")
@@ -420,7 +419,6 @@ class DocumentStorageOperations:
 
                 # Call async update_source_info directly
                 await update_source_info(
-                    client=self.supabase_client,
                     source_id=source_id,
                     summary=summary,
                     word_count=source_id_word_counts[source_id],
@@ -604,7 +602,7 @@ class DocumentStorageOperations:
         )
 
         # Run pipeline orchestrator
-        orchestrator = get_pipeline_orchestrator(self.supabase_client)
+        orchestrator = get_pipeline_orchestrator()
 
         # Create progress wrapper for pipeline
         async def pipeline_progress_callback(stage: str, progress: int, message: str):
@@ -659,32 +657,43 @@ class DocumentStorageOperations:
         but we still need an archon_sources record for compatibility.
         """
         try:
-            response = (
-                self.supabase_client.table("archon_sources").select("source_id").eq("source_id", source_id).execute()
+            db = get_database_connector()
+            import json
+
+            response = await db.fetch(
+                "SELECT source_id FROM archon_sources WHERE source_id = $1",
+                source_id
             )
 
-            if not response.data:
+            if not response:
                 # Create new source record
-                source_record = {
-                    "source_id": source_id,
-                    "source_url": source_url,
-                    "source_url_display_name": source_display_name or source_url,
-                    "source_type": "url",
-                    "knowledge_type": request.get("knowledge_type", "documentation"),
-                    "tags": request.get("tags", []),
-                    "pipeline_status": "chunking",
-                    "pipeline_stage_status": {},
-                }
-                self.supabase_client.table("archon_sources").insert(source_record).execute()
+                await db.execute(
+                    """
+                    INSERT INTO archon_sources
+                    (source_id, source_url, source_url_display_name, source_type, knowledge_type, tags, pipeline_status, pipeline_stage_status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                    source_id,
+                    source_url,
+                    source_display_name or source_url,
+                    "url",
+                    request.get("knowledge_type", "documentation"),
+                    json.dumps(request.get("tags", [])),
+                    "chunking",
+                    json.dumps({}),
+                )
                 safe_logfire_info(f"Created archon_sources record | source_id={source_id}")
             else:
                 # Update existing source
-                self.supabase_client.table("archon_sources").update(
-                    {
-                        "pipeline_status": "chunking",
-                        "updated_at": "now()",
-                    }
-                ).eq("source_id", source_id).execute()
+                await db.execute(
+                    """
+                    UPDATE archon_sources
+                    SET pipeline_status = $1, updated_at = now()
+                    WHERE source_id = $2
+                    """,
+                    "chunking",
+                    source_id,
+                )
                 safe_logfire_info(f"Updated archon_sources record | source_id={source_id}")
 
         except Exception as e:

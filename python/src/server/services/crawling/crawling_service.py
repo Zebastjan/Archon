@@ -15,8 +15,8 @@ from typing import Any, Optional
 import tldextract
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
-from ...utils import get_supabase_client
 from ...utils.progress.progress_tracker import ProgressTracker
+from ..database import get_database_connector
 from ..credential_service import credential_service
 from .crawl_url_state_service import get_crawl_url_state_service
 
@@ -112,17 +112,15 @@ class CrawlingService:
     Combines functionality from both CrawlingService and CrawlOrchestrationService.
     """
 
-    def __init__(self, crawler=None, supabase_client=None, progress_id=None):
+    def __init__(self, crawler=None, progress_id=None):
         """
         Initialize the crawling service.
 
         Args:
             crawler: The Crawl4AI crawler instance
-            supabase_client: The Supabase client for database operations
             progress_id: Optional progress ID for HTTP polling updates
         """
         self.crawler = crawler
-        self.supabase_client = supabase_client or get_supabase_client()
         self.progress_id = progress_id
         self.progress_tracker = None
 
@@ -139,9 +137,9 @@ class CrawlingService:
         self.sitemap_strategy = SitemapCrawlStrategy()
 
         # Initialize operations
-        self.doc_storage_ops = DocumentStorageOperations(self.supabase_client)
+        self.doc_storage_ops = DocumentStorageOperations()
         self.discovery_service = DiscoveryService()
-        self.page_storage_ops = PageStorageOperations(self.supabase_client)
+        self.page_storage_ops = PageStorageOperations()
 
         # Track progress state across all stages to prevent UI resets
         self.progress_state = {"progressId": self.progress_id} if self.progress_id else {}
@@ -397,32 +395,38 @@ class CrawlingService:
 
             for attempt in range(max_retries):
                 try:
-                    existing_source = (
-                        self.supabase_client.table("archon_sources")
-                        .select("source_id")
-                        .eq("source_id", original_source_id)
-                        .execute()
+                    db = get_database_connector()
+                    import json
+
+                    existing_source = await db.fetch(
+                        "SELECT source_id FROM archon_sources WHERE source_id = $1",
+                        original_source_id
                     )
 
-                    if not existing_source.data:
+                    if not existing_source:
                         # Create minimal source record with essential metadata
-                        minimal_source = {
-                            "source_id": original_source_id,
-                            "source_url": url,
-                            "source_display_name": source_display_name,
-                            "metadata": {
-                                "original_url": url,
-                                "knowledge_type": request.get("knowledge_type", "general"),
-                                "tags": request.get("tags", []),
-                                "max_depth": request.get("max_depth", 2),
-                                "allow_external_links": request.get("allow_external_links", False),
-                                "source_type": "url",
-                                "auto_generated": False,
-                            },
-                            "pipeline_status": "idle",
+                        metadata = {
+                            "original_url": url,
+                            "knowledge_type": request.get("knowledge_type", "general"),
+                            "tags": request.get("tags", []),
+                            "max_depth": request.get("max_depth", 2),
+                            "allow_external_links": request.get("allow_external_links", False),
+                            "source_type": "url",
+                            "auto_generated": False,
                         }
 
-                        self.supabase_client.table("archon_sources").insert(minimal_source).execute()
+                        await db.execute(
+                            """
+                            INSERT INTO archon_sources
+                            (source_id, source_url, source_url_display_name, metadata, pipeline_status)
+                            VALUES ($1, $2, $3, $4, $5)
+                            """,
+                            original_source_id,
+                            url,
+                            source_display_name,
+                            json.dumps(metadata),
+                            "idle",
+                        )
                         safe_logfire_info(
                             f"Created minimal source record for pause/resume support | source_id={original_source_id}"
                         )
@@ -455,11 +459,11 @@ class CrawlingService:
                         ) from last_error
 
             # Check for existing crawl state and determine if we're resuming
-            url_state_service = get_crawl_url_state_service(self.supabase_client)
-            has_existing_state = url_state_service.has_existing_state(original_source_id)
+            url_state_service = get_crawl_url_state_service()
+            has_existing_state = await url_state_service.has_existing_state(original_source_id)
 
             if has_existing_state:
-                crawl_state = url_state_service.get_crawl_state(original_source_id)
+                crawl_state = await url_state_service.get_crawl_state(original_source_id)
                 pending_count = crawl_state.get("pending", 0)
                 embedded_count = crawl_state.get("embedded", 0)
                 failed_count = crawl_state.get("failed", 0)
@@ -473,7 +477,7 @@ class CrawlingService:
                     )
                 else:
                     # All URLs processed - clear old state for fresh crawl
-                    url_state_service.clear_state(original_source_id)
+                    await url_state_service.clear_state(original_source_id)
                     safe_logfire_info(f"Cleared completed crawl state for fresh crawl | source_id={original_source_id}")
 
             # Helper to update progress with mapper
@@ -989,10 +993,10 @@ class CrawlingService:
         if not urls:
             return []
 
-        url_state_service = get_crawl_url_state_service(self.supabase_client)
+        url_state_service = get_crawl_url_state_service()
 
         # Get embedded URLs
-        embedded_urls = url_state_service.get_embedded_urls(source_id)
+        embedded_urls = await url_state_service.get_embedded_urls(source_id)
         embedded_set = set(embedded_urls)
 
         # Filter
@@ -1178,7 +1182,7 @@ class CrawlingService:
                             logger.info(
                                 f"Crawling {len(extracted_links)} same-domain links with max_depth={max_depth - 1}"
                             )
-                            url_state_service = get_crawl_url_state_service(self.supabase_client) if source_id else None
+                            url_state_service = get_crawl_url_state_service() if source_id else None
                             batch_results = await self.crawl_recursive_with_progress(
                                 extracted_links,
                                 max_depth=max_depth - 1,  # Reduce depth since we're already 1 level deep
@@ -1267,7 +1271,7 @@ class CrawlingService:
             # Let the strategy handle concurrency from settings
             # This will use CRAWL_MAX_CONCURRENT from database (default: 10)
 
-            url_state_service = get_crawl_url_state_service(self.supabase_client) if source_id else None
+            url_state_service = get_crawl_url_state_service() if source_id else None
             crawl_results = await self.crawl_recursive_with_progress(
                 [url],
                 max_depth=max_depth,
