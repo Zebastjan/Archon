@@ -147,26 +147,33 @@ def get_language_registry() -> LanguageSupportRegistry:
 
 def _register_builtin_languages(registry: LanguageSupportRegistry) -> None:
     """Register built-in language supports.
-    
+
     Called once during registry initialization. Imports language modules
     here to avoid circular imports at module load time.
     """
     logger.debug("Registering builtin languages")
-    
+
     try:
         from .python_support import PythonLanguageSupport
         registry.register(PythonLanguageSupport())
         logger.debug("Python language support registered")
     except ImportError as e:
         logger.warning(f"Python language import failed: {e}")
-    
+
     try:
         from .typescript_support import TypeScriptLanguageSupport
         registry.register(TypeScriptLanguageSupport())
         logger.debug("TypeScript language support registered")
     except ImportError as e:
         logger.warning(f"TypeScript language import failed: {e}")
-    
+
+    try:
+        from .nim_support import NimLanguageSupport
+        registry.register(NimLanguageSupport())
+        logger.debug("Nim language support registered")
+    except ImportError as e:
+        logger.warning(f"Nim language import failed: {e}")
+
     logger.info(
         f"Builtin languages registered: {len(registry.list_languages())} "
         f"({', '.join(registry.list_languages())})"

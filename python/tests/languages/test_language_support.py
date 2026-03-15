@@ -41,12 +41,25 @@ class TestLanguageRegistry:
         """Should return None for unsupported extensions."""
         support = get_language_for_file("src/main.rs")
         assert support is None
-    
+
+    def test_get_language_for_nim_file(self):
+        """Should return Nim support for .nim files."""
+        support = get_language_for_file("src/main.nim")
+        assert support is not None
+        assert support.language_id == "nim"
+
+    def test_get_language_for_nimscript_file(self):
+        """Should return Nim support for .nims files."""
+        support = get_language_for_file("config.nims")
+        assert support is not None
+        assert support.language_id == "nim"
+
     def test_language_registry_has_registered_languages(self):
-        """Registry should have Python and TypeScript registered."""
+        """Registry should have Python, TypeScript, and Nim registered."""
         languages = language_registry.list_languages()
         assert "python" in languages
         assert "typescript" in languages
+        assert "nim" in languages
 
 
 class TestPythonLanguageSupport:
