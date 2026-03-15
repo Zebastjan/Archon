@@ -4,7 +4,7 @@ Ensures backward compatibility and validates token reduction.
 """
 
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -13,19 +13,27 @@ from src.server.services.projects.document_service import DocumentService
 from src.server.services.projects.task_service import TaskService
 
 
+@pytest.fixture
+def mock_db():
+    """Mock PostgreSQL database connector"""
+    mock = Mock()
+    mock.fetch = AsyncMock(return_value=[])
+    mock.fetchrow = AsyncMock(return_value=None)
+    mock.execute = AsyncMock(return_value="INSERT 0 1")
+    return mock
+
+
 class TestProjectServiceOptimization:
     """Test ProjectService with include_content parameter."""
 
-    @patch('src.server.utils.get_supabase_client')
-    def test_list_projects_with_full_content(self, mock_supabase):
+    @patch('src.server.services.projects.project_service.get_database_connector')
+    async def test_list_projects_with_full_content(self, mock_get_db, mock_db):
         """Test backward compatibility - default returns full content."""
         # Setup mock
-        mock_client = Mock()
-        mock_supabase.return_value = mock_client
+        mock_get_db.return_value = mock_db
 
         # Mock response with large JSONB fields
-        mock_response = Mock()
-        mock_response.data = [{
+        mock_db.fetch = AsyncMock(return_value=[{
             "id": "test-id",
             "title": "Test Project",
             "description": "Test Description",
@@ -36,19 +44,11 @@ class TestProjectServiceOptimization:
             "pinned": False,
             "created_at": "2024-01-01",
             "updated_at": "2024-01-01"
-        }]
-
-        mock_table = Mock()
-        mock_select = Mock()
-        mock_order = Mock()
-        mock_order.execute.return_value = mock_response
-        mock_select.order.return_value = mock_order
-        mock_table.select.return_value = mock_select
-        mock_client.table.return_value = mock_table
+        }])
 
         # Test
-        service = ProjectService(mock_client)
-        success, result = service.list_projects()  # Default include_content=True
+        service = ProjectService()
+        success, result = await service.list_projects()  # Default include_content=True
 
         # Assertions
         assert success
@@ -61,19 +61,14 @@ class TestProjectServiceOptimization:
         assert len(result["projects"][0]["docs"]) == 1
         assert result["projects"][0]["docs"][0]["content"]["large"] is not None
 
-        # Verify SELECT * was used
-        mock_table.select.assert_called_with("*")
-
-    @patch('src.server.utils.get_supabase_client')
-    def test_list_projects_lightweight(self, mock_supabase):
+    @patch('src.server.services.projects.project_service.get_database_connector')
+    async def test_list_projects_lightweight(self, mock_get_db, mock_db):
         """Test lightweight response excludes large fields."""
         # Setup mock
-        mock_client = Mock()
-        mock_supabase.return_value = mock_client
+        mock_get_db.return_value = mock_db
 
-        # Mock response with full data (after N+1 fix, we fetch all data)
-        mock_response = Mock()
-        mock_response.data = [{
+        # Mock response with full data
+        mock_db.fetch = AsyncMock(return_value=[{
             "id": "test-id",
             "title": "Test Project",
             "description": "Test Description",
@@ -84,21 +79,11 @@ class TestProjectServiceOptimization:
             "docs": [{"id": "doc1"}, {"id": "doc2"}, {"id": "doc3"}],  # 3 docs
             "features": [{"feature1": "data"}, {"feature2": "data"}],  # 2 features
             "data": [{"key": "value"}]  # Has data
-        }]
-
-        # Setup mock chain - now simpler after N+1 fix
-        mock_table = Mock()
-        mock_select = Mock()
-        mock_order = Mock()
-
-        mock_order.execute.return_value = mock_response
-        mock_select.order.return_value = mock_order
-        mock_table.select.return_value = mock_select
-        mock_client.table.return_value = mock_table
+        }])
 
         # Test
-        service = ProjectService(mock_client)
-        success, result = service.list_projects(include_content=False)
+        service = ProjectService()
+        success, result = await service.list_projects(include_content=False)
 
         # Assertions
         assert success
@@ -115,10 +100,6 @@ class TestProjectServiceOptimization:
         assert project["stats"]["docs_count"] == 3
         assert project["stats"]["features_count"] == 2
         assert project["stats"]["has_data"] is True
-
-        # Verify SELECT * was used (after N+1 fix, we fetch all data in one query)
-        mock_table.select.assert_called_with("*")
-        assert mock_client.table.call_count == 1  # Only one query now!
 
     def test_token_reduction(self):
         """Verify token count reduction."""
@@ -161,14 +142,12 @@ class TestProjectServiceOptimization:
 class TestTaskServiceOptimization:
     """Test TaskService with exclude_large_fields parameter."""
 
-    @patch('src.server.utils.get_supabase_client')
-    def test_list_tasks_with_large_fields(self, mock_supabase):
+    @patch('src.server.services.projects.task_service.get_database_connector')
+    async def test_list_tasks_with_large_fields(self, mock_get_db, mock_db):
         """Test backward compatibility - default includes large fields."""
-        mock_client = Mock()
-        mock_supabase.return_value = mock_client
+        mock_get_db.return_value = mock_db
 
-        mock_response = Mock()
-        mock_response.data = [{
+        mock_db.fetch = AsyncMock(return_value=[{
             "id": "task-1",
             "project_id": "proj-1",
             "title": "Test Task",
@@ -181,37 +160,21 @@ class TestTaskServiceOptimization:
             "feature": None,
             "created_at": "2024-01-01",
             "updated_at": "2024-01-01"
-        }]
+        }])
 
-        # Setup mock chain
-        mock_table = Mock()
-        mock_select = Mock()
-        mock_or = Mock()
-        mock_order1 = Mock()
-        mock_order2 = Mock()
-
-        mock_order2.execute.return_value = mock_response
-        mock_order1.order.return_value = mock_order2
-        mock_or.order.return_value = mock_order1
-        mock_select.neq().or_.return_value = mock_or
-        mock_table.select.return_value = mock_select
-        mock_client.table.return_value = mock_table
-
-        service = TaskService(mock_client)
-        success, result = service.list_tasks()
+        service = TaskService()
+        success, result = await service.list_tasks()
 
         assert success
         assert "sources" in result["tasks"][0]
         assert "code_examples" in result["tasks"][0]
 
-    @patch('src.server.utils.get_supabase_client')
-    def test_list_tasks_exclude_large_fields(self, mock_supabase):
+    @patch('src.server.services.projects.task_service.get_database_connector')
+    async def test_list_tasks_exclude_large_fields(self, mock_get_db, mock_db):
         """Test excluding large fields returns counts instead."""
-        mock_client = Mock()
-        mock_supabase.return_value = mock_client
+        mock_get_db.return_value = mock_db
 
-        mock_response = Mock()
-        mock_response.data = [{
+        mock_db.fetch = AsyncMock(return_value=[{
             "id": "task-1",
             "project_id": "proj-1",
             "title": "Test Task",
@@ -220,28 +183,14 @@ class TestTaskServiceOptimization:
             "assignee": "User",
             "task_order": 0,
             "feature": None,
-            "sources": [1, 2, 3],  # Will be counted
-            "code_examples": [1, 2],  # Will be counted
+            "sources": [{"id": 1}, {"id": 2}, {"id": 3}],  # Will be counted
+            "code_examples": [{"id": 1}, {"id": 2}],  # Will be counted
             "created_at": "2024-01-01",
             "updated_at": "2024-01-01"
-        }]
+        }])
 
-        # Setup mock chain
-        mock_table = Mock()
-        mock_select = Mock()
-        mock_or = Mock()
-        mock_order1 = Mock()
-        mock_order2 = Mock()
-
-        mock_order2.execute.return_value = mock_response
-        mock_order1.order.return_value = mock_order2
-        mock_or.order.return_value = mock_order1
-        mock_select.neq().or_.return_value = mock_or
-        mock_table.select.return_value = mock_select
-        mock_client.table.return_value = mock_table
-
-        service = TaskService(mock_client)
-        success, result = service.list_tasks(exclude_large_fields=True)
+        service = TaskService()
+        success, result = await service.list_tasks(exclude_large_fields=True)
 
         assert success
         task = result["tasks"][0]
@@ -255,14 +204,13 @@ class TestTaskServiceOptimization:
 class TestDocumentServiceOptimization:
     """Test DocumentService with include_content parameter."""
 
-    @patch('src.server.utils.get_supabase_client')
-    def test_list_documents_metadata_only(self, mock_supabase):
+    @patch('src.server.services.projects.document_service.get_database_connector')
+    async def test_list_documents_metadata_only(self, mock_get_db, mock_db):
         """Test default returns metadata only."""
-        mock_client = Mock()
-        mock_supabase.return_value = mock_client
+        mock_get_db.return_value = mock_db
 
-        mock_response = Mock()
-        mock_response.data = [{
+        # Document service queries the project's docs field
+        mock_db.fetch = AsyncMock(return_value=[{
             "docs": [{
                 "id": "doc-1",
                 "title": "Test Doc",
@@ -273,20 +221,10 @@ class TestDocumentServiceOptimization:
                 "tags": ["test"],
                 "author": "Test Author"
             }]
-        }]
+        }])
 
-        # Setup mock chain
-        mock_table = Mock()
-        mock_select = Mock()
-        mock_eq = Mock()
-
-        mock_eq.execute.return_value = mock_response
-        mock_select.eq.return_value = mock_eq
-        mock_table.select.return_value = mock_select
-        mock_client.table.return_value = mock_table
-
-        service = DocumentService(mock_client)
-        success, result = service.list_documents("project-1")  # Default include_content=False
+        service = DocumentService()
+        success, result = await service.list_documents("project-1")  # Default include_content=False
 
         assert success
         doc = result["documents"][0]
@@ -295,34 +233,23 @@ class TestDocumentServiceOptimization:
         assert doc["stats"]["content_size"] > 0
         assert doc["title"] == "Test Doc"
 
-    @patch('src.server.utils.get_supabase_client')
-    def test_list_documents_with_content(self, mock_supabase):
+    @patch('src.server.services.projects.document_service.get_database_connector')
+    async def test_list_documents_with_content(self, mock_get_db, mock_db):
         """Test include_content=True returns full documents."""
-        mock_client = Mock()
-        mock_supabase.return_value = mock_client
+        mock_get_db.return_value = mock_db
 
-        mock_response = Mock()
-        mock_response.data = [{
+        # Document service queries the project's docs field
+        mock_db.fetch = AsyncMock(return_value=[{
             "docs": [{
                 "id": "doc-1",
                 "title": "Test Doc",
                 "content": {"huge": "content"},
                 "document_type": "spec"
             }]
-        }]
+        }])
 
-        # Setup mock chain
-        mock_table = Mock()
-        mock_select = Mock()
-        mock_eq = Mock()
-
-        mock_eq.execute.return_value = mock_response
-        mock_select.eq.return_value = mock_eq
-        mock_table.select.return_value = mock_select
-        mock_client.table.return_value = mock_table
-
-        service = DocumentService(mock_client)
-        success, result = service.list_documents("project-1", include_content=True)
+        service = DocumentService()
+        success, result = await service.list_documents("project-1", include_content=True)
 
         assert success
         doc = result["documents"][0]
@@ -336,19 +263,19 @@ class TestBackwardCompatibility:
     def test_api_defaults_preserve_behavior(self):
         """Test that API defaults maintain current behavior."""
         # ProjectService default should include content
-        service = ProjectService(Mock())
+        service = ProjectService()
         # Check default parameter value
         import inspect
         sig = inspect.signature(service.list_projects)
         assert sig.parameters['include_content'].default is True
 
         # DocumentService default should NOT include content
-        doc_service = DocumentService(Mock())
+        doc_service = DocumentService()
         sig = inspect.signature(doc_service.list_documents)
         assert sig.parameters['include_content'].default is False
 
         # TaskService default should NOT exclude fields
-        task_service = TaskService(Mock())
+        task_service = TaskService()
         sig = inspect.signature(task_service.list_tasks)
         assert sig.parameters['exclude_large_fields'].default is False
 
