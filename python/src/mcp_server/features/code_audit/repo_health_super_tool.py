@@ -51,7 +51,7 @@ FOCUS_RULESETS = {
 }
 
 
-def run_repo_health_check(
+async def run_repo_health_check(
     repo_id: str,
     focus: Literal["full", "security", "tdd", "docs", "maintainability"] | None = None,
     ruleset: str | None = None,
@@ -81,7 +81,7 @@ def run_repo_health_check(
         # Step 1: Worktree safety validation (internal, not exposed to model)
         if not skip_worktree_validation:
             worktree_service = get_worktree_service()
-            validation = worktree_service.validate_safe_to_work(
+            validation = await worktree_service.validate_safe_to_work(
                 file_paths=["*"],  # Generic check for repo-wide operations
             )
             

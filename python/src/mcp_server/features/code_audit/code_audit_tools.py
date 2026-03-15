@@ -415,7 +415,7 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
                     "error": f"Invalid focus. Must be one of: {valid_focus}",
                 }
             
-            result = run_repo_health_check(
+            result = await run_repo_health_check(
                 repo_id=repo_id,
                 focus=focus,
                 ruleset=ruleset,
