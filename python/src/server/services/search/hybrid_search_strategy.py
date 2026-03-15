@@ -13,9 +13,8 @@ Strategy combines:
 
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_span
+from ..database import get_database_connector
 from ..embeddings.embedding_service import create_embedding
 
 logger = get_logger(__name__)
@@ -24,8 +23,7 @@ logger = get_logger(__name__)
 class HybridSearchStrategy:
     """Strategy class implementing hybrid search combining vector and full-text search"""
 
-    def __init__(self, supabase_client: Client, base_strategy):
-        self.supabase_client = supabase_client
+    def __init__(self, base_strategy):
         self.base_strategy = base_strategy
 
     async def search_documents_hybrid(
@@ -50,29 +48,30 @@ class HybridSearchStrategy:
         """
         with safe_span("hybrid_search_documents") as span:
             try:
+                db = get_database_connector()
+                import json
+
                 # Prepare filter and source parameters
                 filter_json = filter_metadata or {}
                 source_filter = filter_json.pop("source", None) if "source" in filter_json else None
 
                 # Call the hybrid search PostgreSQL function
-                response = self.supabase_client.rpc(
-                    "hybrid_search_archon_crawled_pages",
-                    {
-                        "query_embedding": query_embedding,
-                        "query_text": query,
-                        "match_count": match_count,
-                        "filter": filter_json,
-                        "source_filter": source_filter,
-                    },
-                ).execute()
+                rows = await db.fetch(
+                    "SELECT * FROM hybrid_search_archon_crawled_pages($1, $2, $3, $4, $5)",
+                    query_embedding,
+                    query,
+                    match_count,
+                    json.dumps(filter_json),
+                    source_filter,
+                )
 
-                if not response.data:
+                if not rows:
                     logger.debug("No results from hybrid search")
                     return []
 
                 # Format results to match expected structure
                 results = []
-                for row in response.data:
+                for row in rows:
                     result = {
                         "id": row["id"],
                         "url": row["url"],
@@ -134,6 +133,9 @@ class HybridSearchStrategy:
                     logger.error("Failed to create embedding for code example query")
                     return []
 
+                db = get_database_connector()
+                import json
+
                 # Prepare filter and source parameters
                 filter_json = filter_metadata or {}
                 # Use source_id parameter if provided, otherwise check filter_metadata
@@ -142,24 +144,22 @@ class HybridSearchStrategy:
                     final_source_filter = filter_json.pop("source")
 
                 # Call the hybrid search PostgreSQL function
-                response = self.supabase_client.rpc(
-                    "hybrid_search_archon_code_examples",
-                    {
-                        "query_embedding": query_embedding,
-                        "query_text": query,
-                        "match_count": match_count,
-                        "filter": filter_json,
-                        "source_filter": final_source_filter,
-                    },
-                ).execute()
+                rows = await db.fetch(
+                    "SELECT * FROM hybrid_search_archon_code_examples($1, $2, $3, $4, $5)",
+                    query_embedding,
+                    query,
+                    match_count,
+                    json.dumps(filter_json),
+                    final_source_filter,
+                )
 
-                if not response.data:
+                if not rows:
                     logger.debug("No results from hybrid code search")
                     return []
 
                 # Format results to match expected structure
                 results = []
-                for row in response.data:
+                for row in rows:
                     result = {
                         "id": row["id"],
                         "url": row["url"],

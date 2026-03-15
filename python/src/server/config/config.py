@@ -20,9 +20,9 @@ class ConfigurationError(Exception):
 class EnvironmentConfig:
     """Configuration loaded from environment variables."""
 
-    supabase_url: str
-    supabase_service_key: str
     port: int  # Required - no default
+    supabase_url: str | None = None  # Legacy Supabase support (optional)
+    supabase_service_key: str | None = None  # Legacy Supabase support (optional)
     openai_api_key: str | None = None
     host: str = "0.0.0.0"
     transport: str = "sse"
@@ -170,47 +170,54 @@ def load_environment_config() -> EnvironmentConfig:
     # OpenAI API key is optional at startup - can be set via API
     openai_api_key = os.getenv("OPENAI_API_KEY")
 
-    # Required environment variables for database access
+    # Database configuration: PostgreSQL is primary, Supabase is legacy/optional
+    archon_database_url = os.getenv("ARCHON_DATABASE_URL")
     supabase_url = os.getenv("SUPABASE_URL")
-    if not supabase_url:
-        raise ConfigurationError("SUPABASE_URL environment variable is required")
-
     supabase_service_key = os.getenv("SUPABASE_SERVICE_KEY")
-    if not supabase_service_key:
-        raise ConfigurationError("SUPABASE_SERVICE_KEY environment variable is required")
+
+    # Require either ARCHON_DATABASE_URL or Supabase credentials
+    if not archon_database_url and not supabase_url:
+        raise ConfigurationError(
+            "Database configuration required: set either ARCHON_DATABASE_URL (PostgreSQL) "
+            "or SUPABASE_URL + SUPABASE_SERVICE_KEY (legacy Supabase)"
+        )
 
     # Validate required fields
     if openai_api_key:
         validate_openai_api_key(openai_api_key)
-    validate_supabase_url(supabase_url)
 
-    # Validate Supabase key type
-    is_valid_key, key_message = validate_supabase_key(supabase_service_key)
-    if not is_valid_key:
-        if key_message == "ANON_KEY_DETECTED":
-            raise ConfigurationError(
-                "CRITICAL: You are using a Supabase ANON key instead of a SERVICE key.\n\n"
-                "The ANON key is a public key with read-only permissions that cannot write to the database.\n"
-                "This will cause all database operations to fail with 'permission denied' errors.\n\n"
-                "To fix this:\n"
-                "1. Go to your Supabase project dashboard\n"
-                "2. Navigate to Settings > API keys\n"
-                "3. Find the 'service_role' key (NOT the 'anon' key)\n"
-                "4. Update your SUPABASE_SERVICE_KEY environment variable\n\n"
-                "Key characteristics:\n"
-                "- ANON key: Starts with 'eyJ...' and has role='anon' (public, read-only)\n"
-                "- SERVICE key: Starts with 'eyJ...' and has role='service_role' (private, full access)\n\n"
-                "Current key role detected: anon"
-            )
-        elif key_message.startswith("UNKNOWN_KEY_TYPE:"):
-            role = key_message.split(":", 1)[1]
-            raise ConfigurationError(
-                f"CRITICAL: Unknown Supabase key role '{role}'.\n\n"
-                f"Expected 'service_role' but found '{role}'.\n"
-                f"This key type is not supported and will likely cause failures.\n\n"
-                f"Please use a valid service_role key from your Supabase dashboard."
-            )
-        # For UNABLE_TO_VALIDATE, we continue silently
+    # Only validate Supabase if it's being used
+    if supabase_url:
+        validate_supabase_url(supabase_url)
+
+    # Validate Supabase key type if provided
+    if supabase_service_key:
+        is_valid_key, key_message = validate_supabase_key(supabase_service_key)
+        if not is_valid_key:
+            if key_message == "ANON_KEY_DETECTED":
+                raise ConfigurationError(
+                    "CRITICAL: You are using a Supabase ANON key instead of a SERVICE key.\n\n"
+                    "The ANON key is a public key with read-only permissions that cannot write to the database.\n"
+                    "This will cause all database operations to fail with 'permission denied' errors.\n\n"
+                    "To fix this:\n"
+                    "1. Go to your Supabase project dashboard\n"
+                    "2. Navigate to Settings > API keys\n"
+                    "3. Find the 'service_role' key (NOT the 'anon' key)\n"
+                    "4. Update your SUPABASE_SERVICE_KEY environment variable\n\n"
+                    "Key characteristics:\n"
+                    "- ANON key: Starts with 'eyJ...' and has role='anon' (public, read-only)\n"
+                    "- SERVICE key: Starts with 'eyJ...' and has role='service_role' (private, full access)\n\n"
+                    "Current key role detected: anon"
+                )
+            elif key_message.startswith("UNKNOWN_KEY_TYPE:"):
+                role = key_message.split(":", 1)[1]
+                raise ConfigurationError(
+                    f"CRITICAL: Unknown Supabase key role '{role}'.\n\n"
+                    f"Expected 'service_role' but found '{role}'.\n"
+                    f"This key type is not supported and will likely cause failures.\n\n"
+                    f"Please use a valid service_role key from your Supabase dashboard."
+                )
+            # For UNABLE_TO_VALIDATE, we continue silently
 
     # Optional environment variables with defaults
     host = os.getenv("HOST", "0.0.0.0")

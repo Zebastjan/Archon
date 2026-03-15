@@ -164,6 +164,12 @@ async def lifespan(app: FastAPI):
                 # Logging not configured yet, raise error immediately
                 raise RuntimeError(f"Database schema validation failed: {message}")
             schema_validation_message = message
+        except ValueError as ve:
+            # Supabase not configured - skip schema validation (using PostgreSQL directly)
+            if "SUPABASE_URL" in str(ve):
+                schema_validation_message = "Supabase not configured - using PostgreSQL directly, schema validation skipped"
+            else:
+                raise RuntimeError(f"Database schema validation failed: {ve}")
         except ImportError:
             # Schema validator not available, skip validation
             schema_validation_message = "Schema validator not available, skipping validation"
@@ -401,6 +407,13 @@ async def _check_database_schema():
 
         return {"valid": True, "message": "Schema is up to date"}
 
+    except ValueError as e:
+        # Supabase not configured - skip schema check (using PostgreSQL directly)
+        if "SUPABASE_URL" in str(e):
+            _schema_check_cache["valid"] = True
+            _schema_check_cache["checked_at"] = current_time
+            return {"valid": True, "message": "Using PostgreSQL directly (schema validation skipped)"}
+        error_msg = str(e).lower()
     except Exception as e:
         error_msg = str(e).lower()
 

@@ -10,7 +10,7 @@ fast access during agent operations.
 from datetime import datetime
 
 from ..config.logfire_config import get_logger
-from ..utils import get_supabase_client
+from .database import get_database_connector
 
 logger = get_logger(__name__)
 
@@ -35,13 +35,13 @@ class PromptService:
         """
         try:
             logger.info("Loading prompts from database...")
-            supabase = get_supabase_client()
+            db = get_database_connector()
 
-            response = supabase.table("archon_prompts").select("*").execute()
+            records = await db.fetch("SELECT * FROM archon_prompts")
 
-            if response.data:
+            if records:
                 self._prompts = {
-                    prompt["prompt_name"]: prompt["prompt"] for prompt in response.data
+                    record["prompt_name"]: record["prompt"] for record in records
                 }
                 self._last_loaded = datetime.now()
                 logger.info(f"Loaded {len(self._prompts)} prompts into memory")

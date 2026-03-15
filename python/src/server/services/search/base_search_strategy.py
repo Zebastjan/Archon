@@ -7,9 +7,8 @@ This is the core semantic search functionality.
 
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_span
+from ..database import get_database_connector
 
 logger = get_logger(__name__)
 
@@ -20,9 +19,9 @@ SIMILARITY_THRESHOLD = 0.05
 class BaseSearchStrategy:
     """Base strategy implementing fundamental vector similarity search"""
 
-    def __init__(self, supabase_client: Client):
-        """Initialize with database client"""
-        self.supabase_client = supabase_client
+    def __init__(self):
+        """Initialize search strategy"""
+        pass
 
     async def vector_search(
         self,
@@ -47,34 +46,50 @@ class BaseSearchStrategy:
         """
         with safe_span("base_vector_search", table=table_rpc, match_count=match_count) as span:
             try:
-                # Build RPC parameters
-                rpc_params = {"query_embedding": query_embedding, "match_count": match_count}
+                db = get_database_connector()
+                import json
 
-                # Add filter parameters
+                # Build filter parameter
                 if filter_metadata:
                     if "source" in filter_metadata:
-                        rpc_params["source_filter"] = filter_metadata["source"]
-                        rpc_params["filter"] = {}
+                        source_filter = filter_metadata["source"]
+                        filter_param = {}
                     else:
-                        rpc_params["filter"] = filter_metadata
+                        source_filter = None
+                        filter_param = filter_metadata
                 else:
-                    rpc_params["filter"] = {}
+                    source_filter = None
+                    filter_param = {}
 
-                # Execute search
-                response = self.supabase_client.rpc(table_rpc, rpc_params).execute()
+                # Execute PostgreSQL function call
+                # Functions expect: query_embedding, match_count, [source_filter], [filter]
+                if source_filter:
+                    results = await db.fetch(
+                        f"SELECT * FROM {table_rpc}($1, $2, $3, $4)",
+                        query_embedding,
+                        match_count,
+                        source_filter,
+                        json.dumps(filter_param)
+                    )
+                else:
+                    results = await db.fetch(
+                        f"SELECT * FROM {table_rpc}($1, $2, $3)",
+                        query_embedding,
+                        match_count,
+                        json.dumps(filter_param)
+                    )
 
                 # Filter by similarity threshold
                 filtered_results = []
-                if response.data:
-                    for result in response.data:
-                        similarity = float(result.get("similarity", 0.0))
-                        if similarity >= SIMILARITY_THRESHOLD:
-                            filtered_results.append(result)
+                for result in results:
+                    similarity = float(result.get("similarity", 0.0))
+                    if similarity >= SIMILARITY_THRESHOLD:
+                        filtered_results.append(dict(result))
 
                 span.set_attribute("results_found", len(filtered_results))
                 span.set_attribute(
                     "results_filtered",
-                    len(response.data) - len(filtered_results) if response.data else 0,
+                    len(results) - len(filtered_results),
                 )
 
                 return filtered_results

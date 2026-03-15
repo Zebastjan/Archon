@@ -14,7 +14,6 @@ from ..embeddings.embedding_service import create_embeddings_batch
 
 
 async def add_documents_to_supabase(
-    client,
     urls: list[str],
     chunk_numbers: list[int],
     contents: list[str],
@@ -28,12 +27,11 @@ async def add_documents_to_supabase(
     url_to_page_id: dict[str, str] | None = None,
 ) -> dict[str, int]:
     """
-    Add documents to Supabase with threading optimizations.
+    Add documents to database with threading optimizations.
 
     This is the simpler sequential version for smaller batches.
 
     Args:
-        client: Supabase client
         urls: List of URLs
         chunk_numbers: List of chunk numbers
         contents: List of document contents
@@ -43,6 +41,9 @@ async def add_documents_to_supabase(
         progress_callback: Optional async callback function for progress reporting
         provider: Optional provider override for embeddings
     """
+    from ..database import get_database_connector
+    db = get_database_connector()
+
     with safe_span(
         "add_documents_to_supabase", total_documents=len(contents), batch_size=batch_size
     ) as span:
@@ -101,7 +102,10 @@ async def add_documents_to_supabase(
                             raise
 
                     batch_urls = unique_urls[i : i + delete_batch_size]
-                    client.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
+                    await db.execute(
+                        f"DELETE FROM archon_crawled_pages WHERE url = ANY($1)",
+                        batch_urls
+                    )
                     # Yield control to allow other async operations
                     if i + delete_batch_size < len(unique_urls):
                         await asyncio.sleep(0.05)  # Reduced pause between delete batches
@@ -131,7 +135,10 @@ async def add_documents_to_supabase(
 
                 batch_urls = unique_urls[i : i + fallback_batch_size]
                 try:
-                    client.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
+                    await db.execute(
+                        f"DELETE FROM archon_crawled_pages WHERE url = ANY($1)",
+                        batch_urls
+                    )
                     await asyncio.sleep(0.05)  # Rate limit to prevent overwhelming
                 except Exception as inner_e:
                     search_logger.error(
@@ -439,7 +446,41 @@ async def add_documents_to_supabase(
                         raise
 
                 try:
-                    client.table("archon_crawled_pages").insert(batch_data).execute()
+                    # Build dynamic multi-row INSERT for PostgreSQL
+                    import json
+                    if batch_data:
+                        # Get all unique columns from all records
+                        all_cols = set()
+                        for record in batch_data:
+                            all_cols.update(record.keys())
+                        columns = sorted(list(all_cols))
+
+                        # Build values for each row
+                        values = []
+                        for record in batch_data:
+                            row_values = []
+                            for col in columns:
+                                val = record.get(col)
+                                # Convert dicts to JSON strings, lists (embeddings) to arrays
+                                if isinstance(val, dict):
+                                    row_values.append(json.dumps(val))
+                                else:
+                                    row_values.append(val)
+                            values.extend(row_values)
+
+                        # Build placeholders for multi-row insert
+                        num_rows = len(batch_data)
+                        num_cols = len(columns)
+                        placeholders = []
+                        for row_idx in range(num_rows):
+                            row_placeholders = [f"${row_idx * num_cols + col_idx + 1}" for col_idx in range(num_cols)]
+                            placeholders.append(f"({', '.join(row_placeholders)})")
+
+                        await db.execute(
+                            f"INSERT INTO archon_crawled_pages ({', '.join(columns)}) VALUES {', '.join(placeholders)}",
+                            *values
+                        )
+
                     total_chunks_stored += len(batch_data)
 
                     # Increment completed batches and report simple progress
@@ -497,7 +538,18 @@ async def add_documents_to_supabase(
                                     raise
 
                             try:
-                                client.table("archon_crawled_pages").insert(record).execute()
+                                # Build single-row INSERT
+                                import json
+                                columns = list(record.keys())
+                                placeholders = [f"${i+1}" for i in range(len(columns))]
+                                values = [
+                                    json.dumps(v) if isinstance(v, dict) else v
+                                    for v in record.values()
+                                ]
+                                await db.execute(
+                                    f"INSERT INTO archon_crawled_pages ({', '.join(columns)}) VALUES ({', '.join(placeholders)})",
+                                    *values
+                                )
                                 successful_inserts += 1
                                 total_chunks_stored += 1
                             except Exception as individual_error:

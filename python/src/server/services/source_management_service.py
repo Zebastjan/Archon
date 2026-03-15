@@ -8,10 +8,8 @@ Consolidates both utility functions and class-based service.
 from datetime import UTC
 from typing import Any
 
-from supabase import Client
-
 from ..config.logfire_config import get_logger, search_logger
-from .client_manager import get_supabase_client
+from .database import get_database_connector
 from .llm_provider_service import extract_message_text, get_llm_client
 
 logger = get_logger(__name__)
@@ -213,7 +211,6 @@ Generate only the title, nothing else."""
 
 
 async def update_source_info(
-    client: Client,
     source_id: str,
     summary: str,
     word_count: int,
@@ -235,7 +232,6 @@ async def update_source_info(
     Update or insert source information in the sources table.
 
     Args:
-        client: Supabase client
         source_id: The source ID (domain)
         summary: Summary of the source
         word_count: Total word count for the source
@@ -246,14 +242,17 @@ async def update_source_info(
     """
     search_logger.info(f"Updating source {source_id} with knowledge_type={knowledge_type}")
     try:
+        db = get_database_connector()
+
         # First, check if source already exists to preserve title
-        existing_source = (
-            client.table("archon_sources").select("title").eq("source_id", source_id).execute()
+        existing_source = await db.fetch(
+            "SELECT title FROM archon_sources WHERE source_id = $1",
+            source_id
         )
 
-        if existing_source.data:
+        if existing_source:
             # Source exists - preserve the existing title
-            existing_title = existing_source.data[0]["title"]
+            existing_title = existing_source[0]["title"]
             search_logger.info(f"Preserving existing title for {source_id}: {existing_title}")
 
             # Update metadata while preserving title
@@ -308,11 +307,27 @@ async def update_source_info(
 
             # Update timestamps
             from datetime import datetime
+            import json
 
             upsert_data["last_crawled_at"] = datetime.now(UTC).isoformat()
             upsert_data["last_vectorized_at"] = datetime.now(UTC).isoformat()
 
-            client.table("archon_sources").upsert(upsert_data).execute()
+            # Build dynamic upsert query based on provided fields
+            columns = list(upsert_data.keys())
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [json.dumps(v) if isinstance(v, dict) else v for v in upsert_data.values()]
+
+            update_cols = [f"{col} = EXCLUDED.{col}" for col in columns if col != "source_id"]
+
+            await db.execute(
+                f"""
+                INSERT INTO archon_sources ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT (source_id) DO UPDATE SET
+                    {', '.join(update_cols)}
+                """,
+                *values
+            )
 
             search_logger.info(
                 f"Updated source {source_id} while preserving title: {existing_title}"
@@ -389,11 +404,28 @@ async def update_source_info(
 
             # Set timestamps
             from datetime import datetime
+            import json
 
             upsert_data["last_crawled_at"] = datetime.now(UTC).isoformat()
             upsert_data["last_vectorized_at"] = datetime.now(UTC).isoformat()
 
-            client.table("archon_sources").upsert(upsert_data).execute()
+            # Build dynamic upsert query based on provided fields
+            columns = list(upsert_data.keys())
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [json.dumps(v) if isinstance(v, dict) else v for v in upsert_data.values()]
+
+            update_cols = [f"{col} = EXCLUDED.{col}" for col in columns if col != "source_id"]
+
+            await db.execute(
+                f"""
+                INSERT INTO archon_sources ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT (source_id) DO UPDATE SET
+                    {', '.join(update_cols)}
+                """,
+                *values
+            )
+
             search_logger.info(f"Created/updated source {source_id} with title: {title}")
 
     except Exception as e:
@@ -404,11 +436,11 @@ async def update_source_info(
 class SourceManagementService:
     """Service class for source management operations"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self):
+        """Initialize source management service"""
+        pass
 
-    def get_available_sources(self) -> tuple[bool, dict[str, Any]]:
+    async def get_available_sources(self) -> tuple[bool, dict[str, Any]]:
         """
         Get all available sources from the sources table.
 
@@ -418,10 +450,11 @@ class SourceManagementService:
             Tuple of (success, result_dict)
         """
         try:
-            response = self.supabase_client.table("archon_sources").select("*").execute()
+            db = get_database_connector()
+            records = await db.fetch("SELECT * FROM archon_sources")
 
             sources = []
-            for row in response.data:
+            for row in records:
                 sources.append({
                     "source_id": row["source_id"],
                     "title": row.get("title", ""),
@@ -436,7 +469,7 @@ class SourceManagementService:
             logger.error(f"Error retrieving sources: {e}")
             return False, {"error": f"Error retrieving sources: {str(e)}"}
 
-    def delete_source(self, source_id: str) -> tuple[bool, dict[str, Any]]:
+    async def delete_source(self, source_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Delete a source from the database.
 
@@ -456,16 +489,13 @@ class SourceManagementService:
             # The database will automatically handle deleting related records
             logger.info(f"Deleting source {source_id} (CASCADE will handle related records)")
 
-            source_response = (
-                self.supabase_client.table("archon_sources")
-                .delete()
-                .eq("source_id", source_id)
-                .execute()
+            db = get_database_connector()
+            result = await db.execute(
+                "DELETE FROM archon_sources WHERE source_id = $1 RETURNING source_id",
+                source_id
             )
 
-            source_deleted = len(source_response.data) if source_response.data else 0
-
-            if source_deleted > 0:
+            if result == "DELETE 1":
                 logger.info(f"Successfully deleted source {source_id} and all related data via CASCADE")
                 return True, {
                     "source_id": source_id,
@@ -479,7 +509,7 @@ class SourceManagementService:
             logger.error(f"Error deleting source {source_id}: {e}")
             return False, {"error": f"Error deleting source: {str(e)}"}
 
-    def update_source_metadata(
+    async def update_source_metadata(
         self,
         source_id: str,
         title: str = None,
@@ -503,6 +533,8 @@ class SourceManagementService:
             Tuple of (success, result_dict)
         """
         try:
+            db = get_database_connector()
+
             # Build update data
             update_data = {}
             if title is not None:
@@ -515,33 +547,38 @@ class SourceManagementService:
             # Handle metadata fields
             if knowledge_type is not None or tags is not None:
                 # Get existing metadata
-                existing = (
-                    self.supabase_client.table("archon_sources")
-                    .select("metadata")
-                    .eq("source_id", source_id)
-                    .execute()
+                existing = await db.fetch(
+                    "SELECT metadata FROM archon_sources WHERE source_id = $1",
+                    source_id
                 )
-                metadata = existing.data[0].get("metadata", {}) if existing.data else {}
+                import json
+                metadata = json.loads(existing[0]["metadata"]) if existing and existing[0]["metadata"] else {}
 
                 if knowledge_type is not None:
                     metadata["knowledge_type"] = knowledge_type
                 if tags is not None:
                     metadata["tags"] = tags
 
-                update_data["metadata"] = metadata
+                update_data["metadata"] = json.dumps(metadata)
 
             if not update_data:
                 return False, {"error": "No update data provided"}
 
-            # Update the source
-            response = (
-                self.supabase_client.table("archon_sources")
-                .update(update_data)
-                .eq("source_id", source_id)
-                .execute()
+            # Build dynamic UPDATE query
+            set_clauses = [f"{key} = ${i+1}" for i, key in enumerate(update_data.keys())]
+            values = list(update_data.values())
+            values.append(source_id)  # For WHERE clause
+
+            result = await db.execute(
+                f"""
+                UPDATE archon_sources
+                SET {', '.join(set_clauses)}
+                WHERE source_id = ${len(values)}
+                """,
+                *values
             )
 
-            if response.data:
+            if result == "UPDATE 1":
                 return True, {"source_id": source_id, "updated_fields": list(update_data.keys())}
             else:
                 return False, {"error": f"Source with ID {source_id} not found"}
@@ -582,7 +619,6 @@ class SourceManagementService:
 
             # Create the source info using the utility function
             await update_source_info(
-                self.supabase_client,
                 source_id,
                 source_summary,
                 word_count,
@@ -604,7 +640,7 @@ class SourceManagementService:
             logger.error(f"Error creating source info: {e}")
             return False, {"error": f"Error creating source info: {str(e)}"}
 
-    def get_source_details(self, source_id: str) -> tuple[bool, dict[str, Any]]:
+    async def get_source_details(self, source_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Get detailed information about a specific source.
 
@@ -615,48 +651,42 @@ class SourceManagementService:
             Tuple of (success, result_dict)
         """
         try:
+            db = get_database_connector()
+
             # Get source metadata
-            source_response = (
-                self.supabase_client.table("archon_sources")
-                .select("*")
-                .eq("source_id", source_id)
-                .execute()
+            source_records = await db.fetch(
+                "SELECT * FROM archon_sources WHERE source_id = $1",
+                source_id
             )
 
-            if not source_response.data:
+            if not source_records:
                 return False, {"error": f"Source with ID {source_id} not found"}
 
-            source_data = source_response.data[0]
+            source_data = dict(source_records[0])
 
             # Get page count
-            pages_response = (
-                self.supabase_client.table("archon_crawled_pages")
-                .select("id")
-                .eq("source_id", source_id)
-                .execute()
+            page_count = await db.fetchval(
+                "SELECT COUNT(*) FROM archon_crawled_pages WHERE source_id = $1",
+                source_id
             )
-            page_count = len(pages_response.data) if pages_response.data else 0
 
             # Get code example count
-            code_response = (
-                self.supabase_client.table("archon_code_examples")
-                .select("id")
-                .eq("source_id", source_id)
-                .execute()
+            code_count = await db.fetchval(
+                "SELECT COUNT(*) FROM archon_code_examples WHERE source_id = $1",
+                source_id
             )
-            code_count = len(code_response.data) if code_response.data else 0
 
             return True, {
                 "source": source_data,
-                "page_count": page_count,
-                "code_example_count": code_count,
+                "page_count": page_count or 0,
+                "code_example_count": code_count or 0,
             }
 
         except Exception as e:
             logger.error(f"Error getting source details: {e}")
             return False, {"error": f"Error getting source details: {str(e)}"}
 
-    def list_sources_by_type(self, knowledge_type: str = None) -> tuple[bool, dict[str, Any]]:
+    async def list_sources_by_type(self, knowledge_type: str = None) -> tuple[bool, dict[str, Any]]:
         """
         List sources filtered by knowledge type.
 
@@ -667,17 +697,21 @@ class SourceManagementService:
             Tuple of (success, result_dict)
         """
         try:
-            query = self.supabase_client.table("archon_sources").select("*")
+            db = get_database_connector()
+            import json
 
             if knowledge_type:
-                # Filter by metadata->knowledge_type
-                query = query.contains("metadata", {"knowledge_type": knowledge_type})
-
-            response = query.execute()
+                # Filter by metadata->knowledge_type using JSONB containment
+                records = await db.fetch(
+                    "SELECT * FROM archon_sources WHERE metadata @> $1::jsonb",
+                    json.dumps({"knowledge_type": knowledge_type})
+                )
+            else:
+                records = await db.fetch("SELECT * FROM archon_sources")
 
             sources = []
-            for row in response.data:
-                metadata = row.get("metadata", {})
+            for row in records:
+                metadata = json.loads(row.get("metadata", "{}")) if isinstance(row.get("metadata"), str) else row.get("metadata", {})
                 sources.append({
                     "source_id": row["source_id"],
                     "title": row.get("title", ""),

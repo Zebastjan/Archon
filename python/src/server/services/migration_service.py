@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import logfire
-from supabase import Client
 
 from ..config.version import ARCHON_VERSION
-from .client_manager import get_supabase_client
+from .database import get_database_connector
 
 
 class MigrationRecord:
@@ -43,18 +42,11 @@ class MigrationService:
     """Service for managing database migrations."""
 
     def __init__(self):
-        self._supabase: Client | None = None
         # Handle both Docker (/app/migration) and local (./migration) environments
         if Path("/app/migration").exists():
             self._migrations_dir = Path("/app/migration")
         else:
             self._migrations_dir = Path("migration")
-
-    def _get_supabase_client(self) -> Client:
-        """Get or create Supabase client."""
-        if not self._supabase:
-            self._supabase = get_supabase_client()
-        return self._supabase
 
     async def check_migrations_table_exists(self) -> bool:
         """
@@ -64,37 +56,24 @@ class MigrationService:
             True if table exists, False otherwise
         """
         try:
-            supabase = self._get_supabase_client()
+            db = get_database_connector()
 
             # Query to check if table exists
-            result = supabase.rpc(
-                "sql",
-                {
-                    "query": """
-                        SELECT EXISTS (
-                            SELECT 1
-                            FROM information_schema.tables
-                            WHERE table_schema = 'public'
-                            AND table_name = 'archon_migrations'
-                        ) as exists
-                    """
-                }
-            ).execute()
+            result = await db.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                    AND table_name = 'archon_migrations'
+                )
+                """
+            )
 
-            # Check if result indicates table exists
-            if result.data and len(result.data) > 0:
-                return result.data[0].get("exists", False)
+            return bool(result)
+        except Exception as e:
+            logfire.info(f"Error checking migrations table: {e}")
             return False
-        except Exception:
-            # If the SQL function doesn't exist or query fails, try direct query
-            try:
-                supabase = self._get_supabase_client()
-                # Try to select from the table with limit 0
-                supabase.table("archon_migrations").select("id").limit(0).execute()
-                return True
-            except Exception as e:
-                logfire.info(f"Migrations table does not exist: {e}")
-                return False
 
     async def get_applied_migrations(self) -> list[MigrationRecord]:
         """
@@ -109,10 +88,12 @@ class MigrationService:
                 logfire.info("Migrations table does not exist, returning empty list")
                 return []
 
-            supabase = self._get_supabase_client()
-            result = supabase.table("archon_migrations").select("*").order("applied_at", desc=True).execute()
+            db = get_database_connector()
+            records = await db.fetch(
+                "SELECT * FROM archon_migrations ORDER BY applied_at DESC"
+            )
 
-            return [MigrationRecord(row) for row in result.data]
+            return [MigrationRecord(dict(row)) for row in records]
         except Exception as e:
             logfire.error(f"Error fetching applied migrations: {e}")
             # Return empty list if we can't fetch migrations

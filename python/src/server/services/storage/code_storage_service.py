@@ -15,8 +15,6 @@ from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import urlparse
 
-from supabase import Client
-
 from ...config.logfire_config import search_logger
 from ..credential_service import credential_service
 from ..embeddings.contextual_embedding_service import generate_contextual_embeddings_batch
@@ -1164,7 +1162,6 @@ async def generate_code_summaries_batch(
 
 
 async def add_code_examples_to_supabase(
-    client: Client,
     urls: list[str],
     chunk_numbers: list[int],
     code_examples: list[str],
@@ -1177,10 +1174,9 @@ async def add_code_examples_to_supabase(
     embedding_provider: str | None = None,
 ):
     """
-    Add code examples to the Supabase code_examples table in batches.
+    Add code examples to the database code_examples table in batches.
 
     Args:
-        client: Supabase client
         urls: List of URLs
         chunk_numbers: List of chunk numbers
         code_examples: List of code example contents
@@ -1195,11 +1191,17 @@ async def add_code_examples_to_supabase(
     if not urls:
         return
 
+    from ..database import get_database_connector
+    db = get_database_connector()
+
     # Delete existing records for these URLs
     unique_urls = list(set(urls))
     for url in unique_urls:
         try:
-            client.table("archon_code_examples").delete().eq("url", url).execute()
+            await db.execute(
+                "DELETE FROM archon_code_examples WHERE url = $1",
+                url
+            )
         except Exception as e:
             search_logger.error(f"Error deleting existing code examples for {url}: {e}")
 
@@ -1375,7 +1377,40 @@ async def add_code_examples_to_supabase(
 
         for retry in range(max_retries):
             try:
-                client.table("archon_code_examples").insert(batch_data).execute()
+                # Build dynamic multi-row INSERT for PostgreSQL
+                import json
+                if batch_data:
+                    # Get all unique columns from all records
+                    all_cols = set()
+                    for record in batch_data:
+                        all_cols.update(record.keys())
+                    columns = sorted(list(all_cols))
+
+                    # Build values for each row
+                    values = []
+                    for record in batch_data:
+                        row_values = []
+                        for col in columns:
+                            val = record.get(col)
+                            # Convert dicts to JSON strings, lists (embeddings) to arrays
+                            if isinstance(val, dict):
+                                row_values.append(json.dumps(val))
+                            else:
+                                row_values.append(val)
+                        values.extend(row_values)
+
+                    # Build placeholders for multi-row insert
+                    num_rows = len(batch_data)
+                    num_cols = len(columns)
+                    placeholders = []
+                    for row_idx in range(num_rows):
+                        row_placeholders = [f"${row_idx * num_cols + col_idx + 1}" for col_idx in range(num_cols)]
+                        placeholders.append(f"({', '.join(row_placeholders)})")
+
+                    await db.execute(
+                        f"INSERT INTO archon_code_examples ({', '.join(columns)}) VALUES {', '.join(placeholders)}",
+                        *values
+                    )
                 # Success - break out of retry loop
                 break
             except Exception as e:
@@ -1394,7 +1429,18 @@ async def add_code_examples_to_supabase(
                     successful_inserts = 0
                     for record in batch_data:
                         try:
-                            client.table("archon_code_examples").insert(record).execute()
+                            # Build single-row INSERT
+                            import json
+                            columns = list(record.keys())
+                            placeholders = [f"${i+1}" for i in range(len(columns))]
+                            values = [
+                                json.dumps(v) if isinstance(v, dict) else v
+                                for v in record.values()
+                            ]
+                            await db.execute(
+                                f"INSERT INTO archon_code_examples ({', '.join(columns)}) VALUES ({', '.join(placeholders)})",
+                                *values
+                            )
                             successful_inserts += 1
                         except Exception as individual_error:
                             search_logger.error(

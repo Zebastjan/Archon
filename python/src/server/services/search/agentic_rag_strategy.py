@@ -14,7 +14,6 @@ Key features:
 
 from typing import Any
 
-from supabase import Client
 
 from ...config.logfire_config import get_logger, safe_span
 from ..embeddings.embedding_service import create_embedding
@@ -25,15 +24,13 @@ logger = get_logger(__name__)
 class AgenticRAGStrategy:
     """Strategy class implementing agentic RAG for code example search and extraction"""
 
-    def __init__(self, supabase_client: Client, base_strategy):
+    def __init__(self, base_strategy):
         """
         Initialize agentic RAG strategy.
 
         Args:
-            supabase_client: Supabase client for database operations
             base_strategy: Base strategy for vector search
         """
-        self.supabase_client = supabase_client
         self.base_strategy = base_strategy
 
     def is_enabled(self) -> bool:
@@ -365,13 +362,12 @@ class AgenticRAGStrategy:
 
 
 # Utility functions for standalone usage
-def create_agentic_rag_strategy(supabase_client: Client) -> AgenticRAGStrategy:
+def create_agentic_rag_strategy(base_strategy) -> AgenticRAGStrategy:
     """Create an agentic RAG strategy instance."""
-    return AgenticRAGStrategy(supabase_client)
+    return AgenticRAGStrategy(base_strategy)
 
 
 async def search_code_examples_agentic(
-    client: Client,
     query: str,
     match_count: int = 10,
     filter_metadata: dict[str, Any] | None = None,
@@ -381,7 +377,6 @@ async def search_code_examples_agentic(
     Standalone function for agentic code example search.
 
     Args:
-        client: Supabase client
         query: Search query
         match_count: Number of results to return
         filter_metadata: Optional metadata filter
@@ -390,8 +385,10 @@ async def search_code_examples_agentic(
     Returns:
         List of code example results
     """
-    strategy = AgenticRAGStrategy(client)
-    return await strategy.search_code_examples_async(query, match_count, filter_metadata, source_id)
+    from .base_search_strategy import BaseSearchStrategy
+    base_strategy = BaseSearchStrategy()
+    strategy = AgenticRAGStrategy(base_strategy)
+    return await strategy.search_code_examples(query, match_count, filter_metadata, source_id)
 
 
 def analyze_query_for_code_search(query: str) -> dict[str, Any]:

@@ -16,7 +16,7 @@ import os
 from typing import Any
 
 from ...config.logfire_config import get_logger, safe_span
-from ...utils import get_supabase_client
+from ..database import get_database_connector
 from ..embeddings.embedding_service import create_embedding
 from .agentic_rag_strategy import AgenticRAGStrategy
 
@@ -36,16 +36,14 @@ class RAGService:
     based on configuration settings.
     """
 
-    def __init__(self, supabase_client=None):
+    def __init__(self):
         """Initialize RAG service as a coordinator for search strategies"""
-        self.supabase_client = supabase_client or get_supabase_client()
-
         # Initialize base strategy (always needed)
-        self.base_strategy = BaseSearchStrategy(self.supabase_client)
+        self.base_strategy = BaseSearchStrategy()
 
         # Initialize optional strategies
-        self.hybrid_strategy = HybridSearchStrategy(self.supabase_client, self.base_strategy)
-        self.agentic_strategy = AgenticRAGStrategy(self.supabase_client, self.base_strategy)
+        self.hybrid_strategy = HybridSearchStrategy(self.base_strategy)
+        self.agentic_strategy = AgenticRAGStrategy(self.base_strategy)
 
         # Initialize reranking strategy based on settings
         self.reranking_strategy = None
@@ -208,30 +206,26 @@ class RAGService:
             aggregate_score = avg_similarity * (1 + match_boost)
 
             # Query page by page_id if available, otherwise by URL
+            db = get_database_connector()
             if data["page_id"]:
-                page_info = (
-                    self.supabase_client.table("archon_page_metadata")
-                    .select("id, url, section_title, word_count")
-                    .eq("id", data["page_id"])
-                    .maybe_single()
-                    .execute()
+                page_records = await db.fetch(
+                    "SELECT id, url, section_title, word_count FROM archon_page_metadata WHERE id = $1 LIMIT 1",
+                    data["page_id"]
                 )
             else:
                 # Regular pages - exact URL match
-                page_info = (
-                    self.supabase_client.table("archon_page_metadata")
-                    .select("id, url, section_title, word_count")
-                    .eq("url", data["url"])
-                    .maybe_single()
-                    .execute()
+                page_records = await db.fetch(
+                    "SELECT id, url, section_title, word_count FROM archon_page_metadata WHERE url = $1 LIMIT 1",
+                    data["url"]
                 )
 
-            if page_info and page_info.data is not None:
+            if page_records:
+                page_data = dict(page_records[0])
                 page_results.append({
-                    "page_id": page_info.data["id"],
-                    "url": page_info.data["url"],
-                    "section_title": page_info.data.get("section_title"),
-                    "word_count": page_info.data.get("word_count", 0),
+                    "page_id": page_data["id"],
+                    "url": page_data["url"],
+                    "section_title": page_data.get("section_title"),
+                    "word_count": page_data.get("word_count", 0),
                     "chunk_matches": data["chunk_matches"],
                     "aggregate_similarity": aggregate_score,
                     "average_similarity": avg_similarity,
