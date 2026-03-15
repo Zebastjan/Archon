@@ -6,14 +6,15 @@ These tests verify the core RAG functionality without heavy dependencies.
 """
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # Set test environment variables
 os.environ.update({
-    "SUPABASE_URL": "http://test.supabase.co",
-    "SUPABASE_SERVICE_KEY": "test_key",
+    "ARCHON_DATABASE_URL": "postgresql://test:test@localhost:5434/test",
+    "SUPABASE_URL": "",  # Disable Supabase
+    "SUPABASE_SERVICE_KEY": "",
     "OPENAI_API_KEY": "test_openai_key",
     "USE_HYBRID_SEARCH": "false",
     "USE_RERANKING": "false",
@@ -22,22 +23,23 @@ os.environ.update({
 
 
 @pytest.fixture
-def mock_supabase():
-    """Mock supabase client"""
+def mock_db():
+    """Mock database connector"""
     client = MagicMock()
-    client.rpc.return_value.execute.return_value.data = []
-    client.from_.return_value.select.return_value.limit.return_value.execute.return_value.data = []
+    client.fetch = AsyncMock(return_value=[])
+    client.fetchrow = AsyncMock(return_value=None)
+    client.execute = AsyncMock(return_value="INSERT 0 1")
     return client
 
 
 @pytest.fixture
-def rag_service(mock_supabase):
+def rag_service(mock_db):
     """Create RAGService with mocked dependencies"""
-    with patch("src.server.utils.get_supabase_client", return_value=mock_supabase):
+    with patch("src.server.services.database.get_database_connector", return_value=mock_db):
         with patch("src.server.services.credential_service.credential_service"):
             from src.server.services.search.rag_service import RAGService
 
-            service = RAGService(supabase_client=mock_supabase)
+            service = RAGService()
             return service
 
 
@@ -66,38 +68,35 @@ class TestRAGServiceSearch:
     """Search functionality tests"""
 
     @pytest.mark.asyncio
-    async def test_basic_vector_search(self, rag_service, mock_supabase):
+    async def test_basic_vector_search(self, rag_service, mock_db):
         """Test basic vector search functionality"""
-        # Mock the RPC response
-        mock_response = MagicMock()
-        mock_response.data = [
-            {
-                "id": "1",
-                "content": "Test content",
-                "similarity": 0.8,
-                "metadata": {},
-                "url": "test.com",
-            }
-        ]
-        mock_supabase.rpc.return_value.execute.return_value = mock_response
+        # Mock the database response - need to patch at the point where strategy gets db
+        with patch("src.server.services.search.base_search_strategy.get_database_connector", return_value=mock_db):
+            mock_db.fetch = AsyncMock(return_value=[
+                {
+                    "id": "1",
+                    "content": "Test content",
+                    "similarity": 0.8,
+                    "metadata": {},
+                    "url": "test.com",
+                }
+            ])
 
-        # Test the search
-        query_embedding = [0.1] * 1536
-        results = await rag_service.base_strategy.vector_search(
-            query_embedding=query_embedding, match_count=5
-        )
+            # Test the search
+            query_embedding = [0.1] * 1536
+            results = await rag_service.base_strategy.vector_search(
+                query_embedding=query_embedding, match_count=5
+            )
 
-        assert isinstance(results, list)
-        assert len(results) == 1
-        assert results[0]["content"] == "Test content"
+            assert isinstance(results, list)
+            assert len(results) == 1
+            assert results[0]["content"] == "Test content"
 
-        # Verify RPC was called correctly
-        mock_supabase.rpc.assert_called_once()
-        call_args = mock_supabase.rpc.call_args[0]
-        assert call_args[0] == "match_archon_crawled_pages"
+            # Verify database was called
+            mock_db.fetch.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_search_documents_with_embedding(self, rag_service):
+    async def test_search_documents_with_embedding(self, rag_service, mock_db):
         """Test document search with mocked embedding"""
         # Patch at the module level where it's called from RAGService
         with (
@@ -150,13 +149,13 @@ class TestHybridSearchCore:
     """Basic hybrid search tests"""
 
     @pytest.fixture
-    def hybrid_strategy(self, mock_supabase):
+    def hybrid_strategy(self):
         """Create hybrid search strategy"""
         from src.server.services.search.base_search_strategy import BaseSearchStrategy
         from src.server.services.search.hybrid_search_strategy import HybridSearchStrategy
 
-        base_strategy = BaseSearchStrategy(mock_supabase)
-        return HybridSearchStrategy(mock_supabase, base_strategy)
+        base_strategy = BaseSearchStrategy()
+        return HybridSearchStrategy(base_strategy)
 
     def test_initialization(self, hybrid_strategy):
         """Test hybrid strategy initializes"""
@@ -234,13 +233,13 @@ class TestAgenticRAGCore:
     """Basic agentic RAG tests"""
 
     @pytest.fixture
-    def agentic_strategy(self, mock_supabase):
+    def agentic_strategy(self):
         """Create agentic RAG strategy"""
         from src.server.services.search.agentic_rag_strategy import AgenticRAGStrategy
         from src.server.services.search.base_search_strategy import BaseSearchStrategy
 
-        base_strategy = BaseSearchStrategy(mock_supabase)
-        return AgenticRAGStrategy(mock_supabase, base_strategy)
+        base_strategy = BaseSearchStrategy()
+        return AgenticRAGStrategy(base_strategy)
 
     def test_initialization(self, agentic_strategy):
         """Test agentic strategy initializes"""
@@ -292,7 +291,7 @@ class TestRAGIntegrationSimple:
             assert len(result["results"]) == 0
 
     @pytest.mark.asyncio
-    async def test_full_rag_pipeline_with_reranking(self, rag_service, mock_supabase):
+    async def test_full_rag_pipeline_with_reranking(self, rag_service, mock_db):
         """Test complete RAG pipeline with reranking enabled"""
         # Create a mock reranking model
         mock_model = MagicMock()
@@ -380,7 +379,7 @@ class TestRAGIntegrationSimple:
             # Mock agentic search results
             mock_agentic.return_value = [
                 {
-                    "content": 'def example_function():\\n    return "Hello"',
+                    "content": 'def example_function():\n    return "Hello"',
                     "summary": "Example function that returns greeting",
                     "url": "example.py",
                     "metadata": {"language": "python"},
