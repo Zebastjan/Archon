@@ -30,8 +30,8 @@ class TestExpandedAuditRules:
         """Verify security rules have OWASP and CWE references."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        # Mock security rules
-        mock_db.execute.return_value.data = [
+        # Mock security rules - patch _execute_query to return test data
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "hardcoded-secrets",
@@ -62,22 +62,23 @@ class TestExpandedAuditRules:
             }
         ]
         
-        rules = service.get_audit_rules(category="security")
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="security")
         
-        assert len(rules) == 2
-        
-        # Verify security metadata
-        for rule in rules:
-            assert rule.applies_to_security_first is True
-            assert rule.owasp_category is not None
-            assert rule.cwe_id is not None
-            assert rule.rationale != ""
+            assert len(rules) == 2
+            
+            # Verify security metadata
+            for rule in rules:
+                assert rule.applies_to_security_first is True
+                assert rule.owasp_category is not None
+                assert rule.cwe_id is not None
+                assert rule.rationale != ""
     
     def test_maintainability_rules_have_guidance(self, mock_db):
         """Verify maintainability rules have remediation guidance."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "too-many-params",
@@ -95,22 +96,23 @@ class TestExpandedAuditRules:
             }
         ]
         
-        rules = service.get_audit_rules(category="maintainability")
-        
-        assert len(rules) == 1
-        rule = rules[0]
-        
-        assert rule.rationale != ""
-        assert rule.remediation_guidance != ""
-        assert rule.example_violation != ""
-        assert rule.example_fix != ""
-        assert rule.estimated_fix_time_minutes > 0
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="maintainability")
+            
+            assert len(rules) == 1
+            rule = rules[0]
+            
+            assert rule.rationale != ""
+            assert rule.remediation_guidance != ""
+            assert rule.example_violation != ""
+            assert rule.example_fix != ""
+            assert rule.estimated_fix_time_minutes > 0
     
     def test_rules_have_implementation_type(self, mock_db):
         """Verify rules have implementation type classification."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "complexity-high",
@@ -129,17 +131,18 @@ class TestExpandedAuditRules:
             }
         ]
         
-        rules = service.get_audit_rules()
-        
-        implementation_types = {r.implementation_type for r in rules}
-        assert "threshold-static" in implementation_types
-        assert "heuristic-static" in implementation_types
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules()
+            
+            implementation_types = {r.implementation_type for r in rules}
+            assert "threshold-static" in implementation_types
+            assert "heuristic-static" in implementation_types
     
     def test_rules_have_references(self, mock_db):
         """Verify rules have reference links."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "weak-crypto",
@@ -153,11 +156,12 @@ class TestExpandedAuditRules:
             }
         ]
         
-        rules = service.get_audit_rules()
-        
-        assert len(rules) == 1
-        assert len(rules[0].references) == 2
-        assert "owasp.org" in rules[0].references[0]
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules()
+            
+            assert len(rules) == 1
+            assert len(rules[0].references) == 2
+            assert "owasp.org" in rules[0].references[0]
 
 
 class TestMethodologyAwareRules:
@@ -167,14 +171,14 @@ class TestMethodologyAwareRules:
         """Verify TDD rules are flagged correctly."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "untested-production-code",
                 "category": "methodology",
                 "applies_to_tdd": True,
                 "applies_to_doc_driven": False,
-                "methodology_tags": ["tdd", "testing", "quality"],
+                "methodology_tags": '["tdd", "testing", "quality"]',
                 "is_active": True,
                 "is_builtin": True,
             },
@@ -184,46 +188,48 @@ class TestMethodologyAwareRules:
                 "category": "methodology",
                 "applies_to_tdd": True,
                 "applies_to_doc_driven": False,
-                "methodology_tags": ["tdd", "testing"],
+                "methodology_tags": '["tdd", "testing"]',
                 "is_active": True,
                 "is_builtin": True,
             }
         ]
         
-        rules = service.get_audit_rules(category="methodology")
-        
-        for rule in rules:
-            assert rule.applies_to_tdd is True
-            assert "tdd" in rule.methodology_tags
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="methodology")
+            
+            for rule in rules:
+                assert rule.applies_to_tdd is True
+                assert "tdd" in rule.methodology_tags
     
     def test_doc_driven_rules_flagged(self, mock_db):
         """Verify documentation-driven rules are flagged."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "public-api-missing-docs",
                 "category": "documentation",
                 "applies_to_tdd": False,
                 "applies_to_doc_driven": True,
-                "methodology_tags": ["doc-driven"],
+                "methodology_tags": '["doc-driven"]',
                 "is_active": True,
                 "is_builtin": True,
             }
         ]
         
-        rules = service.get_audit_rules(category="documentation")
-        
-        assert len(rules) == 1
-        assert rules[0].applies_to_doc_driven is True
-        assert "doc-driven" in rules[0].methodology_tags
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="documentation")
+            
+            assert len(rules) == 1
+            assert rules[0].applies_to_doc_driven is True
+            assert "doc-driven" in rules[0].methodology_tags
     
     def test_methodology_tags_parsing(self, mock_db):
         """Verify methodology tags are parsed correctly from JSON."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "test-rule",
@@ -233,12 +239,13 @@ class TestMethodologyAwareRules:
             }
         ]
         
-        rules = service.get_audit_rules()
-        
-        assert len(rules) == 1
-        assert isinstance(rules[0].methodology_tags, list)
-        assert "tdd" in rules[0].methodology_tags
-        assert "testing" in rules[0].methodology_tags
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules()
+            
+            assert len(rules) == 1
+            assert isinstance(rules[0].methodology_tags, list)
+            assert "tdd" in rules[0].methodology_tags
+            assert "testing" in rules[0].methodology_tags
 
 
 class TestRuleCatalogExpansion:
@@ -249,53 +256,57 @@ class TestRuleCatalogExpansion:
         service = CodeMetricsService(db_connection=mock_db)
         
         # Mock 6 security rules
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {"id": str(uuid4()), "rule_id": f"security-{i}", "category": "security", "is_active": True, "is_builtin": True}
             for i in range(6)
         ]
         
-        rules = service.get_audit_rules(category="security")
-        
-        assert len(rules) == 6
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="security")
+            
+            assert len(rules) == 6
     
     def test_maintainability_rules_count(self, mock_db):
         """Verify we have expected number of maintainability rules."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {"id": str(uuid4()), "rule_id": f"maintainability-{i}", "category": "maintainability", "is_active": True, "is_builtin": True}
             for i in range(8)
         ]
         
-        rules = service.get_audit_rules(category="maintainability")
-        
-        assert len(rules) == 8
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="maintainability")
+            
+            assert len(rules) == 8
     
     def test_documentation_rules_count(self, mock_db):
         """Verify we have documentation/test hygiene rules."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {"id": str(uuid4()), "rule_id": f"documentation-{i}", "category": "documentation", "is_active": True, "is_builtin": True}
             for i in range(4)
         ]
         
-        rules = service.get_audit_rules(category="documentation")
-        
-        assert len(rules) == 4
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="documentation")
+            
+            assert len(rules) == 4
     
     def test_methodology_rules_count(self, mock_db):
         """Verify we have methodology rules."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {"id": str(uuid4()), "rule_id": f"methodology-{i}", "category": "methodology", "is_active": True, "is_builtin": True}
             for i in range(3)
         ]
         
-        rules = service.get_audit_rules(category="methodology")
-        
-        assert len(rules) == 3
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(category="methodology")
+            
+            assert len(rules) == 3
 
 
 class TestAuditRuleDataStructure:
@@ -347,7 +358,7 @@ class TestRuleSeverityLevels:
         """Verify critical severity rules exist."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "hardcoded-secrets",
@@ -364,16 +375,17 @@ class TestRuleSeverityLevels:
             }
         ]
         
-        rules = service.get_audit_rules()
-        
-        critical_rules = [r for r in rules if r.severity == "critical"]
-        assert len(critical_rules) == 2
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules()
+            
+            critical_rules = [r for r in rules if r.severity == "critical"]
+            assert len(critical_rules) == 2
     
     def test_warning_severity_rules(self, mock_db):
         """Verify warning severity rules exist."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {
                 "id": str(uuid4()),
                 "rule_id": "complexity-high",
@@ -390,10 +402,11 @@ class TestRuleSeverityLevels:
             }
         ]
         
-        rules = service.get_audit_rules()
-        
-        warning_rules = [r for r in rules if r.severity == "warning"]
-        assert len(warning_rules) == 2
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules()
+            
+            warning_rules = [r for r in rules if r.severity == "warning"]
+            assert len(warning_rules) == 2
 
 
 class TestActiveVsInactiveRules:
@@ -403,32 +416,30 @@ class TestActiveVsInactiveRules:
         """Verify get_audit_rules filters by is_active."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {"id": str(uuid4()), "rule_id": "active-rule", "is_active": True, "is_builtin": True},
         ]
         
-        rules = service.get_audit_rules(is_active=True)
-        
-        assert len(rules) == 1
-        assert rules[0].is_active is True
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            rules = service.get_audit_rules(is_active=True)
+            
+            assert len(rules) == 1
+            assert rules[0].is_active is True
     
     def test_get_included_inactive_rules(self, mock_db):
         """Verify can get inactive rules."""
         service = CodeMetricsService(db_connection=mock_db)
         
-        mock_db.execute.return_value.data = [
+        mock_rules = [
             {"id": str(uuid4()), "rule_id": "inactive-rule", "is_active": False, "is_builtin": True},
         ]
         
-        # Mock would return inactive when is_active=False
-        mock_db.eq.return_value.execute.return_value.data = [
-            {"id": str(uuid4()), "rule_id": "inactive-rule", "is_active": False, "is_builtin": True},
-        ]
-        
-        rules = service.get_audit_rules(is_active=False)
-        
-        # Should return inactive rules
-        assert len(rules) >= 0  # May be empty if filtering works
+        with patch.object(service, '_execute_query', return_value=mock_rules):
+            # Mock would return inactive when is_active=False
+            rules = service.get_audit_rules(is_active=False)
+            
+            # Should return inactive rules
+            assert len(rules) >= 0  # May be empty if filtering works
 
 
 if __name__ == "__main__":
