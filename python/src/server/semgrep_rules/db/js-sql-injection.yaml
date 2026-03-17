@@ -1,0 +1,166 @@
+rules:
+  - id: db-js-sql-injection-string-concat
+    languages:
+      - javascript
+      - typescript
+    message: "SQL injection vulnerability via string concatenation. Use parameterized queries."
+    severity: ERROR
+    patterns:
+      # Pattern 1: query = "..." + userInput
+      - pattern-either:
+          - pattern: |
+              $QUERY = "..." + $VAR
+          - pattern: |
+              $QUERY += $VAR
+          - pattern: |
+              $QUERY = $VAR + "..."
+          - pattern: |
+              $QUERY = "..." + $VAR + "..."
+      # Using query in execute/query call
+      - pattern-either:
+          - pattern-inside: |
+              $CLIENT.query($QUERY, ...)
+          - pattern-inside: |
+              $CLIENT.execute($QUERY, ...)
+          - pattern-inside: |
+              $POOL.query($QUERY, ...)
+          - pattern-inside: |
+              $DB.query($QUERY, ...)
+          - pattern-inside: |
+              $CONN.query($QUERY, ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: (?i)(query|sql|statement)
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 – Injection"
+      technology:
+        - javascript
+        - typescript
+        - nodejs
+        - pg
+        - postgres
+      confidence: HIGH
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: db-js-sql-injection-template-literal
+    languages:
+      - javascript
+      - typescript
+    message: "SQL injection via template literal. Use parameterized queries with $1, $2, etc."
+    severity: ERROR
+    patterns:
+      - pattern: |
+          $QUERY = `...${$VAR}...`
+      - pattern-either:
+          - pattern-inside: |
+              $CLIENT.query($QUERY, ...)
+          - pattern-inside: |
+              $CLIENT.execute($QUERY, ...)
+          - pattern-inside: |
+              $POOL.query($QUERY, ...)
+          - pattern-inside: |
+              $DB.query($QUERY, ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: (?i)(query|sql|statement)
+      # Not using template literal with proper parameterization
+      - pattern-not: |
+              $CLIENT.query(`...`, [...])
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 – Injection"
+      technology:
+        - javascript
+        - typescript
+        - nodejs
+        - pg
+      confidence: HIGH
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: db-js-sql-injection-pg-format
+    languages:
+      - javascript
+      - typescript
+    message: "pg-format detected. While pg-format is safer than raw concatenation, prefer parameterized queries."
+    severity: WARNING
+    patterns:
+      - pattern: |
+          format($QUERY, ...)
+      - pattern-either:
+          - pattern-inside: |
+              $CLIENT.query(format(...), ...)
+          - pattern-inside: |
+              $DB.query(format(...), ...)
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      technology:
+        - javascript
+        - typescript
+        - pg-format
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: MEDIUM
+      note: "pg-format uses proper escaping but parameterized queries are still preferred"
+
+  - id: db-js-unsafe-dynamic-query
+    languages:
+      - javascript
+      - typescript
+    message: "Dynamic SQL query construction. Verify that all inputs are properly sanitized."
+    severity: WARNING
+    patterns:
+      - pattern: |
+          function $FUNC(..., $PARAM, ...) {
+            ...
+            $QUERY = `...${$PARAM}...`
+            ...
+            $CLIENT.query($QUERY, ...)
+          }
+      - pattern-not: |
+              function $FUNC(..., $PARAM, ...) {
+                ...
+                $CLIENT.query(`...`, [$PARAM])
+              }
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      technology:
+        - javascript
+        - typescript
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: db-js-hardcoded-connection-string
+    languages:
+      - javascript
+      - typescript
+    message: "Potential hardcoded database connection string. Use environment variables."
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $CONN = "postgres://..."
+          - pattern: |
+              new Pool({ connectionString: "..." })
+          - pattern: |
+              new Client({ connectionString: "..." })
+      - metavariable-regex:
+          metavariable: $CONN
+          regex: (?i)postgres(ql)?://[^:]+:[^@]+@
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      technology:
+        - javascript
+        - typescript
+        - pg
+      confidence: HIGH
+      likelihood: MEDIUM
+      impact: HIGH

@@ -1,0 +1,55 @@
+
+# Detect path traversal vulnerabilities in Nim file operations
+# Where user input flows into file paths without sanitization
+
+rules:
+  - id: nim.security.path-traversal
+    languages:
+      - generic
+    message: "Potential path traversal - user input flows directly to file operation. Validate and sanitize paths."
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          # File read operations with user input
+          - pattern: readFile($X & ...)
+          - pattern: readFile(... & $X & ...)
+          - pattern: readFile(... & $X)
+          # File write operations
+          - pattern: writeFile($X & ..., ...)
+          - pattern: writeFile(... & $X & ..., ...)
+          # File existence checks
+          - pattern: fileExists($X & ...)
+          - pattern: fileExists(... & $X)
+          # File removal
+          - pattern: removeFile($X & ...)
+          - pattern: removeFile(... & $X)
+          # File opening
+          - pattern: open($X & ..., ...)
+          - pattern: open(... & $X, ...)
+          # Path construction
+          - pattern: / $X
+          - pattern: / ... & $X
+    pattern-not:
+      - pattern-inside: |
+          if $X.startsWith(...):
+            ...
+      - pattern-inside: |
+          if $X.contains(".."):
+            ...
+      - pattern-inside: |
+          if ".." in $X:
+            ...
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory"
+      technology:
+        - nim
+      confidence: MEDIUM
+      likelihood: HIGH
+      impact: HIGH
+      remediation: |
+        Validate user input before using in file paths:
+
+        if not userPath.startsWith("/allowed/base/"):
+          raise newException(ValueError, "Invalid path")
+        let content = readFile(userPath)

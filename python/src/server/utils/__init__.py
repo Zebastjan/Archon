@@ -19,7 +19,14 @@ import asyncio
 import os
 from typing import Optional
 
-from ..services.client_manager import get_supabase_client
+# Note: Supabase client is deprecated. Use services.database.get_database_connector() for Postgres.
+def get_supabase_client():
+    """Deprecated: Use services.database.get_database_connector() for Postgres."""
+    raise RuntimeError(
+        "Supabase client is deprecated. "
+        "Use services.database.get_database_connector() for PostgreSQL operations."
+    )
+
 from ..services.embeddings import (
     create_embedding,
     create_embeddings_batch,
@@ -73,6 +80,23 @@ def get_utils_threading_service():
     return _threading_service
 
 
+# Create async versions for backward compatibility
+async def create_embedding_async(*args, **kwargs):
+    return await asyncio.to_thread(create_embedding, *args, **kwargs)
+
+
+async def create_embeddings_batch_async(*args, **kwargs):
+    return await asyncio.to_thread(create_embeddings_batch, *args, **kwargs)
+
+
+async def generate_contextual_embedding_async(*args, **kwargs):
+    return await asyncio.to_thread(generate_contextual_embedding, *args, **kwargs)
+
+
+async def process_chunk_with_context_async(*args, **kwargs):
+    return await asyncio.to_thread(process_chunk_with_context, *args, **kwargs)
+
+
 # Export all imported functions for backward compatibility
 __all__ = [
     # Threading functions
@@ -82,7 +106,7 @@ __all__ = [
     "ProcessingMode",
     "ThreadingConfig",
     "RateLimitConfig",
-    # Client functions
+    # Supabase client (deprecated - raises error directing to Postgres)
     "get_supabase_client",
     # Embedding functions
     "create_embedding",

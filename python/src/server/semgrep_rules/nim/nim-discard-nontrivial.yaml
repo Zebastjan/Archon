@@ -1,0 +1,36 @@
+rules:
+  - id: nim-discard-nontrivial
+    languages:
+      - generic
+    message: "Discarding return value from function - consider using the result or rename function to indicate side effects"
+    severity: WARNING
+    patterns:
+      # Match discard of function calls that look non-trivial
+      # Pattern: discard someFunction(...)
+      - pattern: discard $FUNC(...)
+      # Not a simple getter (starts with "get")
+      - pattern-not: discard get(...)
+      # Not a simple print/debug function
+      - pattern-not: discard echo(...)
+      - pattern-not: discard debug(...)
+      - pattern-not: discard log(...)
+      - pattern-not: discard print(...)
+      # Not a simple setter (starts with "set")
+      - pattern-not: discard set(...)
+      # Not a simple add/remove
+      - pattern-not: discard add(...)
+      - pattern-not: discard remove(...)
+      # Not a simple delete
+      - pattern-not: discard delete(...)
+      # Not a simple clear
+      - pattern-not: discard clear(...)
+      # Not a simple close
+      - pattern-not: discard close(...)
+      # Not a simple reset
+      - pattern-not: discard reset(...)
+    metadata:
+      category: maintainability
+      technology:
+        - nim
+      confidence: LOW
+      note: "Generic mode rule - may have false positives"

@@ -1,0 +1,49 @@
+rules:
+  - id: nim-missing-doc-comment
+    languages:
+      - generic
+    message: "Procedure missing documentation comment (##)"
+    severity: WARNING
+    patterns:
+      # Match proc/func/method/iterator/macro/template declarations
+      # that don't have a ## comment immediately before them
+      - pattern-either:
+          - pattern: |
+              proc $NAME(...)
+          - pattern: |
+              func $NAME(...)
+          - pattern: |
+              method $NAME(...)
+          - pattern: |
+              iterator $NAME(...)
+          - pattern: |
+              macro $NAME(...)
+          - pattern: |
+              template $NAME(...)
+      # Not preceded by a documentation comment
+      - pattern-not-inside: |
+          ## ...
+          ...
+      - pattern-not: |
+          ## $COMMENT
+          proc $NAME(...)
+      - pattern-not: |
+          ## $COMMENT
+          func $NAME(...)
+      - pattern-not: |
+          ## $COMMENT
+          method $NAME(...)
+      - pattern-not: |
+          ## $COMMENT
+          iterator $NAME(...)
+      - pattern-not: |
+          ## $COMMENT
+          macro $NAME(...)
+      - pattern-not: |
+          ## $COMMENT
+          template $NAME(...)
+    metadata:
+      category: maintainability
+      technology:
+        - nim
+      confidence: MEDIUM

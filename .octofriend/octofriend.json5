@@ -6,4 +6,202 @@
       arguments: ["-s", "http://localhost:8051/mcp"],
     },
   },
+
+  // Agent Skills Discovery - Custom skills for Archon workflows
+  skills_dirs: ["~/.agents/skills", ".octofriend/skills"],
+
+  // System Context Rules
+  systemContext: {
+    // Archon Code Intelligence - Canonical MCP-First Rules
+    // THIS IS THE SINGLE SOURCE OF TRUTH for Archon/Omnibus work
+    // See: ~/.windsurf/agents/archon-system-prompt.md
+    archon_code_intelligence: `
+## 🚨 CRITICAL: MCP-First Rules (VIOLATE = WRONG)
+
+These are invariants from ~/.windsurf/agents/archon-system-prompt.md.
+Always follow the canonical prompt - it is the single source of truth.
+
+### 1. NO DB CLI TOOLS — EVER
+**Forbidden:** psql, mysql, sqlite3, pg_dump, direct SQL via shell
+**Required:** All DB access through Archon MCP or HTTP APIs only
+
+### 2. NO GUESSING — EVER
+**Forbidden:** grep for schema, find migrations, cat SQL files
+**Required:** Schema introspection via MCP tools only
+
+### 3. FAIL FAST — NO FALLBACK
+**Required:** If MCP call fails → STOP, REPORT error, NO shell fallback
+
+## Available MCP Tools — Use These
+
+### Code Audit (Primary)
+- audit_get_context(repo_name) — **PREFERRED** batched findings with samples
+- repo_health_check(repo_id, focus) — Comprehensive health check
+- orchestrated_repo_health_check(repo_id, focus) — With LLM insights
+- code_audit_get_findings(repo_id, ...) — Query specific findings
+
+### Code Intelligence
+- codebase_search_by_semantics — semantic search across indexed entities
+- codebase_get_entity_context — full context for function/class/module
+- codebase_find_entity — find functions/classes by name
+- codebase_get_entity_details — get detailed entity info with source
+- codebase_get_repository_stats — repository-wide statistics
+
+### Project Management
+- find_projects — list/search projects
+- find_tasks — list/search tasks
+- manage_task — create/update/delete tasks
+
+## Batching Rules
+1. NEVER sequential shell commands for discovery — use MCP first
+2. When you need repo_id, use find_projects or codebase_search
+3. Batch all reads first, then all writes
+4. Database queries ONLY through Archon MCP/HTTP — NO direct psql
+
+## Discovery Anti-Pattern (NEVER)
+❌ list directory → read file → grep for ID → shell query DB → read another file
+
+## Discovery Correct Pattern (ALWAYS)
+✅ Single MCP call (e.g., audit_get_context) → reason locally on grouped response
+
+## When Shell Is Acceptable
+- Running tests: pytest, semgrep, nim check
+- Applying known fix to known file
+- Git operations
+- **NEVER for discovery or database queries**
+    `,
+
+    // Skills Discipline
+    skills_discipline: `
+## Agent Skills Usage
+
+You have access to installed agent skills under ~/.agents/skills. Relevant
+skills available include:
+- audit-context-building — Structured audit context gathering
+- semgrep-rule-creator — Create Semgrep rules from patterns
+- semgrep-rule-variant-creator — Generate rule variants
+- code-maturity-assessor — Assess codebase maturity
+- entry-point-analyzer — Identify security entry points
+- insecure-defaults — Find insecure default configurations
+- second-opinion — Cross-check analysis results
+- sharp-edges — Identify dangerous code patterns
+
+### When to Use Skills
+Prefer relevant skills over raw shell commands when:
+- Doing code analysis or audits
+- Creating security rules
+- Building audit context
+- Analyzing entry points
+- Assessing code maturity
+
+### MCP-First Rule
+All skills must follow the canonical archon-system-prompt.md:
+- NO psql/mysql shell commands
+- NO grep/find for schema discovery
+- Use audit_get_context for batched audit data
+- Fail fast on MCP errors — no shell fallback
+
+Skills provide structured workflows and domain expertise. Use them.
+    `,
+
+    // Archon Code Intelligence Skills - Batching-Optimized Workflows
+    code_intelligence_skills: `
+## 🎯 Archon Code Intelligence Skills
+
+These custom skills optimize Archon MCP tool usage through strategic batching.
+All skills are defined in .octofriend/skills/ and follow batch-first principles.
+
+### P0 Skills (Critical - Use These First)
+
+#### 1. codebase-discovery
+**Trigger**: "Explore", "Understand", "Overview of" + codebase/repo/project
+**Tools**: find_projects + codebase_get_repository_stats + audit_get_context + worktree_get_current_info
+**Batch**: All 4 calls in ONE batch
+**Output**: High-level codebase overview with stats and existing findings
+
+#### 2. quick-health-check
+**Trigger**: "Audit", "Health check", "Quality check", "How good is the code"
+**Tools**: orchestrated_repo_health_check (primary) or repo_health_check (fallback)
+**Focus options**: "full", "security", "tdd", "docs", "maintainability", "db"
+**Output**: LLM-generated executive summary with scores and recommendations
+
+#### 3. function-deep-dive
+**Trigger**: "Explain", "How does X work", "Analyze function", "Deep dive on"
+**Tools**: 
+  - Step 1: codebase_find_entity (locate)
+  - Step 2 (BATCH): codebase_get_entity_details + codebase_get_entity_context + code_audit_analyze_entity
+**Output**: Source code, complexity metrics, call graph, and analysis
+
+#### 4. audit-context
+**Trigger**: "Show findings", "Audit results", "What issues exist"
+**Tools**: audit_get_context(repo_name) — SINGLE SUPER-TOOL CALL
+**Output**: All findings grouped by source with samples and severity breakdown
+**Note**: This replaces 4-5 separate calls with 1 batched call
+
+### P1 Skills (High Value)
+
+#### 5. safe-task-creation
+**Trigger**: "Create task", "Start working on", "Implement feature"
+**Safety First**: 
+  - Step 1: worktree_get_current_info + find_tasks + find_projects (BATCH)
+  - Step 2: worktree_validate_safe_to_work + worktree_find_conflicts (BATCH)
+  - Step 3: worktree_create_task (if safe)
+**Output**: Task created with full context OR conflict report
+
+#### 6. impact-analysis
+**Trigger**: "What will break", "Impact of", "Dependencies of"
+**Tools**:
+  - Step 1: codebase_find_entity
+  - Step 2 (BATCH): codebase_get_entity_context (depth=2) + code_audit_analyze_entity + worktree_find_conflicts
+**Output**: Upstream/downstream impact map with risk assessment
+
+#### 7. security-audit
+**Trigger**: "Security audit", "Vulnerabilities", "Security check"
+**Tools**: orchestrated_repo_health_check(focus="security") + db_security_audit (BATCH)
+**Output**: Comprehensive security findings with prioritized recommendations
+
+#### 8. semantic-code-search
+**Trigger**: "Find code that", "Where is X implemented", "Code that handles"
+**Tools**: codebase_search_by_semantics (natural language query)
+**Query tips**: Use 2-5 keywords, focus on behavior not implementation
+**Output**: Ranked matching entities with similarity scores
+
+## Batching Guidelines
+
+### Always Batch These (Independent Calls)
+- Discovery: project lookup + repo stats + audit context + worktree info
+- Deep dive: entity details + entity context + complexity metrics
+- Safety checks: validate safe to work + find conflicts
+- Security audit: orchestrated health check + db security audit
+
+### Never Batch (Sequential Dependencies)
+- Entity lookup → Entity details (need entity_id from first call)
+- Safety validation → Task creation (only create if safe)
+
+### Target Tool Call Counts
+- Discovery: 1 batch (4 calls) → 1 response
+- Health check: 1 call (super-tool)
+- Function dive: 1 locate + 1 batch (3 calls) = 2 total
+- Task creation: 1 batch + 1 validate + 1 create = 3 total
+- Impact analysis: 1 locate + 1 batch (3 calls) = 2 total
+
+## Tool Selection Priority
+
+### For Audit Work
+1. audit_get_context — Always start here (batched findings)
+2. orchestrated_repo_health_check — Comprehensive with LLM insights
+3. repo_health_check — Fallback if orchestrator unavailable
+
+### For Code Understanding
+1. codebase_search_by_semantics — Find by behavior
+2. codebase_find_entity — Find by name
+3. codebase_get_entity_context — Understand relationships
+4. codebase_get_entity_details — Read source
+
+### For Development Work
+1. worktree_validate_safe_to_work — Check safety first
+2. worktree_find_conflicts — Check for conflicts
+3. worktree_create_task — Create with full context
+    `,
+  },
 }

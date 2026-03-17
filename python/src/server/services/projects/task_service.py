@@ -219,8 +219,8 @@ class TaskService:
 
                 return True, {
                     "task": {
-                        "id": task["id"],
-                        "project_id": task["project_id"],
+                        "id": str(task["id"]),
+                        "project_id": str(task["project_id"]),
                         "title": task["title"],
                         "description": task["description"],
                         "status": task["status"],
@@ -351,8 +351,8 @@ class TaskService:
             tasks = []
             for task in response:
                 task_data = {
-                    "id": task["id"],
-                    "project_id": task["project_id"],
+                    "id": str(task["id"]),
+                    "project_id": str(task["project_id"]),
                     "title": task["title"],
                     "description": task["description"],
                     "status": task["status"],
@@ -413,6 +413,8 @@ class TaskService:
 
             if response:
                 task = dict(response[0])
+                task["id"] = str(task["id"])
+                task["project_id"] = str(task["project_id"])
                 return True, {"task": task}
             else:
                 return False, {"error": f"Task with ID {task_id} not found"}
@@ -504,6 +506,8 @@ class TaskService:
 
             if response:
                 task = dict(response[0])
+                task["id"] = str(task["id"])
+                task["project_id"] = str(task["project_id"])
                 return True, {"task": task, "message": "Task updated successfully"}
             else:
                 return False, {"error": f"Task with ID {task_id} not found"}
@@ -593,7 +597,7 @@ class TaskService:
             counts_by_project = {}
 
             for task in response:
-                project_id = task.get("project_id")
+                project_id = str(task.get("project_id")) if task.get("project_id") else None
                 status = task.get("status")
 
                 if not project_id or not status:

@@ -5,7 +5,7 @@ SHELL := /bin/bash
 # Docker compose command - prefer newer 'docker compose' plugin over standalone 'docker-compose'
 COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: help dev dev-docker dev-docker-full dev-work-orders dev-hybrid-work-orders stop test test-fe test-be lint lint-fe lint-be clean install check agent-work-orders
+.PHONY: help dev dev-docker dev-docker-full dev-work-orders dev-hybrid-work-orders stop test test-fe test-be lint lint-fe lint-be clean install check agent-work-orders health-check
 
 help:
 	@echo "Archon Development Commands"
@@ -16,6 +16,7 @@ help:
 	@echo "  make dev-hybrid-work-orders - Server + MCP in Docker, UI + work orders local (2 terminals)"
 	@echo "  make dev-work-orders        - Backend in Docker, agent work orders local, frontend local"
 	@echo "  make agent-work-orders      - Run agent work orders service locally"
+	@echo "  make health-check           - Validate all services are healthy"
 	@echo "  make stop                   - Stop all services"
 	@echo "  make test                   - Run all tests"
 	@echo "  make test-fe                - Run frontend tests only"
@@ -86,6 +87,11 @@ agent-work-orders:
 	export ARCHON_MCP_URL=http://localhost:$${ARCHON_MCP_PORT:-8051}; \
 	export AGENT_WORK_ORDERS_PORT=$${AGENT_WORK_ORDERS_PORT:-8053}; \
 	cd python && uv run python -m uvicorn src.agent_work_orders.server:app --host 0.0.0.0 --port $${AGENT_WORK_ORDERS_PORT:-8053} --reload
+
+# Health check validation
+health-check:
+	@echo "🔍 Running health check validation..."
+	@./scripts/validate_health.sh
 
 # Hybrid development with agent work orders (backend in Docker, agent work orders local, frontend local)
 dev-work-orders: check
@@ -166,3 +172,27 @@ clean:
 	fi
 
 .DEFAULT_GOAL := help
+
+# Run all tests
+test:
+	cd python && uv run pytest -v
+
+# Quick MCP reload (no rebuild, uses volume-mounted code)
+mcp-reload:
+	@echo "🔄 Quick MCP reload (no rebuild needed)..."
+	@./scripts/mcp-dev-reload.sh
+
+# Full MCP restart with rebuild (slow, use only when deps change)
+mcp-restart:
+	@echo "🔄 Restarting MCP container with rebuild..."
+	@$(COMPOSE) up -d --build archon-mcp
+	@sleep 3
+	@docker logs archon-mcp --tail 5
+
+# Check MCP status
+mcp-status:
+	@docker ps --filter "name=archon-mcp" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# MCP logs (follow mode)
+mcp-logs:
+	@docker logs -f archon-mcp --tail 20

@@ -1,0 +1,55 @@
+# Custom Semgrep Rule: Missing Docstring
+# Enforces docstrings on public functions/classes (not starting with _)
+
+rules:
+  - id: python.lang.maintainability.missing-docstring
+    patterns:
+      - pattern-inside: |
+          def $FUNC(...):
+              ...
+      - pattern-not-regex: "^    def _"
+      - pattern-not: |
+          def $FUNC(...):
+              """
+              ...
+              """
+              ...
+      - pattern-not: |
+          def $FUNC(...):
+              '''
+              ...
+              '''
+              ...
+    languages:
+      - python
+    message: >
+      Public function '$FUNC' is missing a docstring.
+      All public functions (not prefixed with '_') should have docstrings
+      describing their purpose, parameters, and return values.
+    severity: WARNING
+    metadata:
+      category: maintainability
+      technology:
+        - python
+      references:
+        - https://peps.python.org/pep-0257/
+      confidence: MEDIUM
+      likelihood: LOW
+      impact: LOW
+      subcategory:
+        - audit
+      remediation: |
+        Add a docstring to the function:
+        
+        def my_function(param1, param2):
+            """
+            Brief description of what this function does.
+            
+            Args:
+                param1: Description of param1
+                param2: Description of param2
+                
+            Returns:
+                Description of return value
+            """
+            ...

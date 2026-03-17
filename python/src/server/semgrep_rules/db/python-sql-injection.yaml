@@ -1,0 +1,153 @@
+rules:
+  - id: db-python-sql-injection-psycopg2
+    languages:
+      - python
+    message: "Potential SQL injection via psycopg2. Use parameterized queries instead of string formatting/concatenation."
+    severity: ERROR
+    patterns:
+      # Pattern 1: cursor.execute(f"...{var}...")
+      - pattern-either:
+          - pattern: |
+              $CURSOR.execute($QUERY, ...)
+          - pattern: |
+              $CURSOR.execute($QUERY)
+      # Query contains string formatting or concatenation
+      - pattern-either:
+          - pattern-inside: |
+              $QUERY = f"..."
+          - pattern-inside: |
+              $QUERY = "..." + ...
+          - pattern-inside: |
+              $QUERY = ... + "..."
+          - pattern-inside: |
+              $QUERY = "...".format(...)
+          - pattern-inside: |
+              $QUERY = "..." % (...)
+      # Not using parameterized query with tuple/list
+      - pattern-not: |
+              $CURSOR.execute("...", (...))
+      - pattern-not: |
+              $CURSOR.execute("...", [...])
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 – Injection"
+      technology:
+        - python
+        - psycopg2
+        - asyncpg
+      confidence: HIGH
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: db-python-sql-injection-string-format
+    languages:
+      - python
+    message: "SQL query constructed via string formatting. Use parameterized queries to prevent SQL injection."
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $QUERY = f"SELECT ... FROM ... WHERE ... = {$VAR}"
+          - pattern: |
+              $QUERY = f"INSERT INTO ... VALUES ({$VAR}, ...)"
+          - pattern: |
+              $QUERY = f"UPDATE ... SET ... = {$VAR} WHERE ..."
+          - pattern: |
+              $QUERY = f"DELETE FROM ... WHERE ... = {$VAR}"
+      - pattern-inside: |
+          def $FUNC(...):
+            ...
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: (?i)(query|sql|statement)
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 – Injection"
+      technology:
+        - python
+      confidence: HIGH
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: db-python-sql-injection-execute-many
+    languages:
+      - python
+    message: "execute_many with non-parameterized query. Ensure all values are properly bound."
+    severity: WARNING
+    patterns:
+      - pattern: |
+          $CURSOR.executemany($QUERY, $VALUES)
+      - pattern-either:
+          - pattern-inside: |
+              $QUERY = f"..."
+          - pattern-inside: |
+              $QUERY = "..." + ...
+          - pattern-inside: |
+              $QUERY = "...".format(...)
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      technology:
+        - python
+        - psycopg2
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: db-python-unsafe-raw-sql
+    languages:
+      - python
+    message: "Raw SQL execution detected. Ensure this is intentional and properly parameterized."
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: |
+              asyncpg.execute($QUERY)
+          - pattern: |
+              asyncpg.fetch($QUERY)
+          - pattern: |
+              asyncpg.fetchrow($QUERY)
+          - pattern: |
+              asyncpg.fetchval($QUERY)
+      - pattern-not: |
+              asyncpg.execute("...", ...)
+      - pattern-not: |
+              asyncpg.fetch("...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      technology:
+        - python
+        - asyncpg
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: db-python-hardcoded-sql-credentials
+    languages:
+      - python
+    message: "Potential hardcoded SQL connection string or credentials. Use environment variables."
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: |
+              psycopg2.connect($CONN)
+          - pattern: |
+              asyncpg.connect($CONN)
+          - pattern: |
+              create_pool($CONN)
+      - metavariable-regex:
+          metavariable: $CONN
+          regex: (?i)(password|pwd|secret|token).*=.+[^${}]
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      technology:
+        - python
+        - psycopg2
+        - asyncpg
+      confidence: MEDIUM
+      likelihood: MEDIUM
+      impact: HIGH

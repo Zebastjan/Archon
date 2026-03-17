@@ -1,0 +1,41 @@
+# Detect potential command injection via string concatenation/interpolation
+# in Nim's osproc and os modules
+
+rules:
+  - id: nim.security.command-injection
+    languages:
+      - generic
+    message: "Potential command injection via string concatenation. Use proper argument arrays instead of shell string interpolation."
+    severity: ERROR
+    patterns:
+      # Pattern 1: execShellCmd with string concatenation
+      - pattern-either:
+          - pattern: execShellCmd($X & ...)
+          - pattern: execShellCmd($X & ... & ...)
+          - pattern: execShellCmd(... & $X & ...)
+          - pattern: execShellCmd(fmt"...{$X}...")
+          - pattern: execShellCmd(&"...{$X}...")
+          - pattern: execProcess($X & ...)
+          - pattern: execProcess(... & $X & ...)
+          - pattern: execProcess(fmt"...{$X}...")
+          - pattern: startProcess($X & ...)
+          - pattern: startProcess(... & $X & ...)
+          - pattern: startProcess(fmt"...{$X}...")
+      # Not safe: using an array literal (safe pattern)
+      - pattern-not: execProcess(..., args = [...], ...)
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      technology:
+        - nim
+      confidence: MEDIUM
+      likelihood: HIGH
+      impact: HIGH
+      remediation: |
+        Use execProcess with explicit args array instead of shell string:
+        
+        # Unsafe
+        execShellCmd("ls " & userInput)
+        
+        # Safe
+        execProcess("ls", args = [userInput], options = {poUsePath})

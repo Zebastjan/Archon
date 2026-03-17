@@ -1,0 +1,96 @@
+# Nim Audit Triage Configuration
+# Defines default triage decisions for known patterns in Omnibus Nim codebase
+
+version: 1.0.0
+repository: Omnibus
+last_updated: 2026-03-16
+
+# Default triage decisions for known patterns
+triage_rules:
+  # Rule: nim/suspicious-discard
+  - id: "discard-readvarint-protobuf"
+    rule_id: "nim/suspicious-discard"
+    code_pattern: "discard readVarint"
+    path_pattern: "*/proto_codec.nim"
+    decision: "intentional"
+    severity_override: null
+    rationale: "Protobuf varint parsing uses ref param for position; return stored elsewhere"
+    confidence: "high"
+    auto_apply: true
+    
+  - id: "discard-posix-close"
+    rule_id: "nim/suspicious-discard"
+    code_pattern: "discard posix.close"
+    path_pattern: "*"
+    decision: "intentional"
+    severity_override: null
+    rationale: "POSIX close() errors are typically non-actionable for local FDs (pipes, sockets, local files)"
+    confidence: "medium"
+    auto_apply: true
+    conditions:
+      - fd_type: ["pipe", "socket", "local_file"]
+        not_nfs_filesystem: true
+    
+  - id: "discard-posix-write-framing"
+    rule_id: "nim/suspicious-discard"
+    code_pattern: "discard posix.write"
+    path_pattern: "lib/libomnibus/src/framing.nim"
+    decision: "wont_fix"
+    severity_override: "low"
+    rationale: "Transport-level failures detected via heartbeat/ack; individual write errors non-actionable at framing layer"
+    confidence: "high"
+    auto_apply: true
+    monitor: true
+    
+  - id: "discard-generated-code"
+    rule_id: "nim/suspicious-discard"
+    code_pattern: "discard *"
+    path_pattern: "*/output/*.nim"
+    decision: "intentional"
+    severity_override: "info"
+    rationale: "Generated code; patterns are by design in code generator"
+    confidence: "high"
+    auto_apply: true
+    tags: ["generated", "auto-generated"]
+
+# Rules that always require manual review (never auto-apply)
+manual_review_rules:
+  - rule_id: "nim/suspicious-discard"
+    code_pattern: "discard posix.open"
+    reason: "open() errors must be handled - file may not exist or permissions may be denied"
+    
+  - rule_id: "nim/suspicious-discard"
+    code_pattern: "discard posix.read"
+    reason: "read() errors and EOF conditions must be distinguished"
+    
+  - rule_id: "nim/suspicious-discard"
+    code_pattern: "discard posix.accept"
+    reason: "accept() errors indicate listen socket issues"
+
+# Path-based exemptions (entire files/directories)
+path_exemptions:
+  - path: "tests/"
+    reason: "Test code is allowed looser patterns"
+    rules_exempted: ["nim/missing-doc-comment"]
+    
+  - path: "tools/omni-schemac/output/"
+    reason: "Generated protobuf code"
+    rules_exempted: ["nim/missing-doc-comment", "nim/missing-test-companion"]
+    decision: "intentional"
+
+# Statistics tracking for trending
+metrics:
+  last_audit_date: 2026-03-16
+  total_findings: 19
+  findings_by_decision:
+    intentional: 14
+    wont_fix: 3
+    needs_review: 2
+  auto_triaged: 17
+  manual_review_required: 2
+
+# Review cadence
+review_schedule:
+  full_audit_interval: "quarterly"
+  trend_review_interval: "monthly"
+  rule_effectiveness_review: "bi-annually"

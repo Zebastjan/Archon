@@ -283,7 +283,7 @@ fi
         # Filter to supported extensions
         supported_files = [
             f for f in changed_files
-            if f.endswith(('.py', '.ts', '.tsx', '.js', '.jsx'))
+            if f.endswith(('.py', '.ts', '.tsx', '.js', '.jsx', '.nim', '.nims'))
         ]
         
         if not supported_files:
@@ -361,6 +361,22 @@ fi
         if repo_id not in self._repos:
             await self._load_repos()
         
+        # If still not found, try loading from database
+        if repo_id not in self._repos:
+            registered = await self.get_registered_repos()
+            for repo in registered:
+                if repo["repo_id"] == repo_id:
+                    self._repos[repo_id] = RepositoryConfig(
+                        repo_id=repo_id,
+                        local_path=Path(repo["local_path"]),
+                        github_url=repo.get("github_url"),
+                        github_owner=repo.get("github_owner"),
+                        github_repo=repo.get("github_repo"),
+                        branch=repo.get("branch", "main"),
+                        last_commit=repo.get("last_commit"),
+                    )
+                    break
+        
         if repo_id not in self._repos:
             raise ValueError(f"Repository {repo_id} not found")
         
@@ -373,20 +389,74 @@ fi
             repo_id
         )
         
-        # Run full ingestion via the quick_ingest script
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        # Get current commit
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(config.local_path), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            commit_sha = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            commit_sha = "unknown"
         
-        from scripts.quick_ingest_repo import ingest_repository
+        # Find all supported files in the repo
+        all_files = []
+        for ext in ['.py', '.ts', '.tsx', '.js', '.jsx', '.nim', '.nims']:
+            all_files.extend(config.local_path.rglob(f"*{ext}"))
         
-        result = await ingest_repository(config.local_path, config.local_path.name)
+        # Convert to relative paths
+        file_paths = [str(f.relative_to(config.local_path)) for f in all_files if f.is_file()]
         
-        # Update repo ID mapping (new repo ID created)
-        new_repo_id = result.get("repo_id")
+        logger.info(f"Found {len(file_paths)} files to ingest for repo {repo_id}")
         
-        logger.info(f"Full re-ingestion complete. New repo ID: {new_repo_id}")
+        # File content provider
+        class FileProvider:
+            def __init__(self, repo_path):
+                self.repo_path = repo_path
+            
+            async def get_content(self, repo_id, commit_sha, file_path):
+                full_path = self.repo_path / file_path
+                try:
+                    return full_path.read_text(encoding="utf-8", errors="ignore")
+                except Exception as e:
+                    logger.warning(f"Failed to read {file_path}: {e}")
+                    return ""
         
-        return result
+        provider = FileProvider(config.local_path)
+        
+        # Process all files
+        results = await self._code_service.extract_and_store_entities(
+            repo_id=repo_id,
+            commit_sha=commit_sha,
+            file_paths=file_paths,
+            file_content_getter=provider.get_content,
+        )
+        
+        # Update last commit and sync time
+        await db.execute("""
+            UPDATE archon_code_repos
+            SET last_commit_sha = $1, last_synced = NOW()
+            WHERE id = $2
+        """, commit_sha, repo_id)
+        
+        config.last_commit = commit_sha
+        self._repos[repo_id] = config
+        
+        logger.info(
+            f"Full re-ingestion complete for repo {repo_id}: "
+            f"{results['entities_created']} entities, "
+            f"{results['relationships_created']} relationships"
+        )
+        
+        return {
+            "repo_id": repo_id,
+            "entities_created": results['entities_created'],
+            "relationships_created": results['relationships_created'],
+            "files_processed": results['processed'],
+            "errors": len(results['errors']),
+        }
     
     async def get_github_info(self, repo_id: str) -> dict[str, Any] | None:
         """Get GitHub information for a repository.

@@ -1364,6 +1364,22 @@ You are the Data-Builder Agent. Your purpose is to transform descriptions of dat
 Remember: Create production-ready data models.', 'System prompt for creating data models in the data array');
 
 -- =====================================================
+-- SECTION 11: SEMGREP INTEGRATION (Migration 022)
+-- =====================================================
+
+-- Record migration 022 in the migrations table
+INSERT INTO archon_migrations (version, migration_name)
+VALUES ('022', 'Semgrep integration and meta-audit system')
+ON CONFLICT (version, migration_name) DO NOTHING;
+
+-- Note: The full schema for tables archon_semgrep_findings,
+-- archon_audit_triage_memory, archon_audit_false_negatives,
+-- archon_audit_rule_quality, and archon_semgrep_config
+-- is defined in migration/022_semgrep_integration.sql
+-- Run that migration separately for new installations,
+-- or include it in complete_setup.sql if doing fresh setup.
+
+-- =====================================================
 -- SETUP COMPLETE
 -- =====================================================
 -- Your Archon database is now fully configured!
@@ -1372,4 +1388,5 @@ Remember: Create production-ready data models.', 'System prompt for creating dat
 -- 1. Add your OpenAI API key via the Settings UI
 -- 2. Enable Projects feature if needed
 -- 3. Start crawling websites or uploading documents
+-- 4. For audit features: run migration 022 and install Semgrep
 -- =====================================================

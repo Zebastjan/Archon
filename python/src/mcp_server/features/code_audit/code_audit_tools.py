@@ -380,7 +380,7 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
         
         Args:
             repo_id: Repository ID to check
-            focus: Focus area - "full", "security", "tdd", "docs", "maintainability"
+            focus: Focus area - "full", "security", "db", "tdd", "docs", "maintainability"
             ruleset: Optional custom ruleset (comma-separated rule IDs)
         
         Returns:
@@ -405,10 +405,14 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
                 "recommendations": [...],
                 "run_id": "run-xyz"
             }
+        
+        Note:
+            focus="db" runs DB security rules (SQL injection, unsafe queries)
+            on Python/TypeScript code that talks to PostgreSQL.
         """
         try:
             # Validate focus parameter
-            valid_focus = ["full", "security", "tdd", "docs", "maintainability", None]
+            valid_focus = ["full", "security", "db", "tdd", "docs", "maintainability", None]
             if focus not in valid_focus:
                 return {
                     "success": False,
@@ -425,6 +429,164 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
             
         except Exception as e:
             logger.exception("repo_health_check_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def db_security_audit(
+        repo_id: str,
+        include_tests: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Run DB security audit focused on SQL injection and unsafe queries.
+        
+        This is a specialized audit that targets:
+        - SQL injection vulnerabilities
+        - Unsafe raw SQL string building
+        - Hardcoded database credentials
+        - Dangerous query patterns in Python and TypeScript/JS code
+        
+        Uses custom DB rules + Semgrep official SQL injection rules.
+        Excludes test files by default.
+        
+        Args:
+            repo_id: Repository ID to audit
+            include_tests: Include test files in scan (default: False)
+        
+        Returns:
+            Audit results with DB security findings
+        
+        Example:
+            >>> await db_security_audit(repo_id="abc-123")
+            {
+                "success": True,
+                "findings_count": 5,
+                "findings_by_rule": {...},
+                "needs_fix": [...],
+                "needs_review": [...]
+            }
+        """
+        try:
+            from src.server.services.database import get_database_connector
+            from src.server.services.semgrep_service import get_semgrep_service
+            from uuid import UUID
+            
+            # Get repo info
+            db = get_database_connector()
+            repo_result = await db.fetchrow(
+                "SELECT id, local_path, name FROM archon_code_repos WHERE id = $1",
+                repo_id
+            )
+            
+            if not repo_result:
+                return {
+                    "success": False,
+                    "error": f"Repository '{repo_id}' not found"
+                }
+            
+            repo_path = repo_result["local_path"]
+            
+            # Run DB audit via Semgrep service
+            semgrep_service = get_semgrep_service()
+            
+            db_rulesets = [
+                "p/python",  # Python security patterns
+                "p/javascript",  # JS security patterns
+                "p/typescript",  # TS security patterns
+                "python/src/server/semgrep_rules/db",  # Custom DB rules
+            ]
+            
+            exclude_patterns = []
+            if not include_tests:
+                exclude_patterns = [
+                    "**/test/**", "**/tests/**",
+                    "**/*_test.py", "**/*.test.ts", "**/*.test.js",
+                    "**/fixtures/**", "**/mocks/**",
+                ]
+            
+            findings = semgrep_service.run_audit(
+                repo_path=repo_path,
+                repo_id=UUID(repo_id),
+                rulesets=db_rulesets,
+                exclude_patterns=exclude_patterns,
+            )
+            
+            # Filter to DB-related findings
+            db_keywords = [
+                "sql", "injection", "query", "execute", "cursor",
+                "psycopg", "asyncpg", "postgres", "sqlite", "mysql",
+                "connection", "credential", "password"
+            ]
+            
+            db_findings = [
+                f for f in findings
+                if any(kw in f.check_id.lower() for kw in db_keywords)
+                or any(kw in f.message.lower() for kw in db_keywords)
+            ]
+            
+            # Group by severity/rule
+            findings_by_rule = {}
+            needs_fix = []
+            needs_review = []
+            
+            for finding in db_findings:
+                rule_id = finding.check_id
+                if rule_id not in findings_by_rule:
+                    findings_by_rule[rule_id] = {
+                        "count": 0,
+                        "severity": finding.severity,
+                        "message": finding.message,
+                        "samples": []
+                    }
+                findings_by_rule[rule_id]["count"] += 1
+                
+                # Collect samples (up to 3 per rule)
+                if len(findings_by_rule[rule_id]["samples"]) < 3:
+                    findings_by_rule[rule_id]["samples"].append({
+                        "file": finding.path,
+                        "line": finding.line_start,
+                        "snippet": finding.code_snippet[:150] if finding.code_snippet else None
+                    })
+                
+                # Categorize
+                if finding.severity == "ERROR":
+                    needs_fix.append({
+                        "rule": rule_id,
+                        "file": finding.path,
+                        "line": finding.line_start,
+                        "message": finding.message
+                    })
+                else:
+                    needs_review.append({
+                        "rule": rule_id,
+                        "file": finding.path,
+                        "line": finding.line_start,
+                        "message": finding.message
+                    })
+            
+            # Save findings to database
+            saved_count = semgrep_service.save_findings(
+                findings=db_findings,
+                repo_id=UUID(repo_id)
+            )
+            
+            return {
+                "success": True,
+                "repo_id": repo_id,
+                "repo_name": repo_result["name"],
+                "findings_count": len(db_findings),
+                "saved_count": saved_count,
+                "findings_by_rule": findings_by_rule,
+                "needs_fix_count": len(needs_fix),
+                "needs_review_count": len(needs_review),
+                "needs_fix": needs_fix[:10],  # Limit output
+                "needs_review": needs_review[:10],
+            }
+            
+        except Exception as e:
+            logger.exception("db_security_audit_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
@@ -471,8 +633,19 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
         Note:
             Requires orchestrator service running (port 8080 by default).
             Falls back to standard repo_health_check if orchestrator unavailable.
+            
+            focus="db" runs DB security rules (SQL injection, unsafe queries)
+            on Python/TypeScript code that talks to PostgreSQL.
         """
         try:
+            # Validate focus parameter
+            valid_focus = ["full", "security", "db", "tdd", "docs", "maintainability", None]
+            if focus not in valid_focus:
+                return {
+                    "success": False,
+                    "error": f"Invalid focus. Must be one of: {valid_focus}",
+                }
+            
             logger.info(f"Calling orchestrator for repo {repo_id}, focus={focus}")
             
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -503,6 +676,167 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
             return {
                 "success": False,
                 "error": str(e),
+            }
+
+    @mcp.tool()
+    async def audit_get_context(repo_name: str) -> dict[str, Any]:
+        """
+        Get batched audit context for a repository.
+        
+        Returns repo_id, findings grouped by source and check_id, with sample snippets.
+        This is the recommended tool for audit triage and analysis - it eliminates
+        the need for multiple discovery calls.
+        
+        Args:
+            repo_name: Repository name to look up
+        
+        Returns:
+            Dict with:
+            - repo_id: Repository UUID
+            - findings_by_source: Findings grouped by source, with counts and samples
+            - summary: Overall statistics (total_open, by severity)
+        
+        Example:
+            >>> await audit_get_context("archon")
+            {
+                "success": True,
+                "repo_id": "abc-123",
+                "findings_by_source": {
+                    "semgrep": [
+                        {
+                            "check_id": "hardcoded-secrets",
+                            "count": 5,
+                            "severity": "critical",
+                            "samples": [
+                                {"file_path": "config.py", "line": 42, "snippet": "API_KEY = 'sk-...'"}
+                            ]
+                        }
+                    ],
+                    "audit_rules": [
+                        {
+                            "check_id": "complexity-high",
+                            "count": 12,
+                            "severity": "warning",
+                            "samples": [...]
+                        }
+                    ]
+                },
+                "summary": {
+                    "total_open": 17,
+                    "critical": 5,
+                    "error": 0,
+                    "warning": 12
+                }
+            }
+        """
+        try:
+            from src.server.services.database import get_database_connector
+            
+            db = get_database_connector()
+            
+            # Get repo_id from name
+            repo_result = await db.fetchrow(
+                "SELECT id FROM archon_code_repos WHERE name = $1",
+                repo_name
+            )
+            
+            if not repo_result:
+                return {
+                    "success": False,
+                    "error": f"Repository '{repo_name}' not found"
+                }
+            
+            repo_id = str(repo_result["id"])
+            
+            # Get findings grouped by source (check_id) with severity and count
+            findings_query = """
+                SELECT 
+                    rule_id,
+                    severity,
+                    COUNT(*) as count,
+                    MIN(id) as sample_id
+                FROM archon_audit_findings
+                WHERE repo_id = $1 AND status = 'open'
+                GROUP BY rule_id, severity
+                ORDER BY 
+                    CASE severity 
+                        WHEN 'critical' THEN 1 
+                        WHEN 'error' THEN 2 
+                        WHEN 'warning' THEN 3 
+                        ELSE 4 
+                    END,
+                    count DESC
+            """
+            
+            findings_groups = await db.fetch(findings_query, repo_result["id"])
+            
+            # Get sample snippets for each group (3-5 samples per group)
+            findings_by_source = {}
+            summary = {"total_open": 0, "critical": 0, "error": 0, "warning": 0, "info": 0}
+            
+            for group in findings_groups:
+                rule_id = group["rule_id"]
+                severity = group["severity"]
+                count = group["count"]
+                
+                summary["total_open"] += count
+                summary[severity] = summary.get(severity, 0) + count
+                
+                # Get samples for this rule
+                samples_query = """
+                    SELECT 
+                        file_path,
+                        line_start,
+                        code_snippet,
+                        message
+                    FROM archon_audit_findings
+                    WHERE repo_id = $1 AND rule_id = $2 AND status = 'open'
+                    LIMIT 5
+                """
+                
+                samples_result = await db.fetch(samples_query, repo_result["id"], rule_id)
+                
+                samples = [
+                    {
+                        "file_path": s["file_path"],
+                        "line": s["line_start"],
+                        "snippet": s["code_snippet"][:200] if s["code_snippet"] else None,  # Truncate long snippets
+                        "message": s["message"][:100] if s["message"] else None
+                    }
+                    for s in samples_result
+                ]
+                
+                # Determine source category based on rule_id prefix or pattern
+                source = "audit_rules"  # default
+                if any(x in rule_id.lower() for x in ["semgrep", "sg-"]):
+                    source = "semgrep"
+                elif any(x in rule_id.lower() for x in ["trivy", "cve", "vuln"]):
+                    source = "trivy"
+                elif any(x in rule_id.lower() for x in ["bandit", "security"]):
+                    source = "security"
+                
+                if source not in findings_by_source:
+                    findings_by_source[source] = []
+                
+                findings_by_source[source].append({
+                    "check_id": rule_id,
+                    "count": count,
+                    "severity": severity,
+                    "samples": samples
+                })
+            
+            return {
+                "success": True,
+                "repo_id": repo_id,
+                "findings_by_source": findings_by_source,
+                "summary": summary
+            }
+            
+        except Exception as e:
+            logger.exception(f"audit_get_context failed for repo '{repo_name}': {e}")
+            return {
+                "success": False,
+                "error": str(e)
             }
 
     logger.info("code_audit_tools_registered")

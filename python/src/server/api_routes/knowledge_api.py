@@ -28,7 +28,6 @@ from ..services.embeddings.provider_error_adapters import ProviderErrorFactory
 from ..services.knowledge import DatabaseMetricsService, KnowledgeItemService, KnowledgeSummaryService
 from ..services.search.rag_service import RAGService
 from ..services.storage import DocumentStorageService
-from ..utils import get_supabase_client
 from ..utils.document_processing import extract_text_from_document
 
 # Get logger for this module
@@ -372,39 +371,54 @@ async def get_knowledge_item_chunks(source_id: str, domain_filter: str | None = 
             f"Fetching chunks | source_id={source_id} | domain_filter={domain_filter} | limit={limit} | offset={offset}"
         )
 
-        supabase = get_supabase_client()
+        from ..services.database import get_database_connector
+        
+        db = get_database_connector()
 
         # First get total count
-        count_query = supabase.from_("archon_crawled_pages").select("id", count="exact", head=True)
-        count_query = count_query.eq("source_id", source_id)
-
         if domain_filter:
-            count_query = count_query.ilike("url", f"%{domain_filter}%")
-
-        count_result = count_query.execute()
-        total = count_result.count if hasattr(count_result, "count") else 0
+            count_result = await db.fetchval(
+                "SELECT COUNT(*) FROM archon_crawled_pages WHERE source_id = $1 AND url ILIKE $2",
+                source_id,
+                f"%{domain_filter}%"
+            )
+        else:
+            count_result = await db.fetchval(
+                "SELECT COUNT(*) FROM archon_crawled_pages WHERE source_id = $1",
+                source_id
+            )
+        total = count_result or 0
 
         # Build the main query with pagination
-        query = supabase.from_("archon_crawled_pages").select("id, source_id, content, metadata, url")
-        query = query.eq("source_id", source_id)
-
-        # Apply domain filtering if provided
         if domain_filter:
-            query = query.ilike("url", f"%{domain_filter}%")
+            result = await db.fetch(
+                """
+                SELECT id, source_id, content, metadata, url 
+                FROM archon_crawled_pages 
+                WHERE source_id = $1 AND url ILIKE $2
+                ORDER BY url ASC, id ASC
+                LIMIT $3 OFFSET $4
+                """,
+                source_id,
+                f"%{domain_filter}%",
+                limit,
+                offset
+            )
+        else:
+            result = await db.fetch(
+                """
+                SELECT id, source_id, content, metadata, url 
+                FROM archon_crawled_pages 
+                WHERE source_id = $1
+                ORDER BY url ASC, id ASC
+                LIMIT $2 OFFSET $3
+                """,
+                source_id,
+                limit,
+                offset
+            )
 
-        # Deterministic ordering (URL then id)
-        query = query.order("url", desc=False).order("id", desc=False)
-
-        # Apply pagination
-        query = query.range(offset, offset + limit - 1)
-
-        result = query.execute()
-        # Check for error more explicitly to work with mocks
-        if hasattr(result, "error") and result.error is not None:
-            safe_logfire_error(f"Supabase query error | source_id={source_id} | error={result.error}")
-            raise HTTPException(status_code=500, detail={"error": str(result.error)})
-
-        chunks = result.data if result.data else []
+        chunks = [dict(row) for row in result] if result else []
 
         # Extract useful fields from metadata to top level for frontend
         # This ensures the API response matches the TypeScript DocumentChunk interface
@@ -519,33 +533,31 @@ async def get_knowledge_item_code_examples(source_id: str, limit: int = 20, offs
 
         safe_logfire_info(f"Fetching code examples | source_id={source_id} | limit={limit} | offset={offset}")
 
-        supabase = get_supabase_client()
+        from ..services.database import get_database_connector
+        
+        db = get_database_connector()
 
         # First get total count
-        count_result = (
-            supabase.from_("archon_code_examples")
-            .select("id", count="exact", head=True)
-            .eq("source_id", source_id)
-            .execute()
-        )
-        total = count_result.count if hasattr(count_result, "count") else 0
+        total = await db.fetchval(
+            "SELECT COUNT(*) FROM archon_code_examples WHERE source_id = $1",
+            source_id
+        ) or 0
 
         # Get paginated code examples
-        result = (
-            supabase.from_("archon_code_examples")
-            .select("id, source_id, content, summary, metadata")
-            .eq("source_id", source_id)
-            .order("id", desc=False)  # Deterministic ordering
-            .range(offset, offset + limit - 1)
-            .execute()
+        result = await db.fetch(
+            """
+            SELECT id, source_id, content, summary, metadata 
+            FROM archon_code_examples 
+            WHERE source_id = $1
+            ORDER BY id ASC
+            LIMIT $2 OFFSET $3
+            """,
+            source_id,
+            limit,
+            offset
         )
 
-        # Check for error to match chunks endpoint pattern
-        if hasattr(result, "error") and result.error is not None:
-            safe_logfire_error(f"Supabase query error (code examples) | source_id={source_id} | error={result.error}")
-            raise HTTPException(status_code=500, detail={"error": str(result.error)})
-
-        code_examples = result.data if result.data else []
+        code_examples = [dict(row) for row in result] if result else []
 
         # Extract title and example_name from metadata to top level for frontend
         # This ensures the API response matches the TypeScript CodeExample interface
@@ -771,14 +783,19 @@ async def _perform_revectorize_with_progress(progress_id: str, source_id: str, p
                 embedding_dimensions = 1536
 
                 # Fetch all documents for this source
-                supabase = get_supabase_client()
-                docs_response = supabase.table("archon_crawled_pages").select("*").eq("source_id", source_id).execute()
+                from ..services.database import get_database_connector
+                db = get_database_connector()
+                
+                docs_response = await db.fetch(
+                    "SELECT * FROM archon_crawled_pages WHERE source_id = $1",
+                    source_id
+                )
 
-                if not docs_response.data:
+                if not docs_response:
                     await tracker.error("No documents found for source")
                     return
 
-                documents = docs_response.data
+                documents = [dict(row) for row in docs_response]
                 total_docs = len(documents)
 
                 await tracker.update(
@@ -834,13 +851,17 @@ async def _perform_revectorize_with_progress(progress_id: str, source_id: str, p
                                 continue
 
                             try:
-                                supabase.table("archon_crawled_pages").update(
-                                    {
-                                        embedding_column: embedding,
-                                        "embedding_model": embedding_model,
-                                        "embedding_dimension": embedding_dim,
-                                    }
-                                ).eq("id", doc_id).execute()
+                                await db.execute(
+                                    f"""
+                                    UPDATE archon_crawled_pages 
+                                    SET {embedding_column} = $1, embedding_model = $2, embedding_dimension = $3
+                                    WHERE id = $4
+                                    """,
+                                    embedding,
+                                    embedding_model,
+                                    embedding_dim,
+                                    doc_id
+                                )
                                 total_updated += 1
                             except Exception as e:
                                 errors.append(f"Failed to update doc {doc_id}: {str(e)}")
@@ -858,16 +879,22 @@ async def _perform_revectorize_with_progress(progress_id: str, source_id: str, p
                     )
 
                 # Update source provenance
-                supabase.table("archon_sources").update(
-                    {
-                        "embedding_model": embedding_model,
-                        "embedding_dimensions": embedding_dim,
-                        "embedding_provider": provider,
-                        "vectorizer_settings": vectorizer_settings,
-                        "last_vectorized_at": datetime.utcnow().isoformat(),
-                        "needs_revectorization": False,
-                    }
-                ).eq("id", source_id).execute()
+                import json
+                await db.execute(
+                    """
+                    UPDATE archon_sources 
+                    SET embedding_model = $1, embedding_dimensions = $2, embedding_provider = $3,
+                        vectorizer_settings = $4, last_vectorized_at = $5, needs_revectorization = $6
+                    WHERE source_id = $7
+                    """,
+                    embedding_model,
+                    embedding_dim,
+                    provider,
+                    json.dumps(vectorizer_settings),
+                    datetime.utcnow().isoformat(),
+                    False,
+                    source_id
+                )
 
                 await tracker.complete(
                     {
@@ -966,14 +993,19 @@ async def _perform_resummarize_with_progress(progress_id: str, source_id: str, t
                 )
 
                 # Fetch all code examples for this source
-                supabase = get_supabase_client()
-                code_response = supabase.table("archon_code_examples").select("*").eq("source_id", source_id).execute()
+                from ..services.database import get_database_connector
+                db = get_database_connector()
+                
+                code_response = await db.fetch(
+                    "SELECT * FROM archon_code_examples WHERE source_id = $1",
+                    source_id
+                )
 
-                if not code_response.data:
+                if not code_response:
                     await tracker.error("No code examples found for source")
                     return
 
-                code_examples = code_response.data
+                code_examples = [dict(row) for row in code_response]
                 total_examples = len(code_examples)
 
                 await tracker.update(
@@ -1015,9 +1047,12 @@ async def _perform_resummarize_with_progress(progress_id: str, source_id: str, t
                         continue
 
                     try:
-                        supabase.table("archon_code_examples").update(
-                            {"summary": summary.get("summary", ""), "llm_chat_model": code_summarization_model}
-                        ).eq("id", example_id).execute()
+                        await db.execute(
+                            "UPDATE archon_code_examples SET summary = $1, llm_chat_model = $2 WHERE id = $3",
+                            summary.get("summary", ""),
+                            code_summarization_model,
+                            example_id
+                        )
                         total_updated += 1
                     except Exception as e:
                         errors.append(f"Failed to update example {example_id}: {str(e)}")
@@ -1036,9 +1071,11 @@ async def _perform_resummarize_with_progress(progress_id: str, source_id: str, t
                         )
 
                 # Update source provenance
-                supabase.table("archon_sources").update({"summarization_model": code_summarization_model}).eq(
-                    "id", source_id
-                ).execute()
+                await db.execute(
+                    "UPDATE archon_sources SET summarization_model = $1 WHERE source_id = $2",
+                    code_summarization_model,
+                    source_id
+                )
 
                 await tracker.complete(
                     {
@@ -1169,8 +1206,7 @@ async def _perform_crawl_with_progress(progress_id: str, request: KnowledgeItemR
                     await tracker.error(f"Failed to initialize crawler: {str(e)}")
                     return
 
-                supabase_client = get_supabase_client()
-                orchestration_service = CrawlingService(crawler, supabase_client)
+                orchestration_service = CrawlingService(crawler)
                 orchestration_service.set_progress_id(progress_id)
 
                 # Convert request to dict for service
@@ -1767,15 +1803,17 @@ async def resume_operation(progress_id: str):
         # Restart the actual operation based on type
         if operation_type == "crawl":
             from ..services.crawling.crawling_service import CrawlingService
+            from ..services.database import get_database_connector
 
-            supabase = get_supabase_client()
+            db = get_database_connector()
 
-            source_result = (
-                supabase.table("archon_sources").select("source_url, metadata").eq("source_id", source_id).execute()
+            source_result = await db.fetch(
+                "SELECT source_url, metadata FROM archon_sources WHERE source_id = $1",
+                source_id
             )
 
             # Check if source record exists BEFORE updating status
-            if not source_result.data or len(source_result.data) == 0:
+            if not source_result or len(source_result) == 0:
                 safe_logfire_error(f"Source not found for resume | source_id={source_id}")
                 raise HTTPException(
                     status_code=404,
@@ -1784,8 +1822,16 @@ async def resume_operation(progress_id: str):
                     }
                 )
 
-            source_url = source_result.data[0].get("source_url")
-            metadata = source_result.data[0].get("metadata", {})
+            source_row = dict(source_result[0])
+            source_url = source_row.get("source_url")
+            metadata = source_row.get("metadata", {}) or {}
+            # Parse metadata if it's a string
+            if isinstance(metadata, str):
+                import json
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = {}
 
             crawl_request = {
                 "url": source_url,

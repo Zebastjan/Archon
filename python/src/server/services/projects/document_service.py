@@ -118,7 +118,17 @@ class DocumentService:
             if not response:
                 return False, {"error": f"Project with ID {project_id} not found"}
 
-            docs = response[0].get("docs", [])
+            import json
+            docs_data = response[0].get("docs", [])
+            
+            # Handle case where docs might be a JSON string
+            if isinstance(docs_data, str):
+                try:
+                    docs = json.loads(docs_data)
+                except json.JSONDecodeError:
+                    docs = []
+            else:
+                docs = docs_data or []
 
             # Format documents for response
             documents = []

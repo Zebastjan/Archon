@@ -1,3 +1,9 @@
+> ⚠️ **OUTDATED - March 2026**: This document is historical only.  
+> **Current source of truth**: `PROJECT_STATUS_NOW.md`  
+> Treat this as background context, not current status. Code is authoritative.
+>
+> ---
+>
 # Archon Roadmap
 
 > Last updated: February 2026

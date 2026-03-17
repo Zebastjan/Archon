@@ -4,13 +4,11 @@ Ingestion Pipeline API
 Provides endpoints to trigger and monitor the restartable RAG ingestion pipeline.
 """
 
-from fastapi import APIRouter, Depends
-from supabase import Client
+from fastapi import APIRouter
 
 from ..services.ingestion.embedding_worker import get_embedding_worker
 from ..services.ingestion.health_check import get_ingestion_health_check
 from ..services.ingestion.summary_worker import get_summary_worker
-from ..utils import get_supabase_client
 
 router = APIRouter(prefix="/api/ingestion", tags=["ingestion"])
 
@@ -20,7 +18,6 @@ async def process_pending_embeddings(
     max_batch_size: int = 10,
     embedder_id: str | None = None,
     provider: str | None = None,
-    supabase: Client = Depends(get_supabase_client),
 ):
     """
     Manually trigger processing of pending embedding sets.
@@ -33,7 +30,7 @@ async def process_pending_embeddings(
     Returns:
         Processing results with counts
     """
-    worker = get_embedding_worker(supabase)
+    worker = get_embedding_worker()
     result = await worker.process_pending_embeddings(
         embedder_id=embedder_id,
         max_batch_size=max_batch_size,
@@ -47,7 +44,6 @@ async def process_pending_summaries(
     max_batch_size: int = 10,
     summarizer_model_id: str | None = None,
     style: str | None = None,
-    supabase: Client = Depends(get_supabase_client),
 ):
     """
     Manually trigger processing of pending summaries.
@@ -60,7 +56,7 @@ async def process_pending_summaries(
     Returns:
         Processing results with counts
     """
-    worker = get_summary_worker(supabase)
+    worker = get_summary_worker()
     result = await worker.process_pending_summaries(
         summarizer_model_id=summarizer_model_id,
         style=style,
@@ -72,28 +68,26 @@ async def process_pending_summaries(
 @router.get("/health/{source_id}")
 async def check_source_health(
     source_id: str,
-    supabase: Client = Depends(get_supabase_client),
 ):
     """
     Check health of a specific source's ingestion pipeline.
 
     Returns issues and warnings found.
     """
-    health_check = get_ingestion_health_check(supabase)
+    health_check = get_ingestion_health_check()
     result = await health_check.check_source_health(source_id)
     return result
 
 
 @router.get("/health")
 async def check_all_sources_health(
-    supabase: Client = Depends(get_supabase_client),
 ):
     """
     Check health of all sources.
 
     Returns aggregate health statistics.
     """
-    health_check = get_ingestion_health_check(supabase)
+    health_check = get_ingestion_health_check()
     result = await health_check.check_all_sources()
     return result
 
@@ -101,7 +95,6 @@ async def check_all_sources_health(
 @router.post("/retry-failed-embeddings")
 async def retry_failed_embeddings(
     embedder_id: str | None = None,
-    supabase: Client = Depends(get_supabase_client),
 ):
     """
     Reset failed embedding sets back to pending for retry.
@@ -112,7 +105,7 @@ async def retry_failed_embeddings(
     Returns:
         Number of embedding sets reset
     """
-    worker = get_embedding_worker(supabase)
+    worker = get_embedding_worker()
     result = await worker.retry_failed_embeddings(embedder_id=embedder_id)
     return result
 
@@ -121,7 +114,6 @@ async def retry_failed_embeddings(
 async def retry_failed_summaries(
     summarizer_model_id: str | None = None,
     style: str | None = None,
-    supabase: Client = Depends(get_supabase_client),
 ):
     """
     Reset failed summaries back to pending for retry.
@@ -133,7 +125,7 @@ async def retry_failed_summaries(
     Returns:
         Number of summaries reset
     """
-    worker = get_summary_worker(supabase)
+    worker = get_summary_worker()
     result = await worker.retry_failed_summaries(
         summarizer_model_id=summarizer_model_id,
         style=style,

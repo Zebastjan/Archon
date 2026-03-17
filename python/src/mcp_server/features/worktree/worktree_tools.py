@@ -106,17 +106,35 @@ def register_worktree_tools(mcp: FastMCP) -> None:
         try:
             service = get_worktree_service()
             
-            result = service.validate_safe_to_work(
+            result = await service.validate_safe_to_work(
                 task_id=task_id,
                 file_paths=file_paths,
                 entity_ids=entity_ids,
             )
             
+            # Parse JSON strings if needed
+            issues = result.issues
+            warnings = result.warnings
+            
+            # Handle case where database returns JSON as string
+            if isinstance(issues, str):
+                import json
+                try:
+                    issues = json.loads(issues)
+                except:
+                    issues = []
+            if isinstance(warnings, str):
+                import json
+                try:
+                    warnings = json.loads(warnings)
+                except:
+                    warnings = []
+            
             return {
                 "success": True,
                 "is_safe": result.is_safe,
-                "issues": result.issues,
-                "warnings": result.warnings,
+                "issues": issues,
+                "warnings": warnings,
                 "context": result.context.to_dict() if result.context else None,
             }
             
@@ -160,7 +178,7 @@ def register_worktree_tools(mcp: FastMCP) -> None:
         try:
             service = get_worktree_service()
             
-            conflicts = service.find_conflicts(
+            conflicts = await service.find_conflicts(
                 worktree_id=worktree_id,
                 file_paths=file_paths,
                 entity_ids=entity_ids,
@@ -216,7 +234,7 @@ def register_worktree_tools(mcp: FastMCP) -> None:
         """
         try:
             service = get_worktree_service()
-            worktrees = service.list_worktrees()
+            worktrees = await service.list_worktrees()
             
             return {
                 "success": True,
@@ -274,7 +292,7 @@ def register_worktree_tools(mcp: FastMCP) -> None:
             service = get_worktree_service()
             
             # Validate safety first
-            validation = service.validate_safe_to_work(
+            validation = await service.validate_safe_to_work(
                 file_paths=file_paths,
                 entity_ids=entity_ids,
             )
@@ -288,7 +306,7 @@ def register_worktree_tools(mcp: FastMCP) -> None:
                 }
             
             # Create task with worktree context
-            success, result = service.create_worktree_task(
+            success, result = await service.create_worktree_task(
                 project_id=project_id,
                 title=title,
                 description=description,
@@ -334,12 +352,12 @@ def register_worktree_tools(mcp: FastMCP) -> None:
         """
         try:
             service = get_worktree_service()
-            success = service.sync_worktree_context(task_id)
+            success = await service.sync_worktree_context(task_id)
             
             return {
                 "success": success,
                 "message": "Task context synced" if success else "Failed to sync context",
-            }
+            }}
             
         except Exception as e:
             logger.exception("worktree_sync_failed: %s", str(e))
@@ -373,7 +391,7 @@ def register_worktree_tools(mcp: FastMCP) -> None:
         """
         try:
             service = get_worktree_service()
-            success = service.lock_worktree(worktree_id, locked)
+            success = await service.lock_worktree(worktree_id, locked)
             
             return {
                 "success": success,

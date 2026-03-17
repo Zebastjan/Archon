@@ -1,0 +1,47 @@
+# DB Security Audit Policy
+# Focused on SQL injection and database security issues
+# Use this policy for targeted DB security audits
+
+rules:
+  # Import official Semgrep rules for SQL injection
+  - id: db-policy-imports
+    # These rulesets provide broad SQL injection coverage
+    imports:
+      - ruleset: "p/python"
+        # Python SQL injection patterns (psycopg2, asyncpg, sqlite3, mysql)
+      - ruleset: "p/javascript"
+        # JavaScript SQL injection patterns (pg, mysql, sqlite)
+      - ruleset: "p/typescript"
+        # TypeScript SQL injection patterns
+      - ruleset: "p/security-audit"
+        # General security audit patterns including SQLi
+        
+# Custom rules in this directory (db/*.yaml) are automatically loaded
+# - python-sql-injection.yaml: Psycopg2/AsyncPG specific patterns
+# - js-sql-injection.yaml: Node.js/pg specific patterns
+
+# Exclusions (test files are excluded by default in the service)
+# But we explicitly exclude them here as well for clarity
+exclusions:
+  paths:
+    - "**/test/**"
+    - "**/tests/**"
+    - "**/*_test.py"
+    - "**/*.test.ts"
+    - "**/*.test.js"
+    - "**/fixtures/**"
+    - "**/mocks/**"
+    - "**/conftest.py"
+  patterns:
+    - "test_"
+    - "_test"
+    - "mock_"
+    - "stub_"
+
+# Severity filter - focus on high-confidence findings
+severity:
+  minimum: WARNING  # Only report WARNING and above
+
+# Confidence filter
+confidence:
+  minimum: MEDIUM  # Only report MEDIUM and HIGH confidence

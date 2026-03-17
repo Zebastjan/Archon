@@ -114,6 +114,11 @@ archon-audit list-rules --include-inactive
 For programmatic access, use the MCP tools directly:
 
 ```python
+# Batched audit context (RECOMMENDED — single call for all findings)
+context = await audit_get_context(repo_name="my-repo")
+# Returns: repo_id, findings_by_source, summary
+# Grouped by source + check_id with 3-5 sample snippets per group
+
 # Calculate metrics
 metrics = await code_audit_calculate_metrics(repo_id="abc-123")
 
@@ -123,7 +128,7 @@ result = await code_audit_run(
     ruleset=["hardcoded-secrets", "sql-injection"]
 )
 
-# Get findings
+# Get findings (legacy — prefer audit_get_context for batched data)
 findings = await code_audit_get_findings(
     repo_id="abc-123",
     status="open",
@@ -136,6 +141,12 @@ summary = await code_audit_get_summary(repo_id="abc-123")
 # Get available rules
 rules = await code_audit_get_rules(category="security")
 ```
+
+**Why use `audit_get_context`:**
+- **Single call** gets all open findings
+- **Pre-grouped** by source + check_id
+- **Sample snippets** included (3-5 per group)
+- **Eliminates N discovery calls** — reason locally on the response
 
 ## Using the Security & Quality Audit Skill
 
@@ -167,6 +178,72 @@ rules = await code_audit_get_rules(category="security")
 - Monitor improvement progress
 
 ### How to Use the Skill
+
+#### Step 0: Ensure Repository is Indexed (if needed)
+
+**If `audit_get_context` returns "Repository 'X' not found":**
+
+The repository needs to be created and indexed first. Use the single sanctioned path:
+
+**Via MCP Tool (Recommended):**
+```python
+result = await code_repos_create_and_index(
+    name="Omnibus",
+    local_path="/home/zebastjan/dev/Omnibus",
+    github_url="https://github.com/zebastjan/Omnibus"  # optional
+)
+
+# Check response
+if result["status"] == "ready":
+    # Proceed with audit
+    context = await audit_get_context(repo_name="Omnibus")
+elif result["status"] in ["queued", "indexing"]:
+    # Wait and poll, or ask user to retry later
+    print(f"Indexing in progress...")
+```
+
+**Via CLI:**
+```bash
+# Add repo and wait for indexing
+archon code-repos add \
+  --name Omnibus \
+  --root-path /home/zebastjan/dev/Omnibus \
+  --wait
+
+# Or just add (returns immediately)
+archon code-repos add \
+  --name Omnibus \
+  --root-path /home/zebastjan/dev/Omnibus
+
+# Check status
+archon code-repos status --repo-id <repo_id>
+```
+
+**Via curl:**
+```bash
+curl -X POST http://localhost:8181/api/code_repos/create-and-index \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Omnibus",
+    "local_path": "/home/zebastjan/dev/Omnibus",
+    "github_url": "https://github.com/zebastjan/Omnibus"
+  }'
+```
+
+**Status Values:**
+- `queued` — Indexing job submitted, not yet started
+- `indexing` — Ingestion in progress
+- `ready` — Fully indexed and available for audit
+- `error` — Indexing failed (see `error_message`)
+
+**Forbidden (per MCP-first rules):**
+- ❌ Using `psql` to manually insert repo rows
+- ❌ Running ingestion scripts directly via shell
+- ❌ Using `grep`/`find` to locate the repo
+
+**See Also:**
+- Full lifecycle docs: `docs/CODE_REPO_LIFECYCLE.md`
+- CLI reference: `python/src/cli/code_repos_cli.py`
 
 #### 1. Initial Assessment
 

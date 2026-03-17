@@ -323,6 +323,197 @@ class WorktreeService:
         )
 
 
+    async def find_conflicts(
+        self,
+        worktree_id: str | None = None,
+        file_paths: list[str] | None = None,
+        entity_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find conflicts with other worktrees."""
+        try:
+            db = get_database_connector()
+            
+            # Get current worktree if not provided
+            context = self._current_context or self.detect_worktree_context()
+            current_wt = worktree_id or context.worktree_id
+            
+            if not current_wt:
+                return []
+            
+            # Query for tasks in other worktrees modifying same files/entities
+            # This is a placeholder - implement actual conflict detection logic
+            result = await db.fetch(
+                """
+                SELECT DISTINCT ON (t.id)
+                    t.id as task_id,
+                    t.title,
+                    t.status,
+                    t.worktree_id,
+                    w.branch_name,
+                    'file_conflict' as conflict_type,
+                    'warning' as conflict_severity
+                FROM archon_tasks t
+                JOIN archon_worktrees w ON w.worktree_id = t.worktree_id
+                WHERE t.worktree_id != $1
+                AND t.status IN ('todo', 'doing', 'review')
+                AND (
+                    $2::text[] && t.file_paths
+                    OR $3::text[] && t.entity_ids
+                )
+                LIMIT 50
+                """,
+                current_wt,
+                file_paths or [],
+                entity_ids or [],
+            )
+            
+            return [dict(row) for row in result]
+            
+        except Exception as e:
+            logger.error(f"Error finding conflicts: {e}")
+            return []
+    
+    async def list_worktrees(self) -> list[dict[str, Any]]:
+        """List all active worktrees with task counts."""
+        try:
+            db = get_database_connector()
+            result = await db.fetch(
+                """
+                SELECT 
+                    w.worktree_id,
+                    w.branch_name,
+                    w.repo_path,
+                    COUNT(DISTINCT t.id) as active_task_count,
+                    COUNT(DISTINCT CASE WHEN t.status = 'doing' THEN t.id END) as doing_count,
+                    MAX(t.updated_at) as last_activity
+                FROM archon_worktrees w
+                LEFT JOIN archon_tasks t ON t.worktree_id = w.worktree_id 
+                    AND t.status IN ('todo', 'doing', 'review')
+                GROUP BY w.worktree_id, w.branch_name, w.repo_path
+                ORDER BY last_activity DESC NULLS LAST
+                LIMIT 100
+                """
+            )
+            
+            return [
+                {
+                    "worktree_id": row["worktree_id"],
+                    "branch_name": row["branch_name"],
+                    "repo_path": row["repo_path"],
+                    "active_task_count": row["active_task_count"],
+                    "doing_count": row["doing_count"],
+                    "last_activity": row["last_activity"].isoformat() if row["last_activity"] else None,
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error listing worktrees: {e}")
+            return []
+    
+    async def create_worktree_task(
+        self,
+        project_id: str,
+        title: str,
+        description: str,
+        file_paths: list[str] | None,
+        entity_ids: list[str] | None,
+        assignee: str,
+        priority: str,
+        feature: str | None,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Create a task with worktree context."""
+        try:
+            db = get_database_connector()
+            context = self._current_context or self.detect_worktree_context()
+            
+            # Generate UUID for task
+            task_id = str(uuid4())
+            
+            # Insert task with worktree context
+            await db.execute(
+                """
+                INSERT INTO archon_tasks (
+                    id, project_id, title, description, status,
+                    assignee, priority, feature, worktree_id, branch_name,
+                    file_paths, entity_ids, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+                """,
+                task_id,
+                project_id,
+                title,
+                description,
+                "todo",
+                assignee,
+                priority,
+                feature,
+                context.worktree_id,
+                context.branch_name,
+                file_paths or [],
+                entity_ids or [],
+            )
+            
+            # Ensure worktree exists in database
+            await db.execute(
+                """
+                INSERT INTO archon_worktrees (worktree_id, branch_name, repo_path, created_at)
+                VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (worktree_id) DO NOTHING
+                """,
+                context.worktree_id,
+                context.branch_name,
+                context.repo_path,
+            )
+            
+            return True, {"task": {"id": task_id, "title": title}, "task_id": task_id}
+            
+        except Exception as e:
+            logger.error(f"Error creating worktree task: {e}")
+            return False, {"error": str(e)}
+    
+    async def sync_worktree_context(self, task_id: str) -> bool:
+        """Sync worktree context for a task."""
+        try:
+            db = get_database_connector()
+            context = self._current_context or self.detect_worktree_context()
+            
+            await db.execute(
+                """
+                UPDATE archon_tasks
+                SET worktree_id = $1, branch_name = $2, updated_at = NOW()
+                WHERE id = $3
+                """,
+                context.worktree_id,
+                context.branch_name,
+                task_id,
+            )
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error syncing worktree context: {e}")
+            return False
+    
+    async def lock_worktree(self, worktree_id: str, locked: bool) -> bool:
+        """Lock or unlock a worktree."""
+        try:
+            db = get_database_connector()
+            
+            await db.execute(
+                """
+                INSERT INTO archon_worktrees (worktree_id, locked, locked_at, updated_at)
+                VALUES ($1, $2, CASE WHEN $2 THEN NOW() ELSE NULL END, NOW())
+                ON CONFLICT (worktree_id) DO UPDATE
+                SET locked = $2, locked_at = CASE WHEN $2 THEN NOW() ELSE NULL END, updated_at = NOW()
+                """,
+                worktree_id,
+                locked,
+            )
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error locking worktree: {e}")
+            return False
+
+
 # Singleton instance
 _worktree_service: WorktreeService | None = None
 

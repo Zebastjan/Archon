@@ -36,6 +36,10 @@ from .api_routes.progress_api import router as progress_router
 from .api_routes.projects_api import router as projects_router
 from .api_routes.providers_api import router as providers_router
 
+# Audit API - Semgrep integration (new)
+from .api_routes.audit_api import router as audit_router
+from .api_routes.code_repos_api import router as code_repos_router
+
 # Import modular API routers
 from .api_routes.settings_api import router as settings_router
 from .api_routes.version_api import router as version_router
@@ -312,6 +316,8 @@ app.include_router(providers_router)
 app.include_router(version_router)
 app.include_router(migration_router)
 app.include_router(ingestion_router)
+app.include_router(audit_router)  # Semgrep audit endpoints
+app.include_router(code_repos_router)  # Code repository management
 
 
 # Root endpoint

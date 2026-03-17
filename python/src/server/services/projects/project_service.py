@@ -113,7 +113,7 @@ class ProjectService:
                 # Current behavior - maintain backward compatibility
                 for project in response:
                     projects.append({
-                        "id": project["id"],
+                        "id": str(project["id"]),
                         "title": project["title"],
                         "github_repo": project.get("github_repo"),
                         "created_at": project["created_at"],
@@ -135,7 +135,7 @@ class ProjectService:
 
                     # Return only metadata + stats, excluding large JSONB fields
                     projects.append({
-                        "id": project["id"],
+                        "id": str(project["id"]),
                         "title": project["title"],
                         "github_repo": project.get("github_repo"),
                         "created_at": project["created_at"],
@@ -173,6 +173,9 @@ class ProjectService:
 
             if response:
                 project = dict(response[0])
+                
+                # Convert UUID to string for JSON serialization
+                project["id"] = str(project["id"])
 
                 # Get linked sources
                 technical_sources = []

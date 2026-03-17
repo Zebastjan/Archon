@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import asyncpg
 from dotenv import load_dotenv
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.requests import Request
@@ -105,16 +106,36 @@ class ArchonContext:
 
 
 async def perform_health_checks(context: ArchonContext):
-    """Perform health checks on dependent services via HTTP."""
+    """Perform health checks on dependent services via HTTP and DB connectivity."""
     try:
-        # Check dependent services
+        # Check dependent services via HTTP
         service_health = await context.service_client.health_check()
 
         context.health_status["api_service"] = service_health.get("api_service", False)
         context.health_status["agents_service"] = service_health.get("agents_service", False)
 
-        # Overall status
-        all_critical_ready = context.health_status["api_service"]
+        # Check database connectivity directly via archon-server API
+        try:
+            import httpx
+            from urllib.parse import urljoin
+            api_health_url = os.getenv("API_SERVICE_URL", "http://archon-server:8181")
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                response = await client.get(urljoin(api_health_url, "/health"))
+                if response.status_code == 200:
+                    data = response.json()
+                    # DB is healthy if archon-server reports ready and schema valid
+                    context.health_status["database"] = data.get("ready", False) and data.get("schema_valid", False)
+                else:
+                    context.health_status["database"] = False
+        except Exception as db_e:
+            logger.warning(f"Database connectivity check failed: {db_e}")
+            context.health_status["database"] = False
+
+        # Overall status - all critical services must be ready
+        all_critical_ready = (
+            context.health_status["api_service"] and 
+            context.health_status.get("database", False)
+        )
 
         context.health_status["status"] = "healthy" if all_critical_ready else "degraded"
         context.health_status["last_health_check"] = datetime.now().isoformat()
@@ -122,11 +143,12 @@ async def perform_health_checks(context: ArchonContext):
         if not all_critical_ready:
             logger.warning(f"Health check failed: {context.health_status}")
         else:
-            logger.info("Health check passed - dependent services healthy")
+            logger.info("Health check passed - all services healthy including database")
 
     except Exception as e:
         logger.error(f"Health check error: {e}")
         context.health_status["status"] = "unhealthy"
+        context.health_status["database"] = False
         context.health_status["last_health_check"] = datetime.now().isoformat()
 
 
@@ -167,8 +189,35 @@ async def lifespan(server: FastMCP) -> AsyncIterator[ArchonContext]:
             # Create context
             context = ArchonContext(service_client=service_client)
 
-            # Perform initial health check
-            await perform_health_checks(context)
+            # Perform initial health check with retry logic
+            max_retries = 10
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    await perform_health_checks(context)
+                    
+                    # Check if database is connected
+                    if context.health_status.get("database", False):
+                        logger.info(f"✓ Health check passed on attempt {attempt + 1}")
+                        break
+                    else:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"⚠ Database not ready (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff capped at 10s
+                        else:
+                            logger.error(f"💥 Database connectivity failed after {max_retries} attempts")
+                            raise RuntimeError("Database connectivity failed - archon-server health check reports DB unavailable")
+                            
+                except Exception as health_e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⚠ Health check failed (attempt {attempt + 1}/{max_retries}): {health_e}, retrying...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 10)
+                    else:
+                        logger.error(f"💥 Health check failed after {max_retries} attempts")
+                        raise
 
             logger.info("✓ MCP server ready")
 
@@ -580,6 +629,23 @@ def register_modules():
         raise
     except Exception as e:
         logger.error(f"✗ Failed to register code audit tools: {e}")
+        logger.error(traceback.format_exc())
+
+    # Code Repository Tools (Create and index repos)
+    try:
+        from src.mcp_server.features.code_repos import register_code_repos_tools
+
+        register_code_repos_tools(mcp)
+        modules_registered += 1
+        logger.info("✓ Code repos tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Code repos tools module not available (optional): {e}")
+    except (SyntaxError, NameError, AttributeError) as e:
+        logger.error(f"✗ Code error in code repos tools - MUST FIX: {e}")
+        logger.error(traceback.format_exc())
+        raise
+    except Exception as e:
+        logger.error(f"✗ Failed to register code repos tools: {e}")
         logger.error(traceback.format_exc())
 
     logger.info(f"📦 Total modules registered: {modules_registered}")

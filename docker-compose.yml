@@ -70,6 +70,7 @@ services:
       - ./python/src:/app/src # Mount source code for hot reload
       - ./python/tests:/app/tests # Mount tests for UI test execution
       - ./migration:/app/migration # Mount migration files for version tracking
+      - /home/zebastjan/dev/Omnibus:/home/zebastjan/dev/Omnibus:ro # Mount Omnibus repo for indexing
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
@@ -132,7 +133,10 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      
+    volumes:
+      # Hot reload: Mount source code for development
+      - ./python/src:/app/src
+      - ./python/mcp_dev_wrapper.py:/app/mcp_dev_wrapper.py
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -147,6 +151,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s # Give dependencies time to start
+    # Use dev wrapper for auto-reload in development, direct server in production
+    # To disable auto-reload, set MCP_NO_RELOAD=true in .env
+    command: ["sh", "-c", "if [ \"${MCP_NO_RELOAD}\" = \"true\" ]; then python -m src.mcp_server.mcp_server; else python mcp_dev_wrapper.py; fi"]
 
   # AI Agents Service (ML/Reranking)
   archon-agents:

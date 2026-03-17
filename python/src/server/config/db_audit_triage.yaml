@@ -1,0 +1,151 @@
+# DB Audit Triage Configuration
+# Default triage decisions for DB security findings
+# 
+# Structure:
+#   check_id: The Semgrep rule ID
+#     default_decision: intentional | wont_fix | needs_fix
+#     rationale: Human-readable explanation
+#     confidence: high | medium | low
+#     applies_to: List of file patterns (optional, applies to all if empty)
+#     conditions:
+#       - pattern: Additional matching conditions
+#         decision: Override decision for this condition
+#
+# Decisions:
+#   - intentional: Expected behavior, safe by design
+#   - wont_fix: Low risk, not worth fixing
+#   - needs_fix: Real issue requiring remediation
+
+triage_defaults:
+  # SQL Injection Rules - These are real security issues
+  - check_id: "db-python-sql-injection-psycopg2"
+    default_decision: needs_fix
+    rationale: "SQL injection via string formatting is a critical vulnerability. Must use parameterized queries."
+    severity: critical
+    confidence: high
+    
+  - check_id: "db-python-sql-injection-string-format"
+    default_decision: needs_fix
+    rationale: "String formatting in SQL queries is unsafe. Use parameterized queries."
+    severity: critical
+    confidence: high
+    
+  - check_id: "db-python-sql-injection-execute-many"
+    default_decision: needs_review
+    rationale: "execute_many with dynamic queries may be safe if values are bound, but requires review."
+    severity: high
+    confidence: medium
+    
+  - check_id: "db-python-unsafe-raw-sql"
+    default_decision: needs_review
+    rationale: "Raw SQL execution should be reviewed to ensure proper parameterization."
+    severity: high
+    confidence: medium
+    
+  - check_id: "db-js-sql-injection-string-concat"
+    default_decision: needs_fix
+    rationale: "String concatenation in SQL queries is a critical vulnerability. Use parameterized queries."
+    severity: critical
+    confidence: high
+    
+  - check_id: "db-js-sql-injection-template-literal"
+    default_decision: needs_fix
+    rationale: "Template literals in SQL queries are unsafe. Use parameterized queries with $1, $2."
+    severity: critical
+    confidence: high
+    
+  - check_id: "db-js-sql-injection-pg-format"
+    default_decision: intentional
+    rationale: "pg-format uses proper escaping and is safe for identifier formatting (not values)."
+    severity: warning
+    confidence: medium
+    applies_to:
+      - "**/migrations/**"
+      - "**/schema/**"
+    
+  - check_id: "db-js-unsafe-dynamic-query"
+    default_decision: needs_review
+    rationale: "Dynamic queries require review to ensure proper sanitization."
+    severity: high
+    confidence: medium
+
+  # Hardcoded Credentials - Depends on context
+  - check_id: "db-python-hardcoded-sql-credentials"
+    default_decision: needs_review
+    rationale: "Hardcoded credentials in local development are acceptable. Production must use environment variables."
+    severity: medium
+    confidence: high
+    conditions:
+      - pattern: "localhost"
+        decision: intentional
+        rationale: "Local development credentials (localhost only) are acceptable"
+      - pattern: "127.0.0.1"
+        decision: intentional
+        rationale: "Local development credentials (localhost only) are acceptable"
+    
+  - check_id: "db-js-hardcoded-connection-string"
+    default_decision: needs_review
+    rationale: "Hardcoded connection strings in local development are acceptable. Production must use environment variables."
+    severity: medium
+    confidence: high
+    conditions:
+      - pattern: "localhost"
+        decision: intentional
+        rationale: "Local development credentials (localhost only) are acceptable"
+
+  # Generic Semgrep Rules (from official rulesets)
+  - check_id: "python.sqlalchemy.security.sqlalchemy-execute-raw-query"
+    default_decision: needs_review
+    rationale: "SQLAlchemy raw query execution should be reviewed for proper parameterization."
+    severity: high
+    confidence: medium
+    
+  - check_id: "python.django.security.injection.raw"  
+    default_decision: needs_review
+    rationale: "Django raw SQL should be reviewed to ensure proper escaping."
+    severity: high
+    confidence: medium
+    
+  - check_id: "javascript.express.security.injection.raw-html-concat"
+    default_decision: needs_fix
+    rationale: "Raw HTML concatenation can lead to XSS, which often pairs with SQL injection bugs."
+    severity: high
+    confidence: medium
+
+# Global exclusions - files/paths that are always safe
+exclusions:
+  paths:
+    - "**/migrations/*.py"        # Schema migrations (DDL only, not user data)
+    - "**/migrations/*.ts"
+    - "**/seeds/**"               # Database seed data
+    - "**/test_*.py"              # Test files (excluded anyway, but explicit here)
+    - "**/conftest.py"            # Pytest configuration
+    - "**/alembic/**"             # Alembic migrations
+    - "**/prisma/migrations/**"   # Prisma migrations
+  
+  patterns:
+    # Safe patterns that are never SQL injection
+    safe_patterns:
+      - "CREATE TABLE IF NOT EXISTS"
+      - "DROP TABLE IF EXISTS"
+      - "ALTER TABLE.*ADD COLUMN"
+      - "CREATE INDEX"
+      - "DROP INDEX"
+
+# Severity overrides - adjust based on context
+severity_overrides:
+  # In migration files, downgrade SQL injection severity
+  - paths:
+      - "**/migrations/**"
+      - "**/alembic/**"
+    rules:
+      - "*sql-injection*"
+    severity: warning  # Downgrade from error
+    rationale: "Migrations use DDL, not user-supplied data"
+
+# Noise reduction - rules that are too noisy and should be disabled
+noisy_rules:
+  disabled:
+    # These rules generate too many false positives for our use case
+    - "python.lang.security.audit.formatted-sql-query"
+    - "javascript.lang.security.audit.insecure-request-protocol"

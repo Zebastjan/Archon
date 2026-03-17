@@ -126,13 +126,20 @@ Only use if explicitly requested:
 Note: repo_health_check combines both + worktree safety
 ```
 
-### Step 3: Analyze Findings
+### Step 3: Analyze Findings (Using Batched Context)
 ```
-1. Call code_audit_get_findings(repo_id, status="open")
-2. Filter by severity: critical → error → warning → info
-3. Group by category: security → complexity → maintainability → style
+1. Call audit_get_context(repo_name="<repo-name>") — single batched call
+2. Results already grouped by source + check_id with sample snippets
+3. Filter/group as needed from the response:
+   - By severity: findings_by_source[*].severity
+   - By category: source key (semgrep, audit_rules, security, etc.)
 4. Prioritize by impact × effort
 ```
+
+**Why audit_get_context:**
+- Eliminates N discovery calls
+- Returns all findings grouped with 3-5 samples per group
+- Reason locally on batched response
 
 ### Step 4: Generate Report
 Summarize findings with:
@@ -248,24 +255,28 @@ Only if user explicitly wants separate calls:
 2. code_audit_run(repo_id)
 3. code_audit_get_findings(repo_id)
 
-### Scenario 2: Security-Focused Audit
+### Scenario 2: Security-Focused Audit (Using Batched Context)
 User: "Check for security issues"
 Agent:
-1. "Running security-focused audit..."
-2. Call code_audit_run(repo_id, ruleset=["hardcoded-secrets", "sql-injection", "unsafe-eval", "insecure-deserialization", "weak-crypto"])
-3. "Security scan complete. Found 2 critical issues:"
-4. Present security findings with severity
-5. Provide remediation guidance
+1. "Running security-focused audit using batched context..."
+2. Call audit_get_context(repo_name="<repo-name>")
+3. Filter findings from response where severity in [critical, error]
+4. Focus on security-related sources (semgrep, security, bandit)
+5. "Security scan complete. Found {count} critical issues:"
+6. Present findings grouped by source + check_id with sample snippets
+7. Provide remediation guidance
 
-### Scenario 3: Pre-Refactoring Assessment
+### Scenario 3: Pre-Refactoring Assessment (Using Batched Context)
 User: "What should I refactor first?"
 Agent:
 1. "Analyzing codebase for refactoring candidates..."
-2. Call code_audit_calculate_metrics(repo_id)
-3. Call code_audit_get_findings(repo_id, category="complexity")
-4. "Here are the top refactoring opportunities:"
-5. Sort by (complexity × file_change_frequency)
+2. Call audit_get_context(repo_name="<repo-name>")
+3. Extract complexity findings from findings_by_source.audit_rules
+4. "Here are the top refactoring opportunities (from batched context):"
+5. Sort by (complexity count × severity)
 6. Suggest starting with most impactful
+
+**Note:** audit_get_context returns grouped findings with samples — no need for separate metric/finding calls.
 
 ### Scenario 4: Trend Analysis
 User: "Has code quality improved?"

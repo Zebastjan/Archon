@@ -19,6 +19,11 @@ os.environ["ARCHON_MCP_PORT"] = "8051"
 os.environ["ARCHON_AGENTS_PORT"] = "8052"
 os.environ["ARCHON_DB_PORT"] = "5434"
 
+# Import database module first so patches can be applied
+import sys
+if "src.server.services.database" not in sys.modules:
+    from src.server.services import database
+
 # Create mock database connector for global patches
 mock_db = MagicMock()
 mock_db.fetch = AsyncMock(return_value=[])

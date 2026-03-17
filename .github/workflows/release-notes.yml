@@ -25,19 +25,23 @@ jobs:
 
       - name: Get release tag
         id: get_tag
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+            echo "tag=$INPUT_TAG_NAME" >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" == "release" ]; then
-            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+            echo "tag=$RELEASE_TAG_NAME" >> $GITHUB_OUTPUT
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
       - name: Get previous tag
         id: prev_tag
+        env:
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
         run: |
-          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
           PREVIOUS_TAG=$(git tag --sort=-v:refname | grep -A1 "^${CURRENT_TAG}$" | tail -1)
 
           if [ -z "$PREVIOUS_TAG" ] || [ "$PREVIOUS_TAG" == "$CURRENT_TAG" ]; then
@@ -52,10 +56,10 @@ jobs:
 
       - name: Get commit messages
         id: commits
+        env:
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
         run: |
-          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
-          PREVIOUS_TAG="${{ steps.prev_tag.outputs.previous_tag }}"
-
           # Get commit history
           COMMITS=$(git log ${PREVIOUS_TAG}..${CURRENT_TAG} --pretty=format:"- %s (%h) by %an" --no-merges)
 
@@ -68,10 +72,10 @@ jobs:
 
       - name: Get changed files summary
         id: files
+        env:
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
         run: |
-          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
-          PREVIOUS_TAG="${{ steps.prev_tag.outputs.previous_tag }}"
-
           # Get file change statistics
           FILES_CHANGED=$(git diff ${PREVIOUS_TAG}..${CURRENT_TAG} --stat | tail -1)
           echo "files_summary=$FILES_CHANGED" >> $GITHUB_OUTPUT
@@ -90,10 +94,9 @@ jobs:
         id: prs
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
         run: |
-          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
-          PREVIOUS_TAG="${{ steps.prev_tag.outputs.previous_tag }}"
-
           # Get date of previous tag
           PREV_DATE=$(git log -1 --format=%ai ${PREVIOUS_TAG})
 
@@ -108,6 +111,11 @@ jobs:
 
       - name: Prepare release notes context
         id: context
+        env:
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
+          COMMIT_COUNT: ${{ steps.commits.outputs.commit_count }}
+          IS_FIRST_RELEASE: ${{ steps.prev_tag.outputs.is_first_release }}
         run: |
           # Create a context file with all the information
           cat > release-context.md <<'EOF'
@@ -117,10 +125,10 @@ jobs:
 
           ## Release Information
 
-          **Version:** ${{ steps.get_tag.outputs.tag }}
-          **Previous Version:** ${{ steps.prev_tag.outputs.previous_tag }}
-          **Commits:** ${{ steps.commits.outputs.commit_count }}
-          **Is First Release:** ${{ steps.prev_tag.outputs.is_first_release }}
+          **Version:** ${CURRENT_TAG}
+          **Previous Version:** ${PREVIOUS_TAG}
+          **Commits:** ${COMMIT_COUNT}
+          **Is First Release:** ${IS_FIRST_RELEASE}
 
           ## Commits
 
@@ -150,7 +158,7 @@ jobs:
 
           Generate comprehensive release notes following this structure:
 
-          # 🚀 Release ${{ steps.get_tag.outputs.tag }}
+          # 🚀 Release ${CURRENT_TAG}
 
           ## 📝 Overview
           [2-3 sentence summary of this release]
@@ -178,7 +186,7 @@ jobs:
           - [Docker, CI/CD, deployment changes]
 
           ## 📊 Statistics
-          - **Commits:** ${{ steps.commits.outputs.commit_count }}
+          - **Commits:** ${COMMIT_COUNT}
           - **Pull Requests:** [Count from PRs list]
           - **Files Changed:** [From file stats]
           - **Contributors:** [Unique authors from commits]
@@ -194,7 +202,7 @@ jobs:
 
           ## 🔗 Links
 
-          - **Full Changelog:** https://github.com/${{ github.repository }}/compare/${{ steps.prev_tag.outputs.previous_tag }}...${{ steps.get_tag.outputs.tag }}
+          - **Full Changelog:** https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}
 
           ---
 
@@ -247,17 +255,16 @@ jobs:
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
         run: |
-          TAG="${{ steps.get_tag.outputs.tag }}"
-
           # Check if release already exists
-          if gh release view "$TAG" &>/dev/null; then
-            echo "Release $TAG exists, updating notes..."
-            gh release edit "$TAG" --notes-file release_notes.md
+          if gh release view "$CURRENT_TAG" &>/dev/null; then
+            echo "Release $CURRENT_TAG exists, updating notes..."
+            gh release edit "$CURRENT_TAG" --notes-file release_notes.md
           else
-            echo "Creating new release $TAG..."
-            gh release create "$TAG" \
-              --title "Release $TAG" \
+            echo "Creating new release $CURRENT_TAG..."
+            gh release create "$CURRENT_TAG" \
+              --title "Release $CURRENT_TAG" \
               --notes-file release_notes.md \
               --draft=false \
               --latest
@@ -274,14 +281,10 @@ jobs:
         if: steps.prev_tag.outputs.is_first_release == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
         run: |
-          TAG="${{ steps.get_tag.outputs.tag }}"
-
           # Get PR numbers from commits in this release
-          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
-          PREVIOUS_TAG="${{ steps.prev_tag.outputs.previous_tag }}"
-
-          # Extract PR numbers from commit messages
           PR_NUMBERS=$(git log ${PREVIOUS_TAG}..${CURRENT_TAG} --oneline |
             grep -oP '#\K\d+' || true)
 
@@ -289,19 +292,23 @@ jobs:
             for PR in $PR_NUMBERS; do
               echo "Adding release comment to PR #$PR"
               gh pr comment "$PR" \
-                --body "🎉 This pull request has been included in release [$TAG](https://github.com/${{ github.repository }}/releases/tag/$TAG)!" \
+                --body "🎉 This pull request has been included in release [$CURRENT_TAG](https://github.com/${{ github.repository }}/releases/tag/$CURRENT_TAG)!" \
                 || echo "Could not comment on PR #$PR (might be closed)"
             done
           fi
 
       - name: Create summary
         if: always()
+        env:
+          CURRENT_TAG: ${{ steps.get_tag.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
+          COMMIT_COUNT: ${{ steps.commits.outputs.commit_count }}
         run: |
           echo "# 🎉 Release Notes Generation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Release Tag:** ${{ steps.get_tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Previous Tag:** ${{ steps.prev_tag.outputs.previous_tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commits:** ${{ steps.commits.outputs.commit_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Release Tag:** ${CURRENT_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "**Previous Tag:** ${PREVIOUS_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commits:** ${COMMIT_COUNT}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Generated Release Notes" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,32 @@
+{
+  "repo_name": "Omnibus",
+  "repo_id": "15f7ea16-d016-492b-8193-dbbd55f33281",
+  "total_findings": 19,
+  "rules_found": 1,
+  "grouped_findings": {
+    "nim/suspicious-discard": {
+      "count": 19,
+      "severity": "WARNING",
+      "samples": [
+        {
+          "file_path": "tools/omni-schemac/output/proto_codec.nim",
+          "line": 119,
+          "message": "Non-trivial return value is being discarded. Consider handling the result.",
+          "code_snippet": "discard readVarint(data, pos)"
+        },
+        {
+          "file_path": "tools/omni-cat/src/omni_cat.nim",
+          "line": 72,
+          "message": "Non-trivial return value is being discarded. Consider handling the result.",
+          "code_snippet": "discard posix.close(fd)"
+        },
+        {
+          "file_path": "lib/libomnibus/src/framing.nim",
+          "line": 22,
+          "message": "Non-trivial return value is being discarded. Consider handling the result.",
+          "code_snippet": "discard posix.write(fd, addr lenbuf[0], lenbuf.len)"
+        }
+      ]
+    }
+  }
+}

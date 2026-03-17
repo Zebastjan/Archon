@@ -1,0 +1,46 @@
+# Custom Semgrep Rule: Empty Test Body
+# Detects test functions with only 'pass' or '...'
+
+rules:
+  - id: python.lang.testing.empty-test-body
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def test_$FUNC():
+                  pass
+          - pattern: |
+              def test_$FUNC():
+                  ...
+          - pattern: |
+              def test_$FUNC($...ARGS):
+                  pass
+          - pattern: |
+              def test_$FUNC($...ARGS):
+                  ...
+    languages:
+      - python
+    message: >
+      Test function 'test_$FUNC' has an empty body (only 'pass' or '...').
+      This is likely a placeholder that was never implemented.
+      Either implement the test or remove it.
+    severity: WARNING
+    metadata:
+      category: testing
+      technology:
+        - python
+        - pytest
+      references:
+        - https://docs.pytest.org/
+      confidence: HIGH
+      likelihood: HIGH
+      impact: MEDIUM
+      subcategory:
+        - audit
+      remediation: |
+        Implement the test with actual assertions:
+        
+        def test_my_function():
+            result = my_function(input_data)
+            assert result == expected_value
+            
+        Or remove the placeholder if not needed.
