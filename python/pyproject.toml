@@ -108,6 +108,7 @@ mcp = [
     "logfire>=0.30.0",
     "fastapi>=0.104.0",
     "watchdog>=3.0.0",  # Auto-reload for development
+    "asyncpg>=0.29.0",  # Database connectivity
 ]
 
 # Agents container dependencies (ML/reranking service)
