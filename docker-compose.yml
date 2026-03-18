@@ -70,7 +70,11 @@ services:
       - ./python/src:/app/src # Mount source code for hot reload
       - ./python/tests:/app/tests # Mount tests for UI test execution
       - ./migration:/app/migration # Mount migration files for version tracking
-      - /home/zebastjan/dev/Omnibus:/home/zebastjan/dev/Omnibus:ro # Mount Omnibus repo for indexing
+      # Code repositories for indexing (read-only)
+      - /home/zebastjan/dev/Omnibus:/home/zebastjan/dev/Omnibus:ro
+      - /home/zebastjan/dev/octofriend:/home/zebastjan/dev/octofriend:ro
+      - /home/zebastjan/dev/syllablaze:/home/zebastjan/dev/syllablaze:ro
+      - /home/zebastjan/dev/archon:/home/zebastjan/dev/archon:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:

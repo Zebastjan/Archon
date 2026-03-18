@@ -357,7 +357,7 @@ def register_worktree_tools(mcp: FastMCP) -> None:
             return {
                 "success": success,
                 "message": "Task context synced" if success else "Failed to sync context",
-            }}
+            }
             
         except Exception as e:
             logger.exception("worktree_sync_failed: %s", str(e))
