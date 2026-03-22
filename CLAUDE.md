@@ -2,6 +2,35 @@
 
 Archon: AI agent framework built on Pydantic AI with Postgres/Supabase backends.
 
+## Task Execution Protocol (CRITICAL)
+
+### Before Starting Any Task
+1. State the objective clearly: "My goal is [specific outcome]"
+2. State current status: "Currently [what's broken/not working]"
+3. Define success criteria: "This task will be complete when [specific result]"
+
+### During Task Execution
+1. **Verify after each significant action** - Don't assume success, confirm it
+2. **When stuck (same error repeated 3+ times), STOP and report:**
+   - What I've tried
+   - The exact error/results
+   - My hypothesis about the cause
+   - "What would you like me to try next?"
+3. **Never loop infinitely** - After 3 attempts with no progress, ask for direction
+
+### After Task Completion (or giving up)
+1. Explicitly state: "Task complete" or "Task failed - here's why"
+2. Report final status
+3. Ask: "Would you like me to continue, or try a different approach?"
+
+### Anti-Patterns to Avoid
+- Running commands in a loop without verifying success
+- Moving to "next step" without confirming current step worked
+- Not reporting status when stuck
+- Continuing silently when progress has stalled
+
+---
+
 ## Project Philosophy (Beta)
 
 - **Fix forward** — Remove deprecated code immediately, no backwards compatibility

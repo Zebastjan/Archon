@@ -3,14 +3,13 @@
 
 {
   mcpServers: {
-    // Archon Codebase Intelligence
+    // Archon Codebase Intelligence (Unified Server)
     archon: {
-      // For HTTP/SSE transport (recommended):
-      url: "http://localhost:8051/sse",
+      // Unified server runs on port 8181 with MCP at /mcp
+      url: "http://localhost:8181/mcp",
       
-      // Or for stdio transport:
-      // command: "python",
-      // args: ["/home/zebastjan/dev/archon/python/src/server/mcp_server/main.py"],
+      // Old separate MCP server (port 8051) is deprecated
+      // Use unified server for all operations
     },
     
     // Additional MCP servers can be added here

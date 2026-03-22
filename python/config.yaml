@@ -1,0 +1,77 @@
+# =============================================================================
+# Archon Configuration File
+# =============================================================================
+# STRICT VALIDATED CONFIGURATION - Pydantic will reject invalid values
+#
+# Required fields:
+#   - database.name
+#   - database.user
+#   - database.password
+#   - server.port (must be 1024-65535)
+#
+# All other fields have sensible defaults.
+# =============================================================================
+
+# Server Configuration
+server:
+  host: "127.0.0.1"           # Bind to localhost only for security
+  port: 8181                  # Must be 1024-65535
+  reload: true                # Auto-reload on code changes (dev only)
+  log_level: "INFO"           # DEBUG, INFO, WARNING, ERROR
+
+# Database Configuration
+# Uses LOCAL PostgreSQL server (not Docker, not SQLite)
+# REQUIRED: Edit these values
+database:
+  user: "archon"                      # REQUIRED: Database user
+  name: "archon"                      # REQUIRED: Database name
+  
+  # Use TCP to localhost (socket has issues with asyncpg)
+  host: "127.0.0.1"                   # Use IP, not hostname
+  port: 5433                          # Use 5433 to avoid system postgres
+  password: null                      # Trust auth configured
+  
+  # Connection pool
+  min_connections: 2
+  max_connections: 10
+  
+  # Local data directory (for backup/reference)
+  data_dir: "~/.local/share/archon/postgres"
+
+# External Services (all optional)
+external:
+  openai_api_key: null        # Set via env OPENAI_API_KEY or UI
+  
+  ollama:
+    url: "http://localhost:11434"
+    embedding_model: "bge-large"
+    chat_model: "llama3.2"
+
+# MCP Configuration
+mcp:
+  enabled: true
+  path: "/mcp"
+
+# Feature Flags
+features:
+  code_intelligence:
+    enabled: true
+    languages: ["python", "typescript", "javascript", "nim"]
+  
+  rag:
+    enabled: true
+    use_hybrid_search: true
+    use_reranking: true
+  
+  auditing:
+    enabled: true
+    semgrep_enabled: true
+  
+  worktree:
+    enabled: true
+
+# Paths (relative to app root or absolute)
+paths:
+  repos: "~/.local/share/archon/repos"    # Indexed code repositories
+  temp: "~/.cache/archon"                  # Temporary/cache files
+  logs: "~/.local/share/archon/logs"       # Application logs

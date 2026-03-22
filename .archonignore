@@ -1,0 +1,30 @@
+# Archon ignore patterns
+# Files/directories to exclude from code indexing
+
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+target/
+*.egg-info/
+
+# Test files (usually)
+*test*.nim
+*spec*.nim
+tests/
+spec/
+
+# Generated code
+*_generated.*
+gen/
+
+# Assets
+assets/
+static/
+*.min.js
+*.min.css

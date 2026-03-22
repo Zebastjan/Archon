@@ -1,0 +1,279 @@
+#!/bin/bash
+# Archon Project Initialization Script
+# 
+# Usage:
+#   archon-project-init /path/to/new-or-existing-project
+#
+# This script:
+#   1. Registers the project with Archon
+#   2. Installs git hooks for auto-sync
+#   3. Sets up project-specific configuration
+#   4. Performs initial code indexing
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARCHON_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_PATH="${1:-$(pwd)}"
+PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
+PROJECT_NAME="$(basename "$PROJECT_PATH")"
+
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  Archon Project Initialization"
+echo "═══════════════════════════════════════════════════════════════════"
+echo ""
+echo "Project: $PROJECT_NAME"
+echo "Path: $PROJECT_PATH"
+echo ""
+
+# Check if it's a git repo
+if [ ! -d "$PROJECT_PATH/.git" ]; then
+    echo "⚠️  Not a git repository. Initializing..."
+    cd "$PROJECT_PATH"
+    git init
+    git add -A 2>/dev/null || true
+    git commit -m "Initial commit" 2>/dev/null || true
+fi
+
+# Detect primary language
+LANGUAGE="unknown"
+if find "$PROJECT_PATH" -name "*.nim" -type f 2>/dev/null | grep -q .; then
+    LANGUAGE="nim"
+elif find "$PROJECT_PATH" -name "*.py" -type f 2>/dev/null | grep -q .; then
+    LANGUAGE="python"
+elif find "$PROJECT_PATH" -name "*.ts" -o -name "*.tsx" 2>/dev/null | grep -q .; then
+    LANGUAGE="typescript"
+elif find "$PROJECT_PATH" -name "*.rs" -type f 2>/dev/null | grep -q .; then
+    LANGUAGE="rust"
+fi
+
+echo "Detected language: $LANGUAGE"
+echo ""
+
+# Install git hooks
+echo "Installing git hooks..."
+HOOKS_DIR="$PROJECT_PATH/.git/hooks"
+
+# Create post-commit hook
+cat > "$HOOKS_DIR/post-commit" << 'HOOK_EOF'
+#!/bin/bash
+# Archon auto-sync hook
+REPO_PATH=$(git rev-parse --show-toplevel)
+REPO_NAME=$(basename "$REPO_PATH")
+
+echo "[Archon] Queueing sync for $REPO_NAME..."
+
+# Trigger sync via HTTP API (fire-and-forget)
+(
+    curl -s -X POST \
+        "http://localhost:8181/api/code-repos/sync-by-path" \
+        -H "Content-Type: application/json" \
+        -d "{\"path\": \"$REPO_PATH\"}" \
+        > /dev/null 2>&1 &
+) &
+HOOK_EOF
+chmod +x "$HOOKS_DIR/post-commit"
+echo "  ✓ post-commit hook installed"
+
+# Create post-checkout hook
+cat > "$HOOKS_DIR/post-checkout" << 'HOOK_EOF'
+#!/bin/bash
+# Archon branch sync hook
+PREVIOUS_HEAD=$1
+NEW_HEAD=$2
+BRANCH_SWITCH=$3
+
+if [ "$BRANCH_SWITCH" = "1" ]; then
+    BRANCH_NAME=$(git branch --show-current)
+    REPO_PATH=$(git rev-parse --show-toplevel)
+    
+    # Update worktree context (background)
+    (
+        curl -s -X POST \
+            "http://localhost:8181/api/worktree/sync" \
+            -H "Content-Type: application/json" \
+            -d "{\"path\": \"$REPO_PATH\", \"branch\": \"$BRANCH_NAME\"}" \
+            > /dev/null 2>&1 &
+    ) &
+fi
+HOOK_EOF
+chmod +x "$HOOKS_DIR/post-checkout"
+echo "  ✓ post-checkout hook installed"
+
+# Create post-merge hook
+cat > "$HOOKS_DIR/post-merge" << 'HOOK_EOF'
+#!/bin/bash
+# Archon merge sync hook
+REPO_PATH=$(git rev-parse --show-toplevel)
+
+echo "[Archon] Merge detected, queuing full re-sync..."
+(
+    curl -s -X POST \
+        "http://localhost:8181/api/code-repos/sync-by-path?full=true" \
+        -H "Content-Type: application/json" \
+        -d "{\"path\": \"$REPO_PATH\"}" \
+        > /dev/null 2>&1 &
+) &
+HOOK_EOF
+chmod +x "$HOOKS_DIR/post-merge"
+echo "  ✓ post-merge hook installed"
+
+# Create .archon config directory
+mkdir -p "$PROJECT_PATH/.archon"
+
+# Create project config
+cat > "$PROJECT_PATH/.archon/config.yaml" << EOF
+# Archon Project Configuration
+project:
+  name: $PROJECT_NAME
+  language: $LANGUAGE
+  auto_sync: true
+  sync_on_commit: true
+  sync_on_branch_switch: true
+  
+code_intelligence:
+  extract_entities: true
+  build_relationships: true
+  generate_embeddings: true
+  index_frequency: commit
+  
+analysis:
+  semgrep_rules: ["security", "quality"]
+  audit_on_change: true
+  coverage_threshold: 80
+EOF
+
+echo "  ✓ .archon/config.yaml created"
+
+# Create .archonignore (similar to .gitignore)
+cat > "$PROJECT_PATH/.archonignore" << 'IGNORE_EOF'
+# Archon ignore patterns
+# Files/directories to exclude from code indexing
+
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+target/
+*.egg-info/
+
+# Test files (usually)
+*test*.nim
+*spec*.nim
+tests/
+spec/
+
+# Generated code
+*_generated.*
+gen/
+
+# Assets
+assets/
+static/
+*.min.js
+*.min.css
+IGNORE_EOF
+
+echo "  ✓ .archonignore created"
+
+# Register with Archon database
+echo ""
+echo "Registering with Archon..."
+cd "$ARCHON_ROOT"
+. python/.venv/bin/activate
+
+python << PYTHON_EOF
+import asyncio
+import sys
+sys.path.insert(0, 'python')
+
+# Ensure DB env is set
+import os
+os.environ.setdefault('ARCHON_DATABASE_URL', 'postgresql://archon:archon_local_dev@localhost:5434/archon')
+
+from src.server.services.database import get_database_connector, initialize_database, close_database
+from uuid import uuid4
+
+async def register():
+    await initialize_database()
+    db = get_database_connector()
+    
+    # Check if already exists
+    existing = await db.fetchrow(
+        "SELECT id FROM archon_code_repos WHERE local_path = \$1",
+        "$PROJECT_PATH"
+    )
+    
+    if existing:
+        print(f"  ⚠️  Project already registered (ID: {existing['id']})")
+        repo_id = str(existing['id'])
+    else:
+        # Create new repo entry
+        repo_id = str(uuid4())
+        await db.execute(
+            """
+            INSERT INTO archon_code_repos (id, name, local_path, created_at, updated_at)
+            VALUES (\$1, \$2, \$3, NOW(), NOW())
+            """,
+            repo_id, "$PROJECT_NAME", "$PROJECT_PATH"
+        )
+        print(f"  ✓ Registered with ID: {repo_id}")
+    
+    print(f"  Repository ID: {repo_id}")
+    await close_database()
+    return repo_id
+
+result = asyncio.run(register())
+PYTHON_EOF
+
+if [ $? -ne 0 ]; then
+    echo "  ⚠️  Database registration failed (Archon server may be offline)"
+    echo "      You can manually register later via the API"
+fi
+
+# Create initial project structure
+if [ "$LANGUAGE" = "nim" ]; then
+    echo ""
+    echo "Nim project detected. Creating Nim-specific structure..."
+    
+    mkdir -p "$PROJECT_PATH/src"
+    mkdir -p "$PROJECT_PATH/tests"
+    
+    if [ ! -f "$PROJECT_PATH/README.md" ]; then
+        cat > "$PROJECT_PATH/README.md" << EOF
+# $PROJECT_NAME
+
+A Nim project managed with Archon code intelligence.
+
+## Development
+
+This project is automatically indexed by Archon:
+- Code entities extracted on commit
+- Embeddings generated for semantic search
+- Relationships tracked between modules
+
+## Architecture
+
+See \`.archon/config.yaml\` for project configuration.
+EOF
+    fi
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  ✅ Project initialization complete!"
+echo "═══════════════════════════════════════════════════════════════════"
+echo ""
+echo "Next steps:"
+echo "  1. Review .archon/config.yaml for project settings"
+echo "  2. Edit .archonignore to exclude files from indexing"
+echo "  3. Make a commit to trigger initial code indexing"
+echo "  4. Run 'archon-health' to verify setup"
+echo ""
+echo "Project will auto-sync on: commit, branch switch, merge"
+echo ""

@@ -34,7 +34,7 @@ from ..utils.document_processing import extract_text_from_document
 logger = get_logger(__name__)
 
 # Create router
-router = APIRouter(prefix="/api", tags=["knowledge"])
+router = APIRouter(tags=["knowledge"])
 
 
 # Create a semaphore to limit concurrent crawl OPERATIONS (not pages within a crawl)
@@ -168,6 +168,25 @@ class KnowledgeItemRequest(BaseModel):
         }
 
 
+class IngestTextRequest(BaseModel):
+    content: str
+    title: str
+    source_url: str | None = None
+    tags: list[str] = []
+    chunk_size: int = 512
+    chunk_overlap: int = 50
+
+
+class IngestMarkdownRequest(BaseModel):
+    content: str
+    title: str
+    source_url: str | None = None
+    tags: list[str] = []
+    extract_code: bool = True
+    chunk_size: int = 512
+    chunk_overlap: int = 50
+
+
 class CrawlRequest(BaseModel):
     url: str
     knowledge_type: str = "general"
@@ -181,6 +200,12 @@ class RagQueryRequest(BaseModel):
     source: str | None = None
     match_count: int = 5
     return_mode: str = "chunks"  # "chunks" or "pages"
+
+
+class DocumentSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    similarity_threshold: float = 0.7
 
 
 @router.get("/crawl-progress/{progress_id}")
@@ -1918,4 +1943,100 @@ async def resume_operation(progress_id: str):
         raise
     except Exception as e:
         safe_logfire_error(f"Failed to resume operation | error={str(e)} | progress_id={progress_id}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+# ============================================================================
+# Document Ingestion Endpoints
+# ============================================================================
+
+@router.post("/documents/ingest/text")
+async def ingest_text_document(request: IngestTextRequest):
+    """Ingest plain text into the knowledge base."""
+    try:
+        from ..services.document_ingestion_service import get_document_ingestion_service
+        
+        service = get_document_ingestion_service()
+        result = await service.ingest_text(
+            content=request.content,
+            title=request.title,
+            source_url=request.source_url,
+            metadata={"tags": request.tags},
+            chunk_size=request.chunk_size,
+            chunk_overlap=request.chunk_overlap,
+        )
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "source_id": result["source_id"],
+                "title": result["title"],
+                "chunks_stored": result["chunks_stored"],
+                "chunks_total": result["chunks_total"],
+            }
+        else:
+            raise HTTPException(status_code=500, detail={"error": result.get("error", "Ingestion failed")})
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        safe_logfire_error(f"Text ingestion failed | error={str(e)} | title={request.title}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.post("/documents/ingest/markdown")
+async def ingest_markdown_document(request: IngestMarkdownRequest):
+    """Ingest Markdown document with code block extraction."""
+    try:
+        from ..services.document_ingestion_service import get_document_ingestion_service
+        
+        service = get_document_ingestion_service()
+        result = await service.ingest_markdown(
+            content=request.content,
+            title=request.title,
+            source_url=request.source_url,
+            extract_code=request.extract_code,
+        )
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "source_id": result["source_id"],
+                "title": result["title"],
+                "chunks_stored": result["chunks_stored"],
+                "chunks_total": result["chunks_total"],
+                "code_examples_count": result.get("code_examples_count", 0),
+            }
+        else:
+            raise HTTPException(status_code=500, detail={"error": result.get("error", "Ingestion failed")})
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        safe_logfire_error(f"Markdown ingestion failed | error={str(e)} | title={request.title}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.post("/documents/search")
+async def search_ingested_documents(request: DocumentSearchRequest):
+    """Search for similar documents in the knowledge base."""
+    try:
+        from ..services.document_ingestion_service import get_document_ingestion_service
+        
+        service = get_document_ingestion_service()
+        results = await service.search_similar(
+            query=request.query,
+            top_k=request.top_k,
+            similarity_threshold=request.similarity_threshold,
+        )
+        
+        return {
+            "success": True,
+            "query": request.query,
+            "results": results,
+            "count": len(results),
+        }
+            
+    except Exception as e:
+        safe_logfire_error(f"Document search failed | error={str(e)} | query={request.query}")
         raise HTTPException(status_code=500, detail={"error": str(e)})

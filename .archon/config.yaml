@@ -1,0 +1,18 @@
+# Archon Project Configuration
+project:
+  name: archon
+  language: nim
+  auto_sync: true
+  sync_on_commit: true
+  sync_on_branch_switch: true
+  
+code_intelligence:
+  extract_entities: true
+  build_relationships: true
+  generate_embeddings: true
+  index_frequency: commit
+  
+analysis:
+  semgrep_rules: ["security", "quality"]
+  audit_on_change: true
+  coverage_threshold: 80

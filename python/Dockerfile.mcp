@@ -28,9 +28,14 @@ COPY src/server/services/__init__.py src/server/services/
 COPY src/server/services/mcp_service_client.py src/server/services/
 COPY src/server/services/client_manager.py src/server/services/
 COPY src/server/services/mcp_session_manager.py src/server/services/
+COPY src/server/services/database/ src/server/services/database/
+COPY src/server/services/code_metrics_service.py src/server/services/
+COPY src/server/services/semgrep_service.py src/server/services/
+COPY src/server/services/audit_workflow_service.py src/server/services/
 COPY src/server/config/__init__.py src/server/config/
 COPY src/server/config/service_discovery.py src/server/config/
 COPY src/server/config/logfire_config.py src/server/config/
+COPY src/server/config/config.py src/server/config/
 
 # Set environment variables
 ENV PYTHONPATH="/app:$PYTHONPATH"

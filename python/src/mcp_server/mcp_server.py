@@ -368,11 +368,8 @@ try:
 
     mcp = FastMCP(
         "archon-mcp-server",
-        description="MCP server for Archon - uses HTTP calls to other services",
         instructions=MCP_INSTRUCTIONS,
         lifespan=lifespan,
-        host=server_host,
-        port=server_port,
     )
     logger.info("✓ FastMCP server instance created successfully")
 

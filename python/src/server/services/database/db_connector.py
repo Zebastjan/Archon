@@ -21,20 +21,34 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseConfig:
-    """Database configuration from environment variables."""
+    """Database configuration from YAML config or environment variables."""
     
     @classmethod
     def from_env(cls) -> "DatabaseConfig":
-        """Load configuration from environment variables."""
-        # Primary: Direct DATABASE_URL
+        """Load configuration from YAML config (preferred) or environment variables."""
+        # Primary: YAML config (lazy import to avoid circular deps)
+        try:
+            import sys
+            if 'src.server.config.yaml_config' in sys.modules:
+                from ...config.yaml_config import get_config
+                config = get_config()
+                return cls(
+                    database_url=config.database.dsn,
+                    min_connections=config.database.min_connections,
+                    max_connections=config.database.max_connections,
+                )
+        except Exception:
+            pass
+        
+        # Fallback: Direct DATABASE_URL
         database_url = os.getenv("ARCHON_DATABASE_URL")
         
         # Fallback: Build from components
         if not database_url:
-            host = os.getenv("ARCHON_DB_HOST", "localhost")
-            port = int(os.getenv("ARCHON_DB_PORT", "5432"))
+            host = os.getenv("ARCHON_DB_HOST", "127.0.0.1")
+            port = int(os.getenv("ARCHON_DB_PORT", "5433"))
             user = os.getenv("ARCHON_DB_USER", "archon")
-            password = os.getenv("ARCHON_DB_PASSWORD", "archon_local_dev")
+            password = os.getenv("ARCHON_DB_PASSWORD", "")
             database = os.getenv("ARCHON_DB_NAME", "archon")
             
             database_url = f"postgresql://{user}:{password}@{host}:{port}/{database}"

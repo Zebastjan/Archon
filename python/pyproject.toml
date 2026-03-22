@@ -109,6 +109,14 @@ mcp = [
     "fastapi>=0.104.0",
     "watchdog>=3.0.0",  # Auto-reload for development
     "asyncpg>=0.29.0",  # Database connectivity
+    "psycopg2-binary>=2.9.11",  # Code metrics service (sync DB)
+    "semgrep>=1.60.0",  # Code auditing
+    "openai==1.71.0",  # RAG service dependencies
+    "python-jose[cryptography]>=3.3.0",  # Cryptography for supabase
+    "cryptography>=41.0.0",  # Crypto utilities
+    "pydantic-ai>=0.0.13",  # AI utilities
+    "psutil>=5.9.0",  # System utilities
+    "tldextract>=5.0.0",  # URL parsing
 ]
 
 # Agents container dependencies (ML/reranking service)

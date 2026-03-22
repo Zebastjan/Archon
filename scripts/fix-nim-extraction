@@ -1,0 +1,135 @@
+#!/bin/bash
+# Fix Nim extraction for Omnibus
+# This script forces re-extraction of all Nim files
+
+cd /home/zebastjan/dev/archon
+. python/.venv/bin/activate
+
+export ARCHON_DATABASE_URL="postgresql://archon:archon_local_dev@localhost:5434/archon"
+
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  Fixing Nim Extraction for Omnibus"
+echo "═══════════════════════════════════════════════════════════════════"
+echo ""
+
+# Count Nim files in Omnibus
+NIM_COUNT=$(find /home/zebastjan/dev/Omnibus -name "*.nim" -type f | wc -l)
+echo "Found $NIM_COUNT Nim files in Omnibus"
+echo ""
+
+# Get Omnibus repo ID from database
+OMNIBUS_ID=$(python -c "
+import asyncio
+import sys
+sys.path.insert(0, 'python')
+
+async def get_id():
+    from src.server.services.database import get_database_connector, initialize_database, close_database
+    await initialize_database()
+    db = get_database_connector()
+    result = await db.fetchval(\"SELECT id FROM archon_code_repos WHERE name = 'Omnibus'\")
+    print(result)
+    await close_database()
+
+asyncio.run(get_id())
+" 2>/dev/null)
+
+if [ -z "$OMNIBUS_ID" ]; then
+    echo "❌ Could not find Omnibus repository ID"
+    echo "   Make sure Omnibus is registered: archon-project-init ~/dev/Omnibus"
+    exit 1
+fi
+
+echo "Omnibus repository ID: $OMNIBUS_ID"
+echo ""
+
+# Clear existing Nim entities for this repo
+echo "Clearing existing Nim entities..."
+python -c "
+import asyncio
+import sys
+sys.path.insert(0, 'python')
+os.environ['ARCHON_DATABASE_URL'] = 'postgresql://archon:archon_local_dev@localhost:5434/archon'
+
+async def clear():
+    from src.server.services.database import get_database_connector, initialize_database, close_database
+    await initialize_database()
+    db = get_database_connector()
+    
+    # Delete existing Nim entities for Omnibus
+    result = await db.execute(\"\"
+        DELETE FROM archon_code_entities 
+        WHERE repo_id = \$1 AND language = 'nim'
+    \"\", "$OMNIBUS_ID")
+    
+    print(f'Cleared Nim entities')
+    await close_database()
+
+asyncio.run(clear())
+" 2>/dev/null || echo "Warning: Could not clear existing entities"
+
+echo ""
+echo "Re-extracting Nim files..."
+echo ""
+
+# Run extraction with error handling
+python << 'PYTHON_EOF'
+import asyncio
+import sys
+import os
+import traceback
+
+sys.path.insert(0, 'python')
+os.environ['ARCHON_DATABASE_URL'] = 'postgresql://archon:archon_local_dev@localhost:5434/archon'
+
+async def extract():
+    try:
+        from src.server.services.code_entity_extraction_service import CodeEntityExtractionService
+        from src.server.services.database import initialize_database, close_database
+        
+        print("Initializing database...")
+        await initialize_database()
+        
+        print("Starting Nim extraction...")
+        service = CodeEntityExtractionService()
+        
+        # Extract from Omnibus
+        repo_id = "15f7ea16-d016-492b-8193-dbbd55f33281"
+        repo_path = "/home/zebastjan/dev/Omnibus"
+        
+        print(f"Repo: {repo_id}")
+        print(f"Path: {repo_path}")
+        print("")
+        
+        result = await service.extract_and_store_entities(repo_id, repo_path)
+        
+        print("")
+        print("Extraction complete!")
+        print(f"Stats: {result}")
+        
+        await close_database()
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        traceback.print_exc()
+        return 1
+    
+    return 0
+
+exit_code = asyncio.run(extract())
+sys.exit(exit_code)
+PYTHON_EOF
+
+RESULT=$?
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════════"
+if [ $RESULT -eq 0 ]; then
+    echo "  ✅ Nim extraction complete!"
+else
+    echo "  ⚠️  Extraction had issues (exit code: $RESULT)"
+fi
+echo "═══════════════════════════════════════════════════════════════════"
+echo ""
+echo "Check results with: archon-health"
+echo ""

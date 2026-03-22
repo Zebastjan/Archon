@@ -36,13 +36,14 @@ class ProjectService:
                 return False, {"error": "Project title is required and must be a non-empty string"}
 
             # Create project data
+            now = datetime.now()
             project_data = {
                 "title": title.strip(),
                 "docs": [],  # Will add PRD document after creation
                 "features": [],
                 "data": [],
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": now,
+                "updated_at": now,
             }
 
             if github_repo and isinstance(github_repo, str) and len(github_repo.strip()) > 0:
@@ -51,6 +52,10 @@ class ProjectService:
             # Insert project
             db = get_database_connector()
             import json
+
+            # Convert datetime objects to ISO format strings
+            created_at_str = project_data["created_at"].isoformat() if project_data["created_at"] else None
+            updated_at_str = project_data["updated_at"].isoformat() if project_data["updated_at"] else None
 
             response = await db.fetch(
                 """
@@ -63,8 +68,8 @@ class ProjectService:
                 json.dumps(project_data["docs"]),
                 json.dumps(project_data["features"]),
                 json.dumps(project_data["data"]),
-                project_data["created_at"],
-                project_data["updated_at"],
+                created_at_str,
+                updated_at_str,
                 project_data.get("github_repo")
             )
 
@@ -81,7 +86,7 @@ class ProjectService:
                     "id": project_id,
                     "title": project["title"],
                     "github_repo": project.get("github_repo"),
-                    "created_at": project["created_at"],
+                    "created_at": project["created_at"].isoformat() if project.get("created_at") else None,
                 }
             }
 
@@ -112,12 +117,14 @@ class ProjectService:
             if include_content:
                 # Current behavior - maintain backward compatibility
                 for project in response:
+                    created_at = project.get("created_at")
+                    updated_at = project.get("updated_at")
                     projects.append({
                         "id": str(project["id"]),
                         "title": project["title"],
                         "github_repo": project.get("github_repo"),
-                        "created_at": project["created_at"],
-                        "updated_at": project["updated_at"],
+                        "created_at": str(created_at) if created_at else None,
+                        "updated_at": str(updated_at) if updated_at else None,
                         "pinned": project.get("pinned", False),
                         "description": project.get("description", ""),
                         "docs": project.get("docs", []),
@@ -134,12 +141,14 @@ class ProjectService:
                     has_data = bool(project.get("data", []))
 
                     # Return only metadata + stats, excluding large JSONB fields
+                    created_at = project.get("created_at")
+                    updated_at = project.get("updated_at")
                     projects.append({
                         "id": str(project["id"]),
                         "title": project["title"],
                         "github_repo": project.get("github_repo"),
-                        "created_at": project["created_at"],
-                        "updated_at": project["updated_at"],
+                        "created_at": str(created_at) if created_at else None,
+                        "updated_at": str(updated_at) if updated_at else None,
                         "pinned": project.get("pinned", False),
                         "description": project.get("description", ""),
                         "stats": {
@@ -327,7 +336,7 @@ class ProjectService:
             import json
 
             # Build update data
-            update_data = {"updated_at": datetime.now().isoformat()}
+            update_data = {"updated_at": datetime.now()}
 
             # Add allowed fields
             allowed_fields = [

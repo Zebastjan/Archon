@@ -147,6 +147,7 @@ class TaskService:
                             existing_task["id"],
                         )
 
+            now = datetime.now()
             task_data = {
                 "project_id": project_id,
                 "title": title,
@@ -157,8 +158,8 @@ class TaskService:
                 "priority": priority,
                 "sources": sources or [],
                 "code_examples": code_examples or [],
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": now,
+                "updated_at": now,
             }
 
             if feature:
@@ -168,8 +169,12 @@ class TaskService:
             import json
             if not skip_worktree_validation:
                 worktree_service = get_worktree_service()
-                context = await worktree_service.get_current_context()
-                if context and context.worktree_id:
+                # Check if method exists before calling
+                if hasattr(worktree_service, 'get_current_context'):
+                    context = await worktree_service.get_current_context()
+                else:
+                    context = None
+                if context and hasattr(context, 'worktree_id') and context.worktree_id:
                     task_data.update({
                         "worktree_id": context.worktree_id,
                         "branch_name": context.branch_name,
@@ -182,6 +187,11 @@ class TaskService:
                     })
 
             db = get_database_connector()
+            
+            # Convert datetime objects to ISO format strings for the database
+            created_at_str = task_data["created_at"].isoformat() if hasattr(task_data["created_at"], 'isoformat') else task_data["created_at"]
+            updated_at_str = task_data["updated_at"].isoformat() if hasattr(task_data["updated_at"], 'isoformat') else task_data["updated_at"]
+            
             response = await db.fetch(
                 """
                 INSERT INTO archon_tasks
@@ -209,8 +219,8 @@ class TaskService:
                 task_data.get("worktree_status"),
                 task_data.get("merge_conflicts_expected"),
                 task_data.get("entities_affected"),
-                task_data["created_at"],
-                task_data["updated_at"],
+                created_at_str,
+                updated_at_str,
             )
 
             if response:
@@ -360,8 +370,8 @@ class TaskService:
                     "task_order": task.get("task_order", 0),
                     "priority": task.get("priority", "medium"),
                     "feature": task.get("feature"),
-                    "created_at": task["created_at"],
-                    "updated_at": task["updated_at"],
+                    "created_at": task["created_at"].isoformat() if task.get("created_at") else None,
+                    "updated_at": task["updated_at"].isoformat() if task.get("updated_at") else None,
                     "archived": task.get("archived", False),
                 }
 
@@ -450,7 +460,7 @@ class TaskService:
                     }
             
             # Build update data
-            update_data = {"updated_at": datetime.now().isoformat()}
+            update_data = {"updated_at": datetime.now()}
 
             # Validate and add fields
             if "title" in update_fields:
@@ -542,6 +552,7 @@ class TaskService:
                 return False, {"error": f"Task with ID {task_id} is already archived"}
 
             # Archive the main task
+            now = datetime.now()
             response = await db.fetch(
                 """
                 UPDATE archon_tasks
@@ -550,9 +561,9 @@ class TaskService:
                 RETURNING *
                 """,
                 True,
-                datetime.now().isoformat(),
+                now,
                 archived_by,
-                datetime.now().isoformat(),
+                now,
                 task_id
             )
 

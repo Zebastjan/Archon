@@ -77,25 +77,13 @@ class TestWorktreeConflictDetection:
             "status": "doing",
         }
         
-        # Task 2 in worktree 2 also modifies auth.py (CONFLICT!)
-        # Mock database returning the conflicting task
-        mock_supabase.execute.return_value.data = [
-            {
-                "conflicting_task_id": task_1["id"],
-                "conflicting_worktree_id": worktree_1["id"],
-                "conflicting_branch": worktree_1["branch"],
-                "conflict_type": "file",
-                "conflict_severity": "critical",
-                "details": json.dumps({"shared_files": ["src/auth.py"]}),
-            }
-        ]
-        
         validate_tool = mock_mcp._tools.get("worktree_validate_safe_to_work")
         assert validate_tool is not None
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            # Use AsyncMock for async method
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=False,
                 issues=[{
                     "type": "concurrent_modification",
@@ -139,7 +127,7 @@ class TestWorktreeConflictDetection:
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=False,
                 issues=[{
                     "type": "entity_conflict",
@@ -183,7 +171,7 @@ class TestWorktreeIsolation:
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=False,
                 issues=[{
                     "type": "task_in_other_worktree",
@@ -224,7 +212,7 @@ class TestWorktreeIsolation:
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=False,
                 issues=[{
                     "type": "worktree_locked",
@@ -278,12 +266,11 @@ class TestWorktreeConflictScenarios:
             "files": ["src/middleware.py", "src/logger.py"],
         }
         
-        # Simulate Instance 1 already has an active task
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
             
             # When Instance 2 validates, it should detect the conflict on middleware.py
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=False,
                 issues=[{
                     "type": "concurrent_modification",
@@ -330,7 +317,7 @@ class TestWorktreeConflictScenarios:
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=True,
                 issues=[],
                 warnings=[{
@@ -353,7 +340,7 @@ class TestWorktreeConflictScenarios:
             
             validate_tool = mock_mcp._tools.get("worktree_validate_safe_to_work")
             result = await validate_tool(
-                file_paths=["src/api/users.py"],  # Different from other worktree
+                file_paths=["src/api/users.py"],
             )
             
             assert result["is_safe"] is True
@@ -398,7 +385,7 @@ class TestStructuredLogging:
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.validate_safe_to_work = MagicMock(return_value=WorktreeValidationResult(
+            mock_service.validate_safe_to_work = AsyncMock(return_value=WorktreeValidationResult(
                 is_safe=False,
                 issues=[{
                     "type": "concurrent_modification",
@@ -427,7 +414,8 @@ class TestStructuredLogging:
         
         with patch("src.mcp_server.features.worktree.worktree_tools.get_worktree_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.lock_worktree = MagicMock(return_value=True)
+            # Use AsyncMock for async method
+            mock_service.lock_worktree = AsyncMock(return_value=True)
             mock_get_service.return_value = mock_service
             
             with caplog.at_level("INFO"):
