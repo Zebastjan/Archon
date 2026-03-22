@@ -9,8 +9,10 @@ Modules:
 - mcp_api: MCP server management and tool execution
 - knowledge_api: Knowledge base, crawling, and RAG operations
 - projects_api: Project and task management with streaming
+- mcp_tools: MCP tools registered directly in FastAPI (single container)
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -20,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api_routes.agent_chat_api import router as agent_chat_router
 from .api_routes.agent_work_orders_proxy import router as agent_work_orders_router
+from .api_routes.agents_api import initialize_agents, router as agents_router
 from .api_routes.bug_report_api import router as bug_report_router
 from .api_routes.git_api import router as git_router
 from .api_routes.git_api_classification import router as git_classification_router
@@ -72,6 +75,163 @@ uvicorn_logger.setLevel(logging.WARNING)  # Only log warnings and errors, not ev
 
 # Global flag to track if initialization is complete
 _initialization_complete = False
+
+# MCP Server - Single Container Architecture
+# Global FastMCP instance registered directly in FastAPI
+_mcp_instance = None
+
+
+def get_mcp_instance():
+    """Get or create the global MCP instance."""
+    global _mcp_instance
+    if _mcp_instance is None:
+        from mcp.server.fastmcp import FastMCP
+
+        _mcp_instance = FastMCP("archon-server")
+    return _mcp_instance
+
+
+async def _initialize_mcp_tools():
+    """Initialize all MCP tools from the mcp_server modules."""
+    global _mcp_instance
+
+    logger.info("🔧 Initializing MCP tools...")
+
+    from mcp.server.fastmcp import FastMCP
+
+    _mcp_instance = FastMCP("archon-server")
+
+    modules_registered = 0
+
+    # Import and register RAG tools
+    try:
+        from src.mcp_server.features.rag import register_rag_tools
+
+        register_rag_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ RAG tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ RAG tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering RAG tools: {e}")
+
+    # Import and register Project tools
+    try:
+        from src.mcp_server.features.projects import register_project_tools
+
+        register_project_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Project tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Project tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Project tools: {e}")
+
+    # Import and register Task tools
+    try:
+        from src.mcp_server.features.tasks import register_task_tools
+
+        register_task_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Task tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Task tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Task tools: {e}")
+
+    # Import and register Document tools
+    try:
+        from src.mcp_server.features.documents import register_document_tools
+
+        register_document_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Document tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Document tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Document tools: {e}")
+
+    # Import and register Worktree tools
+    try:
+        from src.mcp_server.features.worktree import register_worktree_tools
+
+        register_worktree_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Worktree tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Worktree tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Worktree tools: {e}")
+
+    # Import and register Code Audit tools
+    try:
+        from src.mcp_server.features.code_audit import register_code_audit_tools
+
+        register_code_audit_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Code audit tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Code audit tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Code audit tools: {e}")
+
+    # Import and register Code Entity tools
+    try:
+        from src.mcp_server.features.code_entities import register_code_entity_tools
+
+        register_code_entity_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Code entity tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Code entity tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Code entity tools: {e}")
+
+    # Import and register Code Repos tools
+    try:
+        from src.mcp_server.features.code_repos import register_code_repos_tools
+
+        register_code_repos_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Code repos tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Code repos tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Code repos tools: {e}")
+
+    # Import and register Feature tools
+    try:
+        from src.mcp_server.features.feature_tools import register_feature_tools
+
+        register_feature_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Feature tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Feature tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Feature tools: {e}")
+
+    # Import and register Version tools
+    try:
+        from src.mcp_server.features.documents import register_version_tools
+
+        register_version_tools(_mcp_instance)
+        modules_registered += 1
+        logger.info("✓ Version tools registered")
+    except ImportError as e:
+        logger.warning(f"⚠ Version tools not available: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error registering Version tools: {e}")
+
+    logger.info(f"📦 Total MCP tool modules registered: {modules_registered}")
+
+
+async def _shutdown_mcp_tools():
+    """Clean up MCP tools on shutdown."""
+    global _mcp_instance
+    logger.info("🧹 Cleaning up MCP tools...")
+    _mcp_instance = None
+    logger.info("✓ MCP tools cleared")
 
 
 @asynccontextmanager
@@ -131,7 +291,7 @@ async def lifespan(app: FastAPI):
                                     ON CONFLICT (version) DO NOTHING
                                     """,
                                     migration.version,
-                                    migration.name
+                                    migration.name,
                                 )
                                 api_logger.info(f"✅ Recorded migration: {migration.name}")
                             except Exception:
@@ -147,7 +307,7 @@ async def lifespan(app: FastAPI):
                                     ON CONFLICT (version) DO NOTHING
                                     """,
                                     migration.version,
-                                    migration.name
+                                    migration.name,
                                 )
                                 api_logger.info(f"✅ Recorded migration: {migration.name}")
                             except:
@@ -171,7 +331,9 @@ async def lifespan(app: FastAPI):
         except ValueError as ve:
             # Database not configured
             if "DATABASE_URL" in str(ve) or "SUPABASE_URL" in str(ve):
-                schema_validation_message = "Supabase not configured - using PostgreSQL directly, schema validation skipped"
+                schema_validation_message = (
+                    "Supabase not configured - using PostgreSQL directly, schema validation skipped"
+                )
             else:
                 raise RuntimeError(f"Database schema validation failed: {ve}")
         except ImportError:
@@ -228,8 +390,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             api_logger.warning(f"Could not initialize prompt service: {e}")
 
-        # MCP Client functionality removed from architecture
-        # Agents now use MCP tools directly
+        # Initialize MCP tools in the same container (single-container architecture)
+        try:
+            await _initialize_mcp_tools()
+            api_logger.info("✅ MCP tools initialized (single-container mode)")
+        except Exception as e:
+            api_logger.warning(f"Could not initialize MCP tools: {e}")
+
+        # Initialize PydanticAI agents
+        try:
+            initialize_agents()
+            api_logger.info("✅ Agents initialized (document, rag)")
+        except Exception as e:
+            api_logger.warning(f"Could not initialize agents: {e}")
 
         # Mark initialization as complete
         _initialization_complete = True
@@ -246,7 +419,8 @@ async def lifespan(app: FastAPI):
     api_logger.info("🛑 Shutting down Archon backend...")
 
     try:
-        # MCP Client cleanup not needed
+        # MCP tools cleanup
+        await _shutdown_mcp_tools()
 
         # Cleanup crawling context
         try:
@@ -308,64 +482,71 @@ app.include_router(knowledge_router)
 import json
 from datetime import datetime
 
+
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
     """MCP protocol endpoint - handles JSON-RPC calls."""
     import traceback
+
     try:
         body = await request.json()
     except:
         body = {}
-    
+
     logger.info(f"MCP request: {body}")
-    
+
     method = body.get("method", "")
     request_id = body.get("id")
-    
+
     # JSON-RPC response format
     def jsonrpc_response(result):
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
-    
+
     def jsonrpc_error(code, message):
         return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
-    
+
     # Handle methods
     if method == "initialize":
-        return jsonrpc_response({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "serverInfo": {"name": "archon-mcp", "version": "1.0.0"}
-        })
-    
+        return jsonrpc_response(
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "serverInfo": {"name": "archon-mcp", "version": "1.0.0"},
+            }
+        )
+
     if method == "tools/list":
-        return jsonrpc_response({
-            "tools": [
-                {"name": "rag_get_available_sources", "description": "Get list of knowledge sources"},
-                {"name": "rag_search_knowledge_base", "description": "Search knowledge base"},
-                {"name": "rag_search_code_examples", "description": "Search code examples"},
-                {"name": "find_projects", "description": "List projects"},
-                {"name": "find_tasks", "description": "List tasks"},
-            ]
-        })
-    
+        return jsonrpc_response(
+            {
+                "tools": [
+                    {"name": "rag_get_available_sources", "description": "Get list of knowledge sources"},
+                    {"name": "rag_search_knowledge_base", "description": "Search knowledge base"},
+                    {"name": "rag_search_code_examples", "description": "Search code examples"},
+                    {"name": "find_projects", "description": "List projects"},
+                    {"name": "find_tasks", "description": "List tasks"},
+                ]
+            }
+        )
+
     if method == "tools/call":
         tool_name = body.get("params", {}).get("name", "")
         tool_args = body.get("params", {}).get("arguments", {})
-        
+
         try:
             result = await _handle_mcp_tool(tool_name, tool_args)
             return jsonrpc_response({"content": [{"type": "text", "text": json.dumps(result)}]})
         except Exception as e:
             return jsonrpc_error(-32603, str(e))
-    
+
     return jsonrpc_error(-32601, "Method not found")
 
 
 async def _handle_mcp_tool(name: str, args: dict) -> dict:
     """Handle individual MCP tool calls."""
-    
+
     if name == "rag_get_available_sources":
         from .services.database import get_database_connector
+
         db = get_database_connector()
         rows = await db.fetch(
             """SELECT source_id, source_display_name as name, source_url as url, 
@@ -373,9 +554,10 @@ async def _handle_mcp_tool(name: str, args: dict) -> dict:
               ORDER BY source_display_name"""
         )
         return {"success": True, "sources": [dict(r) for r in rows], "count": len(rows)}
-    
+
     if name == "find_projects":
         from .services.projects.project_service import ProjectService
+
         service = ProjectService()
         success, result = await service.list_projects(include_content=False)
         if success:
@@ -388,14 +570,29 @@ async def _handle_mcp_tool(name: str, args: dict) -> dict:
                     p["updated_at"] = str(p["updated_at"])
             return {"success": True, "projects": projects, "count": len(projects)}
         return {"success": False, "error": result.get("error", "Failed")}
-    
+
     if name == "find_tasks":
         from .services.projects.task_service import TaskService
+
         service = TaskService()
+        # Handle filter_by/filter_value parameters and map to service parameters
+        filter_by = args.get("filter_by")
+        filter_value = args.get("filter_value")
+
+        # Build filter parameters
+        project_id = None
+        status = None
+        search_query = None
+
+        if filter_by == "project" and filter_value:
+            project_id = filter_value
+        elif filter_by == "status" and filter_value:
+            status = filter_value
+        elif filter_by == "assignee" and filter_value:
+            search_query = filter_value
+
         success, result = await service.list_tasks(
-            filter_by=args.get("filter_by"),
-            filter_value=args.get("filter_value"),
-            include_content=False
+            project_id=project_id, status=status, include_closed=True, search_query=search_query
         )
         if success:
             tasks = result.get("tasks", [])
@@ -404,28 +601,31 @@ async def _handle_mcp_tool(name: str, args: dict) -> dict:
                     t["created_at"] = str(t["created_at"])
             return {"success": True, "tasks": tasks, "count": len(tasks)}
         return {"success": False, "error": result.get("error", "Failed")}
-    
+
     if name == "rag_search_knowledge_base":
         from .services.search.rag_service import RAGService
+
         service = RAGService()
+        source_id = args.get("source_id")
         success, result = await service.perform_rag_query(
             query=args.get("query", ""),
-            source=args.get("source_id"),
+            source=source_id if source_id else None,
             match_count=args.get("match_count", 5),
-            return_mode=args.get("return_mode", "pages")
+            return_mode=args.get("return_mode", "pages"),
         )
-        return {"success": success, "results": result.get("results", []), "error": result.get("error")}
-    
+        if success:
+            return {"success": success, "results": result.get("results", []), "count": len(result.get("results", []))}
+        return {"success": False, "error": result.get("error", "Failed")}
+
     if name == "rag_search_code_examples":
         from .services.search.rag_service import RAGService
+
         service = RAGService()
         success, result = await service.search_code_examples_service(
-            query=args.get("query", ""),
-            source_id=args.get("source_id"),
-            match_count=args.get("match_count", 5)
+            query=args.get("query", ""), source_id=args.get("source_id"), match_count=args.get("match_count", 5)
         )
         return {"success": success, "results": result.get("results", []), "error": result.get("error")}
-    
+
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -433,18 +633,21 @@ async def _handle_mcp_tool(name: str, args: dict) -> dict:
 async def mcp_sse_endpoint(request: Request):
     """MCP SSE endpoint for event streaming."""
     from fastapi.responses import StreamingResponse
-    
+
     async def event_stream():
         # Send initial connection message
         yield "event: endpoint\ndata: /mcp\n\n"
-        
+
         # Keep connection alive
         import asyncio
+
         while True:
             await asyncio.sleep(30)
             yield ": keepalive\n\n"
-    
+
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 app.include_router(pages_router)
 app.include_router(ollama_router)
 app.include_router(openrouter_router)
@@ -454,6 +657,7 @@ app.include_router(git_classification_router)
 app.include_router(git_test_router)
 app.include_router(progress_router)
 app.include_router(agent_chat_router)
+app.include_router(agents_router)  # Integrated PydanticAI agents
 app.include_router(agent_work_orders_router)  # Proxy to independent agent work orders service
 app.include_router(internal_router)
 app.include_router(bug_report_router)

@@ -16,11 +16,12 @@ os.environ["SUPABASE_SERVICE_KEY"] = ""
 # Set required port environment variables for ServiceDiscovery
 os.environ["ARCHON_SERVER_PORT"] = "8181"
 os.environ["ARCHON_MCP_PORT"] = "8051"
-os.environ["ARCHON_AGENTS_PORT"] = "8052"
+# ARCHON_AGENTS_PORT removed - agents now integrated into main server
 os.environ["ARCHON_DB_PORT"] = "5434"
 
 # Import database module first so patches can be applied
 import sys
+
 if "src.server.services.database" not in sys.modules:
     from src.server.services import database
 
@@ -56,7 +57,7 @@ def ensure_test_environment():
     os.environ["SUPABASE_SERVICE_KEY"] = ""
     os.environ["ARCHON_SERVER_PORT"] = "8181"
     os.environ["ARCHON_MCP_PORT"] = "8051"
-    os.environ["ARCHON_AGENTS_PORT"] = "8052"
+    # ARCHON_AGENTS_PORT removed - agents now integrated into main server
     os.environ["ARCHON_DB_PORT"] = "5434"
     yield
 
@@ -66,7 +67,7 @@ def prevent_real_db_calls():
     """Automatically prevent any real database calls in all tests."""
     # Create a mock database connector to use everywhere
     mock_db = MagicMock()
-    
+
     # Setup async methods with proper return values
     mock_db.fetch = AsyncMock(return_value=[])
     mock_db.fetchrow = AsyncMock(return_value=None)
@@ -78,7 +79,7 @@ def prevent_real_db_calls():
     mock_db.select = AsyncMock(return_value=[])
     mock_db.initialize = AsyncMock()
     mock_db.close = AsyncMock()
-    
+
     # Patch all the common ways to get a database connector
     with patch("src.server.services.database.db_connector.get_database_connector", return_value=mock_db):
         with patch("src.server.services.database.get_database_connector", return_value=mock_db):
@@ -88,12 +89,12 @@ def prevent_real_db_calls():
 @pytest.fixture
 def mock_db_client():
     """Mock PostgreSQL database connector for testing.
-    
+
     Returns a mock that mimics asyncpg-style database operations.
     Use this for PostgreSQL-based tests.
     """
     mock_db = MagicMock()
-    
+
     # Setup async methods
     mock_db.fetch = AsyncMock(return_value=[])
     mock_db.fetchrow = AsyncMock(return_value=None)
@@ -105,14 +106,14 @@ def mock_db_client():
     mock_db.select = AsyncMock(return_value=[])
     mock_db.initialize = AsyncMock()
     mock_db.close = AsyncMock()
-    
+
     return mock_db
 
 
 @pytest.fixture
 def mock_supabase_client():
     """Mock Supabase client for testing (DEPRECATED - use mock_db_client instead).
-    
+
     This fixture is kept for backward compatibility during migration.
     New tests should use mock_db_client.
     """

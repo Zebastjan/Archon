@@ -3,6 +3,8 @@ Service Discovery module for Docker and local development environments
 
 This module provides service discovery capabilities that work seamlessly
 across Docker Compose and local development environments.
+
+ARCHITECTURE: Single container - MCP tools run in the main server (port 8181)
 """
 
 import os
@@ -25,13 +27,15 @@ class ServiceDiscovery:
 
     In Docker Compose: Uses container names
     In Local: Uses localhost with different ports
+
+    NOTE: Single container architecture - MCP is now part of the main server (8181)
     """
 
     def __init__(self):
         # Get ports during initialization
         server_port = os.getenv("ARCHON_SERVER_PORT")
-        mcp_port = os.getenv("ARCHON_MCP_PORT")
-        agents_port = os.getenv("ARCHON_AGENTS_PORT")
+        # MCP_PORT now defaults to same as server (single container)
+        mcp_port = os.getenv("ARCHON_MCP_PORT", server_port)
         agent_work_orders_port = os.getenv("AGENT_WORK_ORDERS_PORT")
 
         # Required ports (core services)
@@ -41,25 +45,17 @@ class ServiceDiscovery:
                 "Please set it in your .env file or environment. "
                 "Default value: 8181"
             )
+
+        # MCP is now part of main server, so mcp_port defaults to server_port
         if not mcp_port:
-            raise ValueError(
-                "ARCHON_MCP_PORT environment variable is required. "
-                "Please set it in your .env file or environment. "
-                "Default value: 8051"
-            )
-        if not agents_port:
-            raise ValueError(
-                "ARCHON_AGENTS_PORT environment variable is required. "
-                "Please set it in your .env file or environment. "
-                "Default value: 8052"
-            )
+            mcp_port = server_port
 
         # Optional ports (agent_work_orders is an optional feature)
         # Store None if not configured to indicate feature is unavailable
+        # NOTE: Agents are now integrated into the main server, no separate port needed
         self.DEFAULT_PORTS = {
             "api": int(server_port),
-            "mcp": int(mcp_port),
-            "agents": int(agents_port),
+            "mcp": int(mcp_port),  # Now same as api port (single container)
             "agent_work_orders": int(agent_work_orders_port) if agent_work_orders_port else None,
         }
 
@@ -67,14 +63,15 @@ class ServiceDiscovery:
         self._cache: dict[str, str] = {}
 
     # Service name mappings
+    # NOTE: MCP and agents now use same service as api (single container)
     SERVICE_NAMES = {
         "api": "archon-server",
-        "mcp": "archon-mcp",
-        "agents": "archon-agents",
+        "mcp": "archon-server",  # MCP is now in the main server container
+        "agents": "archon-server",  # Agents integrated into main server
         "agent_work_orders": "archon-agent-work-orders",
         "archon-server": "archon-server",
-        "archon-mcp": "archon-mcp",
-        "archon-agents": "archon-agents",
+        "archon-mcp": "archon-server",  # MCP is now in the main server container
+        "archon-agents": "archon-server",  # Agents integrated into main server
         "archon-agent-work-orders": "archon-agent-work-orders",
     }
 
@@ -171,9 +168,7 @@ class ServiceDiscovery:
         except Exception:
             return False
 
-    async def wait_for_service(
-        self, service: str, max_attempts: int = 30, delay: float = 2.0
-    ) -> bool:
+    async def wait_for_service(self, service: str, max_attempts: int = 30, delay: float = 2.0) -> bool:
         """
         Wait for a service to become healthy.
 
@@ -248,8 +243,13 @@ def get_mcp_url() -> str:
 
 
 def get_agents_url() -> str:
-    """Get the Agents service URL"""
-    return get_discovery().get_service_url("agents")
+    """
+    Get the Agents service URL.
+
+    Note: Agents are now integrated into the main server (port 8181).
+    This returns the main server URL for backward compatibility.
+    """
+    return get_discovery().get_service_url("api")  # Agents now on main server
 
 
 def get_agent_work_orders_url() -> str | None:

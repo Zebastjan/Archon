@@ -28,20 +28,20 @@ class MCPClient:
         if mcp_url:
             self.mcp_url = mcp_url
         else:
-            # Use service discovery to find MCP server
+            # Single container architecture - MCP is part of main server
             try:
                 from ..server.config.service_discovery import get_mcp_url
 
                 self.mcp_url = get_mcp_url()
             except ImportError:
-                # Fallback for when running in agents container
+                # Fallback for when running in agents container or standalone
                 import os
 
-                mcp_port = os.getenv("ARCHON_MCP_PORT", "8051")
+                server_port = os.getenv("ARCHON_SERVER_PORT", "8181")
                 if os.getenv("DOCKER_CONTAINER"):
-                    self.mcp_url = f"http://archon-mcp:{mcp_port}"
+                    self.mcp_url = f"http://archon-server:{server_port}/mcp"
                 else:
-                    self.mcp_url = f"http://localhost:{mcp_port}"
+                    self.mcp_url = f"http://localhost:{server_port}/mcp"
 
         self.client = httpx.AsyncClient(timeout=30.0)
         logger.info(f"MCP Client initialized with URL: {self.mcp_url}")
@@ -100,9 +100,7 @@ class MCPClient:
 
     async def perform_rag_query(self, query: str, source: str = None, match_count: int = 5) -> str:
         """Perform a RAG query through MCP."""
-        result = await self.call_tool(
-            "perform_rag_query", query=query, source=source, match_count=match_count
-        )
+        result = await self.call_tool("perform_rag_query", query=query, source=source, match_count=match_count)
         return json.dumps(result) if isinstance(result, dict) else str(result)
 
     async def get_available_sources(self) -> str:
@@ -110,13 +108,9 @@ class MCPClient:
         result = await self.call_tool("get_available_sources")
         return json.dumps(result) if isinstance(result, dict) else str(result)
 
-    async def search_code_examples(
-        self, query: str, source_id: str = None, match_count: int = 5
-    ) -> str:
+    async def search_code_examples(self, query: str, source_id: str = None, match_count: int = 5) -> str:
         """Search code examples through MCP."""
-        result = await self.call_tool(
-            "search_code_examples", query=query, source_id=source_id, match_count=match_count
-        )
+        result = await self.call_tool("search_code_examples", query=query, source_id=source_id, match_count=match_count)
         return json.dumps(result) if isinstance(result, dict) else str(result)
 
     async def manage_project(self, action: str, **kwargs) -> str:
@@ -126,9 +120,7 @@ class MCPClient:
 
     async def manage_document(self, action: str, project_id: str, **kwargs) -> str:
         """Manage documents through MCP."""
-        result = await self.call_tool(
-            "manage_document", action=action, project_id=project_id, **kwargs
-        )
+        result = await self.call_tool("manage_document", action=action, project_id=project_id, **kwargs)
         return json.dumps(result) if isinstance(result, dict) else str(result)
 
     async def manage_task(self, action: str, project_id: str, **kwargs) -> str:

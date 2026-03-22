@@ -22,8 +22,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 ALLOWED_INTERNAL_IPS = [
     "127.0.0.1",  # Localhost
     "172.18.0.0/16",  # Docker network range
-    "archon-agents",  # Docker service name
-    "archon-mcp",  # Docker service name
+    # Note: archon-agents removed - agents now integrated into main server
 ]
 
 
@@ -62,6 +61,9 @@ async def get_agent_credentials(request: Request) -> dict[str, Any]:
     """
     Get credentials needed by the agents service.
 
+    DEPRECATED: Agents are now integrated into the main server and inherit
+    credentials directly. This endpoint is kept for backward compatibility.
+
     This endpoint is only accessible from internal services and provides
     the necessary credentials for AI agents to function.
     """
@@ -74,31 +76,21 @@ async def get_agent_credentials(request: Request) -> dict[str, Any]:
         # Get credentials needed by agents
         credentials = {
             # OpenAI credentials
-            "OPENAI_API_KEY": await credential_service.get_credential(
-                "OPENAI_API_KEY", decrypt=True
-            ),
-            "OPENAI_MODEL": await credential_service.get_credential(
-                "OPENAI_MODEL", default="gpt-4o-mini"
-            ),
+            "OPENAI_API_KEY": await credential_service.get_credential("OPENAI_API_KEY", decrypt=True),
+            "OPENAI_MODEL": await credential_service.get_credential("OPENAI_MODEL", default="gpt-4o-mini"),
             # Model configurations
             "DOCUMENT_AGENT_MODEL": await credential_service.get_credential(
                 "DOCUMENT_AGENT_MODEL", default="openai:gpt-4o"
             ),
-            "RAG_AGENT_MODEL": await credential_service.get_credential(
-                "RAG_AGENT_MODEL", default="openai:gpt-4o-mini"
-            ),
-            "TASK_AGENT_MODEL": await credential_service.get_credential(
-                "TASK_AGENT_MODEL", default="openai:gpt-4o"
-            ),
+            "RAG_AGENT_MODEL": await credential_service.get_credential("RAG_AGENT_MODEL", default="openai:gpt-4o-mini"),
+            "TASK_AGENT_MODEL": await credential_service.get_credential("TASK_AGENT_MODEL", default="openai:gpt-4o"),
             # Rate limiting settings
             "AGENT_RATE_LIMIT_ENABLED": await credential_service.get_credential(
                 "AGENT_RATE_LIMIT_ENABLED", default="true"
             ),
-            "AGENT_MAX_RETRIES": await credential_service.get_credential(
-                "AGENT_MAX_RETRIES", default="3"
-            ),
+            "AGENT_MAX_RETRIES": await credential_service.get_credential("AGENT_MAX_RETRIES", default="3"),
             # MCP endpoint
-            "MCP_SERVICE_URL": f"http://archon-mcp:{os.getenv('ARCHON_MCP_PORT')}",
+            "MCP_SERVICE_URL": f"http://archon-server:{os.getenv('ARCHON_SERVER_PORT', '8181')}/mcp",
             # Additional settings
             "LOG_LEVEL": await credential_service.get_credential("LOG_LEVEL", default="INFO"),
         }

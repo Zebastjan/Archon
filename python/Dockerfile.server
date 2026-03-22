@@ -1,32 +1,21 @@
-# Server Service - Web crawling and document processing microservice
-FROM python:3.12 AS builder
+# Archon Server - SINGLE CONTAINER with embedded PostgreSQL
+# Everything runs in one container: PostgreSQL + FastAPI + MCP + Agents
 
-WORKDIR /build
-
-# Install build dependencies and uv
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir uv
-
-# Copy pyproject.toml for dependency installation
-COPY pyproject.toml .
-
-# Install server dependencies to a virtual environment using uv
-# Install base dependencies (includes structlog) and server groups
-RUN uv venv /venv && \
-    . /venv/bin/activate && \
-    uv pip install . --group server --group server-reranking
-
-# Runtime stage
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install runtime dependencies for Playwright (minimal set) and git
+# Install PostgreSQL, build tools, and dependencies
 RUN apt-get update && apt-get install -y \
+    postgresql \
+    postgresql-contrib \
+    postgresql-server-dev-all \
+    build-essential \
+    git \
     wget \
     ca-certificates \
+    curl \
+    # Playwright dependencies
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -46,40 +35,128 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
-    git \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Copy the virtual environment from builder
-COPY --from=builder /venv /venv
+# Install pgvector from source
+RUN git clone --branch v0.5.1 https://github.com/pgvector/pgvector.git /tmp/pgvector && \
+    cd /tmp/pgvector && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/pgvector
+
+# Install Python dependencies
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml .
+RUN uv venv /venv && \
+    . /venv/bin/activate && \
+    uv pip install . --group server --group server-reranking
 
 # Install Playwright browsers
 ENV PATH=/venv/bin:$PATH
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install chromium
 
-# Copy server code, agent work orders, and tests
-COPY src/server/ src/server/
-COPY src/agent_work_orders/ src/agent_work_orders/
-COPY src/__init__.py src/
+# Copy application code
+COPY src/ src/
 COPY tests/ tests/
 
-# Set environment variables
+# Setup PostgreSQL directories with postgres user ownership
+RUN mkdir -p /var/lib/postgresql/data /var/run/postgresql && \
+    chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql && \
+    chmod 700 /var/lib/postgresql/data
+
+# Initialize PostgreSQL as postgres user
+USER postgres
+RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --auth=trust && \
+    echo "listen_addresses = 'localhost'" >> /var/lib/postgresql/data/postgresql.conf && \
+    echo "host all all 127.0.0.1/32 trust" >> /var/lib/postgresql/data/pg_hba.conf
+
+USER root
+
+# Create startup script
+RUN cat > /app/start.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Ensure PostgreSQL directories are owned by postgres
+chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql
+
+# Get PostgreSQL version
+PGVER=$(ls /usr/lib/postgresql/ | head -1)
+PGCTL="/usr/lib/postgresql/$PGVER/bin/pg_ctl"
+PG_ISREADY="/usr/lib/postgresql/$PGVER/bin/pg_isready"
+PSQL="/usr/lib/postgresql/$PGVER/bin/psql"
+
+echo "Starting PostgreSQL..."
+su - postgres -c "$PGCTL -D /var/lib/postgresql/data start"
+
+# Wait for PostgreSQL
+echo "Waiting for PostgreSQL..."
+for i in {1..30}; do
+    if su - postgres -c "$PG_ISREADY -q" 2>/dev/null; then
+        echo "PostgreSQL is ready!"
+        break
+    fi
+    echo "Waiting... attempt $i/30"
+    sleep 1
+done
+
+# Create archon database user and database
+echo "Creating archon database user..."
+su - postgres -c "$PSQL -c \"CREATE USER archon WITH PASSWORD 'archon_local_dev';\"" 2>/dev/null || echo "User may already exist"
+su - postgres -c "$PSQL -c \"CREATE DATABASE archon OWNER archon;\"" 2>/dev/null || echo "Database may already exist"
+
+# Grant permissions (do this every time to be safe)
+su - postgres -c "$PSQL -c \"GRANT ALL PRIVILEGES ON DATABASE archon TO archon;\""
+
+# Enable pgvector as postgres (superuser required)
+su - postgres -c "$PSQL -d archon -c \"CREATE EXTENSION IF NOT EXISTS vector;\""
+
+# Run migrations as archon user (so tables are owned by archon)
+if [ -d "/docker-entrypoint-initdb.d/migrations" ]; then
+    echo "Running migrations..."
+    for f in /docker-entrypoint-initdb.d/migrations/*.sql; do
+        if [ -f "$f" ]; then
+            echo "  - $f"
+            su - postgres -c "$PSQL -U archon -d archon -f $f" 2>/dev/null || true
+        fi
+    done
+fi
+
+# Grant archon user permissions on all objects
+su - postgres -c "$PSQL -d archon -c \"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO archon;\"" 2>/dev/null || true
+su - postgres -c "$PSQL -d archon -c \"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO archon;\"" 2>/dev/null || true
+su - postgres -c "$PSQL -d archon -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO archon;\"" 2>/dev/null || true
+su - postgres -c "$PSQL -d archon -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO archon;\"" 2>/dev/null || true
+
+echo "PostgreSQL setup complete!"
+
+# Start Archon Server
+export ARCHON_DATABASE_URL="postgresql://archon:archon_local_dev@localhost:5432/archon"
+export ARCHON_SERVER_PORT="${ARCHON_SERVER_PORT:-8181}"
+export ARCHON_MCP_PORT="${ARCHON_SERVER_PORT}"
+export PATH="/venv/bin:$PATH"
+export PYTHONPATH="/app:$PYTHONPATH"
+export PYTHONUNBUFFERED=1
+
+echo "Starting Archon Server on port ${ARCHON_SERVER_PORT}..."
+exec python -m uvicorn src.server.main:app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1
+EOF
+
+RUN chmod +x /app/start.sh
+
 ENV PYTHONPATH="/app:$PYTHONPATH"
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/venv/bin:$PATH"
+ENV PGDATA=/var/lib/postgresql/data
 
-# Note: semgrep is installed via pyproject.toml server dependencies
-# Ensure semgrep and pysemgrep are available in PATH
-
-# Expose Server port
 ARG ARCHON_SERVER_PORT=8181
 ENV ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT}
 EXPOSE ${ARCHON_SERVER_PORT}
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${ARCHON_SERVER_PORT}/health')\""
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8181/health')\"" || exit 1
 
-# Run the Server service
-CMD sh -c "python -m uvicorn src.server.main:app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1"
+CMD ["/app/start.sh"]

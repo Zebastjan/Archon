@@ -1,5 +1,10 @@
 """
-Agents Service - Lightweight FastAPI server for PydanticAI agents
+DEPRECATED: Agents Service - This file is no longer used.
+
+Agents have been integrated into the main Archon server (python/src/server/main.py).
+This file is kept for reference but is no longer deployed as a separate service.
+
+See python/src/server/api_routes/agents_api.py for the new integrated agents API.
 
 This service ONLY hosts PydanticAI agents. It does NOT contain:
 - ML models or embeddings (those are in Server)
@@ -97,9 +102,7 @@ async def fetch_credentials_from_server():
 
         except (httpx.HTTPError, httpx.RequestError) as e:
             if attempt < max_retries - 1:
-                logger.warning(
-                    f"Failed to fetch credentials (attempt {attempt + 1}/{max_retries}): {e}"
-                )
+                logger.warning(f"Failed to fetch credentials (attempt {attempt + 1}/{max_retries}): {e}")
                 logger.info(f"Retrying in {retry_delay} seconds...")
                 await asyncio.sleep(retry_delay)
             else:

@@ -48,6 +48,8 @@ server = [
     "uvicorn>=0.24.0",
     "python-multipart>=0.0.20",
     "watchfiles>=0.18",
+    # MCP protocol support
+    "mcp>=1.12.2",
     # Web crawling
     "crawl4ai==0.7.4",
     # Database and storage

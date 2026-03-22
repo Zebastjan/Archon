@@ -1,63 +1,25 @@
-# Archon - Simplified Architecture
-# Just two services: database and server (which includes MCP)
+# Archon - Single Container Architecture
+# Everything runs in ONE container: PostgreSQL + FastAPI + MCP + Agents
 
 services:
-  postgres:
-    image: ankane/pgvector:latest
-    container_name: archon-postgres
-    environment:
-      POSTGRES_USER: archon
-      POSTGRES_PASSWORD: archon_local_dev
-      POSTGRES_DB: archon
-    ports:
-      - "5434:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./migration:/docker-entrypoint-initdb.d/migrations:ro
-      - ./scripts/docker-postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
-    networks:
-      - app-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U archon -d archon"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  archon-server:
+  archon:
     build:
       context: ./python
       dockerfile: Dockerfile.server
-    container_name: archon-server
+    container_name: archon
     ports:
       - "8181:8181"
     environment:
-      - ARCHON_DATABASE_URL=postgresql://archon:archon_local_dev@postgres:5432/archon
       - ARCHON_SERVER_PORT=8181
-      - ARCHON_MCP_PORT=8181
-    networks:
-      - app-network
-    depends_on:
-      postgres:
-        condition: service_healthy
+      # Database is embedded in the same container
+      - ARCHON_DATABASE_URL=postgresql://archon:archon_local_dev@localhost:5432/archon
     volumes:
+      # Persist PostgreSQL data
+      - postgres_data:/var/lib/postgresql/data
+      # Hot reload for development
       - ./python/src:/app/src
       - ./python/tests:/app/tests
-      - ./migration:/app/migration
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command:
-      [
-        "python",
-        "-m",
-        "uvicorn",
-        "src.server.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8181",
-        "--reload",
-      ]
+      - ./migration:/docker-entrypoint-initdb.d/migrations:ro
     healthcheck:
       test:
         [
@@ -69,12 +31,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
 volumes:
   postgres_data:
     driver: local
-
-networks:
-  app-network:
-    driver: bridge

@@ -25,7 +25,7 @@ class TestPortConfiguration:
     def test_service_discovery_requires_all_ports(self):
         """Test that ServiceDiscovery requires all port environment variables."""
         # Clear port environment variables
-        for key in ["ARCHON_SERVER_PORT", "ARCHON_MCP_PORT", "ARCHON_AGENTS_PORT"]:
+        for key in ["ARCHON_SERVER_PORT", "ARCHON_MCP_PORT"]:
             os.environ.pop(key, None)
 
         # Import should fail without environment variables
@@ -38,29 +38,32 @@ class TestPortConfiguration:
         """Test that ServiceDiscovery requires MCP port."""
         os.environ["ARCHON_SERVER_PORT"] = "8181"
         os.environ.pop("ARCHON_MCP_PORT", None)
-        os.environ["ARCHON_AGENTS_PORT"] = "8052"
+        # ARCHON_AGENTS_PORT removed - agents now integrated
 
-        with pytest.raises(ValueError, match="ARCHON_MCP_PORT environment variable is required"):
-            from src.server.config.service_discovery import ServiceDiscovery
+        # MCP port now defaults to server port, so this should work
+        from src.server.config.service_discovery import ServiceDiscovery
 
-            ServiceDiscovery()
+        sd = ServiceDiscovery()
+        assert sd.DEFAULT_PORTS["mcp"] == 8181  # Should default to server port
 
-    def test_service_discovery_requires_agents_port(self):
-        """Test that ServiceDiscovery requires agents port."""
+    def test_service_discovery_agents_port_optional(self):
+        """Test that ServiceDiscovery works without agents port (agents now integrated)."""
         os.environ["ARCHON_SERVER_PORT"] = "8181"
         os.environ["ARCHON_MCP_PORT"] = "8051"
-        os.environ.pop("ARCHON_AGENTS_PORT", None)
+        # ARCHON_AGENTS_PORT removed - agents now integrated into main server
 
-        with pytest.raises(ValueError, match="ARCHON_AGENTS_PORT environment variable is required"):
-            from src.server.config.service_discovery import ServiceDiscovery
+        # Should work without agents port
+        from src.server.config.service_discovery import ServiceDiscovery
 
-            ServiceDiscovery()
+        sd = ServiceDiscovery()
+        # Agents service should map to api port now
+        assert sd.DEFAULT_PORTS["api"] == 8181
 
     def test_service_discovery_with_all_ports(self):
-        """Test that ServiceDiscovery works with all ports set."""
+        """Test that ServiceDiscovery works with all required ports set."""
         os.environ["ARCHON_SERVER_PORT"] = "9191"
         os.environ["ARCHON_MCP_PORT"] = "9051"
-        os.environ["ARCHON_AGENTS_PORT"] = "9052"
+        # ARCHON_AGENTS_PORT removed - agents now integrated
 
         from src.server.config.service_discovery import ServiceDiscovery
 
@@ -68,7 +71,7 @@ class TestPortConfiguration:
 
         assert sd.DEFAULT_PORTS["api"] == 9191
         assert sd.DEFAULT_PORTS["mcp"] == 9051
-        assert sd.DEFAULT_PORTS["agents"] == 9052
+        # Agents now use same port as api (integrated)
 
     def test_mcp_server_requires_port(self):
         """Test that MCP server requires ARCHON_MCP_PORT."""
@@ -99,32 +102,29 @@ class TestPortConfiguration:
                     "Default value: 8181"
                 )
 
-    def test_agents_server_requires_port(self):
-        """Test that agents server requires ARCHON_AGENTS_PORT."""
-        os.environ.pop("ARCHON_AGENTS_PORT", None)
+    def test_agents_server_no_longer_requires_port(self):
+        """Test that agents server no longer requires ARCHON_AGENTS_PORT (integrated into main server)."""
+        # ARCHON_AGENTS_PORT removed - agents now integrated into main server
+        # This test is kept for documentation purposes
+        os.environ["ARCHON_SERVER_PORT"] = "8181"
 
-        # Test the logic that would be in agents/server.py
-        with pytest.raises(ValueError, match="ARCHON_AGENTS_PORT environment variable is required"):
-            agents_port = os.getenv("ARCHON_AGENTS_PORT")
-            if not agents_port:
-                raise ValueError(
-                    "ARCHON_AGENTS_PORT environment variable is required. "
-                    "Please set it in your .env file or environment. "
-                    "Default value: 8052"
-                )
+        # Agents are now part of the main server and don't need a separate port
+        from src.server.config.service_discovery import ServiceDiscovery
 
-    def test_agent_chat_api_requires_agents_port(self):
-        """Test that agent_chat_api requires ARCHON_AGENTS_PORT for service calls."""
-        os.environ.pop("ARCHON_AGENTS_PORT", None)
+        sd = ServiceDiscovery()
+        # Agents service URL should be same as API
+        assert sd.get_service_url("agents") == sd.get_service_url("api")
 
-        # Test the logic that would be in agent_chat_api
-        with pytest.raises(ValueError, match="ARCHON_AGENTS_PORT environment variable is required"):
-            agents_port = os.getenv("ARCHON_AGENTS_PORT")
-            if not agents_port:
-                raise ValueError(
-                    "ARCHON_AGENTS_PORT environment variable is required. "
-                    "Please set it in your .env file or environment."
-                )
+    def test_agent_chat_api_uses_main_server(self):
+        """Test that agent_chat_api now uses main server (agents integrated)."""
+        os.environ["ARCHON_SERVER_PORT"] = "8181"
+
+        # Agents are now integrated - no separate port needed
+        from src.server.config.service_discovery import ServiceDiscovery
+
+        sd = ServiceDiscovery()
+        # Agents endpoint is now on main server
+        assert sd.get_service_url("api") == "http://localhost:8181"
 
     def test_config_requires_port_or_archon_mcp_port(self):
         """Test that config.py requires PORT or ARCHON_MCP_PORT."""
@@ -134,9 +134,7 @@ class TestPortConfiguration:
         os.environ.pop("ARCHON_MCP_PORT", None)
 
         # Test the logic from config.py
-        with pytest.raises(
-            ConfigurationError, match="PORT or ARCHON_MCP_PORT environment variable is required"
-        ):
+        with pytest.raises(ConfigurationError, match="PORT or ARCHON_MCP_PORT environment variable is required"):
             port_str = os.getenv("PORT")
             if not port_str:
                 port_str = os.getenv("ARCHON_MCP_PORT")
@@ -152,7 +150,7 @@ class TestPortConfiguration:
         # Set custom ports
         os.environ["ARCHON_SERVER_PORT"] = "9999"
         os.environ["ARCHON_MCP_PORT"] = "8888"
-        os.environ["ARCHON_AGENTS_PORT"] = "7777"
+        # ARCHON_AGENTS_PORT removed - agents now integrated
 
         from src.server.config.service_discovery import ServiceDiscovery
 
@@ -161,13 +159,13 @@ class TestPortConfiguration:
         # Verify custom ports are used
         assert sd.DEFAULT_PORTS["api"] == 9999
         assert sd.DEFAULT_PORTS["mcp"] == 8888
-        assert sd.DEFAULT_PORTS["agents"] == 7777
 
         # Verify service URLs use custom ports
         if not sd.is_docker:
             assert sd.get_service_url("api") == "http://localhost:9999"
             assert sd.get_service_url("mcp") == "http://localhost:8888"
-            assert sd.get_service_url("agents") == "http://localhost:7777"
+            # Agents now use same URL as API (integrated)
+            assert sd.get_service_url("agents") == "http://localhost:9999"
 
 
 class TestPortValidation:
@@ -177,7 +175,7 @@ class TestPortValidation:
         """Test that invalid port values are rejected."""
         os.environ["ARCHON_SERVER_PORT"] = "not-a-number"
         os.environ["ARCHON_MCP_PORT"] = "8051"
-        os.environ["ARCHON_AGENTS_PORT"] = "8052"
+        # ARCHON_AGENTS_PORT removed
 
         with pytest.raises(ValueError):
             from src.server.config.service_discovery import ServiceDiscovery
@@ -197,7 +195,7 @@ class TestPortValidation:
         for port_value, should_succeed in test_cases:
             os.environ["ARCHON_SERVER_PORT"] = port_value
             os.environ["ARCHON_MCP_PORT"] = "8051"
-            os.environ["ARCHON_AGENTS_PORT"] = "8052"
+            # ARCHON_AGENTS_PORT removed
 
             if should_succeed:
                 # Should not raise

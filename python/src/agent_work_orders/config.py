@@ -93,16 +93,19 @@ class AgentWorkOrdersConfig:
 
     @classmethod
     def get_archon_mcp_url(cls) -> str:
-        """Get Archon MCP server URL based on service discovery mode"""
+        """Get Archon MCP server URL based on service discovery mode
+
+        NOTE: Single container architecture - MCP is now part of main server (port 8181)
+        """
         # Allow explicit override
         explicit_url = os.getenv("ARCHON_MCP_URL")
         if explicit_url:
             return explicit_url
 
-        # Otherwise use service discovery mode
+        # Single container: MCP is now part of main server
         if cls.SERVICE_DISCOVERY_MODE == "docker_compose":
-            return "http://archon-mcp:8051"
-        return "http://localhost:8051"
+            return "http://archon-server:8181/mcp"
+        return "http://localhost:8181/mcp"
 
 
 # Global config instance
