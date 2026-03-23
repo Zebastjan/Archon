@@ -3,9 +3,9 @@
   
   // MCP Servers - Archon Codebase Intelligence
   "mcp": {
-    "archon-codebase": {
-      "type": "remote",
-      "url": "http://localhost:8051/sse",
+    "archon": {
+      "type": "local",
+      "command": ["docker", "exec", "-i", "archon", "bash", "-c", "cd /app/src/mcp_server && python mcp_server_stdio.py"],
       "enabled": true
     }
   },
@@ -29,10 +29,10 @@
     "codebase-analyzer": {
       "description": "Analyzes codebase structure and relationships",
       "model": "anthropic/claude-sonnet-4-5",
-      "prompt": "You are a codebase analyzer. Use the archon-codebase MCP tools to explore and understand code. Always use semantic_search for finding code by concept, find_entity for exact names, and get_entity_context for understanding relationships.",
+      "prompt": "You are a codebase analyzer. Use the archon MCP tools to explore and understand code. Always use semantic_search for finding code by concept, find_entity for exact names, and get_entity_context for understanding relationships.",
       "tools": {
         // Enable all archon tools
-        "archon-codebase_*": true
+        "archon_*": true
       }
     }
   },

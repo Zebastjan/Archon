@@ -1,9 +1,10 @@
 {
-  // Archon Codebase Intelligence MCP Server
+  // Archon Codebase Intelligence MCP Server (ADR-003: STDIO transport)
   mcpServers: {
     archon: {
-      command: "curl",
-      arguments: ["-s", "http://localhost:8051/mcp"],
+      command: "docker",
+      args: ["exec", "-i", "archon", "python", "-m", "src.mcp_server.mcp_server_stdio"],
+      type: "stdio",
     },
   },
 

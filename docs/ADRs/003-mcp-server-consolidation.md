@@ -64,6 +64,34 @@ All IDEs now use:
 }
 ```
 
+### Claude Code Note
+
+Claude Code requires using the `claude mcp add` CLI command rather than manual JSON editing:
+
+```bash
+claude mcp add --transport stdio --scope user archon -- docker exec -i archon python -m src.mcp_server.mcp_server_stdio
+```
+
+- `--scope user` makes it available in all projects
+- Use `--scope project` for per-project configuration
+- Full restart of Claude Code required after adding
+
+### Lessons Learned (2026-03-23)
+
+1. **CLI-first for Claude Code**: Manual JSON editing doesn't work reliably. Always use `claude mcp add`.
+
+2. **Multiple config locations**: Old SSE/HTTP configs accumulated in many locations:
+   - `~/.config/claude/mcp-config.json`
+   - `~/.config/claude/mcp_config.json`
+   - `~/.claude-code/mcp-config.json`
+   - `~/.octofriend/mcp.json`
+   - Project-level `.mcp.json` files
+   - `~/.claude.json` (project entries)
+
+3. **Scope matters**: Use `--scope user` for global availability, `--scope project` for per-project.
+
+4. **Full restart required**: IDEs need complete restart to pick up new MCP configuration.
+
 ## Related Decisions
 
 - ADR-004: Single-Container Architecture

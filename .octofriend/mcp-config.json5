@@ -3,19 +3,11 @@
 
 {
   mcpServers: {
-    // Archon Codebase Intelligence (Unified Server)
+    // Archon Codebase Intelligence - STDIO transport (ADR-003)
     archon: {
-      // Unified server runs on port 8181 with MCP at /mcp
-      url: "http://localhost:8181/mcp",
-      
-      // Old separate MCP server (port 8051) is deprecated
-      // Use unified server for all operations
+      command: "docker",
+      args: ["exec", "-i", "archon", "python", "-m", "src.mcp_server.mcp_server_stdio"],
+      type: "stdio",
     },
-    
-    // Additional MCP servers can be added here
-    // filesystem: {
-    //   command: "npx",
-    //   args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/zebastjan/dev"],
-    // },
   },
 }
