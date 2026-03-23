@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "archon-codebase": {
-      "url": "http://localhost:8181/mcp",
+      "url": "http://localhost:8051/mcp",
       "type": "sse",
-      "description": "Archon Codebase Intelligence - unified server on port 8181"
+      "description": "Archon Codebase Intelligence - MCP server on port 8051"
     }
   }
 }

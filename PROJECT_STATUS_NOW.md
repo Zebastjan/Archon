@@ -81,7 +81,12 @@
   - `compare-branches`: Compare entities between branches
   - `when-added`: Find when entity was first added
 - ✅ Change detection: added, modified, deleted tracking
-- Next: MCP tool integration for knowledge graph queries
+- ✅ **MCP tool integration** (4 new tools):
+  - `codebase_entity_evolution` - Track entity across commits
+  - `codebase_commits` - List commits with changes
+  - `codebase_compare_branches` - Compare branches
+  - `codebase_when_added` - Find first appearance
+- ✅ **Skills documentation** for all IDEs (Claude Code, OpenCode, Windsurf, OctoFriend)
 
 ### 4. Code Repository Lifecycle
 

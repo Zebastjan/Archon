@@ -270,17 +270,53 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             service = CodeEntityService()
             embedding_service = EmbeddingService()
 
-            # Generate embedding for the query
-            query_embedding = await embedding_service.generate(text=query)
+            # CRITICAL: Determine which embedding model was used for this repo
+            # We must use the SAME model for the query to get valid results!
+            from src.server.services.database.db_connector import get_database_connector, initialize_database
+            await initialize_database()
+            db = get_database_connector()
+            await db.initialize()
+
+            # Get the embedding model used for this repo
+            repo_model_result = await db.fetchrow(
+                """
+                SELECT embedding_model, embedding_dimension
+                FROM archon_code_entities
+                WHERE repo_id = $1 AND embedding_model IS NOT NULL
+                LIMIT 1
+                """,
+                repo_id
+            )
+
+            if not repo_model_result:
+                return {
+                    "success": False,
+                    "error": f"No embeddings found for repository {repo_id}. Run embeddings first.",
+                    "query": query,
+                }
+
+            repo_model = repo_model_result["embedding_model"]
+            repo_dimension = repo_model_result["embedding_dimension"]
+
+            # Generate embedding for the query using THE SAME MODEL as the repo
+            query_embedding = await embedding_service.generate(text=query, model=repo_model)
 
             if not query_embedding:
                 return {
                     "success": False,
-                    "error": "Failed to generate embedding for query",
+                    "error": f"Failed to generate embedding with model {repo_model}",
                     "query": query,
                 }
 
             embedding_dimension = len(query_embedding)
+
+            # Verify dimension matches (safety check)
+            if embedding_dimension != repo_dimension:
+                return {
+                    "success": False,
+                    "error": f"Dimension mismatch: query={embedding_dimension}, repo={repo_dimension}, model={repo_model}",
+                    "query": query,
+                }
 
             # Search for similar entities
             entities = await service.search_entities(

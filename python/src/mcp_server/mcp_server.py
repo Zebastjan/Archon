@@ -755,7 +755,7 @@ def main():
         mcp_logger.info("🔥 Logfire initialized for MCP server")
         mcp_logger.info(f"🌟 Starting MCP server - host={server_host}, port={server_port}")
 
-        mcp.run(transport="streamable-http")  # HTTP transport (not SSE)
+        mcp.run(transport="sse")  # SSE transport for Claude Code
 
     except Exception as e:
         mcp_logger.error(f"💥 Fatal error in main - error={str(e)}, error_type={type(e).__name__}")

@@ -14,6 +14,7 @@ Batched, optimized skills for effective use of Archon MCP Code Intelligence tool
 | `impact-analysis` | Assessing change scope | 4 | 1 locate + 1 batch(3) |
 | `security-audit` | Security review | 2 | Single batch(2) |
 | `semantic-code-search` | Finding code by behavior | 1 | Single call |
+| `knowledge-graph-query` | Code evolution/branch compare | 1-2 | Sequential (depends on user) |
 
 ## Skill Details
 
@@ -81,6 +82,19 @@ Batch: orchestrated_repo_health_check(focus="security") + db_security_audit
 codebase_search_by_semantics(repo_id, query="2-5 keywords", top_k=10)
 ```
 **Best For**: Finding code by behavior, not name
+
+#### knowledge-graph-query
+**Files**: 1-2 calls depending on workflow
+```
+Single: codebase_entity_evolution | codebase_commits | codebase_compare_branches | codebase_when_added
+Sequential: Query → Review → Optional deep dive
+```
+**Best For**: Tracking code evolution, comparing branches, finding when code was added
+**Tools**:
+- `codebase_entity_evolution`: Track entity versions across commits
+- `codebase_commits`: List commits with change summaries  
+- `codebase_compare_branches`: Compare entities between branches
+- `codebase_when_added`: Find first appearance of entity
 
 ## Batching Rules
 

@@ -3,7 +3,7 @@
   "mcp": {
     "archon-codebase": {
       "type": "remote",
-      "url": "http://localhost:8181/mcp",
+      "url": "http://localhost:8051/mcp",
       "enabled": true
     }
   }

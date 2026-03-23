@@ -495,9 +495,12 @@ class CodeEntityService:
                 3072: "embedding_3072",
             }.get(embedding_dimension, "embedding_1536")
 
+            # Convert embedding list to PostgreSQL vector literal string
+            embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
+
             query = f"""
-                SELECT 
-                    id, repo_id, file_path, entity_type, name, 
+                SELECT
+                    id, repo_id, file_path, entity_type, name,
                     signature, docstring, source_code, language, commit_sha,
                     1 - ({embedding_column} <=> $1::vector) AS similarity
                 FROM archon_code_entities
@@ -507,7 +510,7 @@ class CodeEntityService:
                 LIMIT $3
             """
 
-            records = await db.fetch(query, query_embedding, repo_filter, match_count)
+            records = await db.fetch(query, embedding_str, repo_filter, match_count)
 
             return [dict(r) for r in records]
 
