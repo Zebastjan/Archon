@@ -11,6 +11,7 @@ All architectural decisions must be documented as ADRs. See [CLAUDE.md](../CLAUD
 - [ADR-003: MCP Server Consolidation to STDIO Transport](./ADRs/003-mcp-server-consolidation.md) (Accepted)
 - [ADR-004: Single-Container Architecture](./ADRs/004-single-container-architecture.md) (Accepted)
 - [ADR-005: Code Intelligence with BGE-M3 Embeddings](./ADRs/005-code-intelligence-bge-m3.md) (Accepted)
+- [ADR-006: Documentation Cleanup and Archive Strategy](./ADRs/006-documentation-cleanup.md) (Accepted)
 
 ## Documentation Standards
 
