@@ -65,7 +65,6 @@ logger.info("✓ Using default MCP instructions")
 logger.info("Creating FastMCP server instance for stdio...")
 mcp = FastMCP(
     "archon-mcp-server-stdio",
-    description="Archon MCP Server (STDIO transport for OctoFriend)",
     instructions=MCP_INSTRUCTIONS,
 )
 logger.info("✓ FastMCP server created")
