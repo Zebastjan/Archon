@@ -88,7 +88,7 @@ This new vision for Archon replaces the old one (the agenteer). Archon used to b
    - For cloud Supabase: They recently introduced a new type of service role key but use the legacy one (the longer one).
    - For local Supabase: Set `SUPABASE_URL` to http://host.docker.internal:8000 (unless you have an IP address set up). To get `SUPABASE_SERVICE_KEY` run `supabase status -o env`.
 
-3. **Database Setup**: In your [Supabase project](https://supabase.com/dashboard) SQL Editor, copy, paste, and execute the contents of `migration/complete_setup.sql`
+3. **Database Setup**: Run the database migrations (PostgreSQL)
 
 4. **Start Services** (choose one):
 
@@ -98,10 +98,8 @@ This new vision for Archon replaces the old one (the agenteer). Archon used to b
    docker compose up --build -d
    ```
 
-   This starts all core microservices in Docker:
-   - **Server**: Core API and business logic (Port: 8181)
-   - **MCP Server**: Protocol interface for AI clients (Port: 8051)
-   - **UI**: Web interface (Port: 3737)
+   This starts Archon in single-container mode:
+   - **Server**: Core API, MCP tools, and embedded PostgreSQL (Port: 8181)
 
    Ports are configurable in your .env as well!
 
@@ -206,11 +204,8 @@ The reset script safely removes all tables, functions, triggers, and policies wi
 
 | Service                    | Container Name             | Default URL           | Purpose                                    |
 | -------------------------- | -------------------------- | --------------------- | ------------------------------------------ |
-| **Web Interface**          | archon-ui                  | http://localhost:3737 | Main dashboard and controls                |
-| **API Service**            | archon-server              | http://localhost:8181 | Web crawling, document processing          |
-| **MCP Server**             | archon-mcp                 | http://localhost:8051 | Model Context Protocol interface           |
-| **Agents Service**         | archon-agents              | http://localhost:8052 | AI/ML operations, reranking                |
-| **Agent Work Orders** *(optional)* | archon-agent-work-orders | http://localhost:8053 | Workflow execution with Claude Code CLI    |  
+| **Web Interface**          | archon                     | http://localhost:3737 | Main dashboard and controls                |
+| **API Server**             | archon                     | http://localhost:8181 | API, MCP tools, and embedded PostgreSQL    |  
 
 ## Upgrading
 
@@ -225,14 +220,10 @@ To upgrade Archon to the latest version:
    ```bash
    docker compose up -d --build
    ```
-   This rebuilds containers with the latest code and restarts all services.
+   This starts Archon in single-container mode with embedded PostgreSQL.
 
 3. **Check for database migrations**:
-   - Open the Archon settings in your browser: [http://localhost:3737/settings](http://localhost:3737/settings)
-   - Navigate to the **Database Migrations** section
-   - If there are pending migrations, the UI will display them with clear instructions
-   - Click on each migration to view and copy the SQL
-   - Run the SQL scripts in your Supabase SQL editor in the order shown
+   - Run the SQL migration scripts in your database.
 
 ## What's Included
 
@@ -268,63 +259,71 @@ To upgrade Archon to the latest version:
 
 ## Architecture
 
-### Microservices Structure
+### Single-Container Architecture
 
-Archon uses true microservices architecture with clear separation of concerns:
+Archon uses a single-container architecture with embedded PostgreSQL:
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend UI   │    │  Server (API)   │    │   MCP Server    │    │ Agents Service  │
-│                 │    │                 │    │                 │    │                 │
-│  React + Vite   │◄──►│    FastAPI +    │◄──►│    Lightweight  │◄──►│   PydanticAI    │
-│  Port 3737      │    │    SocketIO     │    │    HTTP Wrapper │    │   Port 8052     │
-│                 │    │    Port 8181    │    │    Port 8051    │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                        │                        │                        │
-         └────────────────────────┼────────────────────────┼────────────────────────┘
-                                  │                        │
-                         ┌─────────────────┐               │
-                         │    Database     │               │
-                         │                 │               │
-                         │    Supabase     │◄──────────────┘
-                         │    PostgreSQL   │
-                         │    PGVector     │
-                         └─────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Docker Container                     │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │              Archon Server (port 8181)          │   │
+│  │                                                 │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │   │
+│  │  │  FastAPI    │  │  MCP Server │  │  Pydantic│ │   │
+│  │  │  (API)      │  │  (stdio)    │  │  Agents │ │   │
+│  │  └─────────────┘  └─────────────┘  └─────────┘ │   │
+│  └─────────────────────────────────────────────────┘   │
+│                          │                              │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │              PostgreSQL (embedded)              │   │
+│  │              - App data, code entities          │   │
+│  │              - Knowledge base, vectors          │   │
+│  └─────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
 ```
+
+### MCP Access
+
+MCP tools are accessed via **stdio transport** (not network):
+
+```bash
+docker exec -i archon python -m src.mcp_server.mcp_server_stdio
+```
+
+All IDEs (Windsurf, ClaudeCode, OctoFriend, OpenCode) use this pattern.
 
 ### Service Responsibilities
 
-| Service                  | Location                       | Purpose                          | Key Features                                                       |
-| ------------------------ | ------------------------------ | -------------------------------- | ------------------------------------------------------------------ |
-| **Frontend**             | `archon-ui-main/`              | Web interface and dashboard      | React, TypeScript, TailwindCSS, Socket.IO client                   |
-| **Server**               | `python/src/server/`           | Core business logic and APIs     | FastAPI, service layer, Socket.IO broadcasts, all ML/AI operations |
-| **MCP Server**           | `python/src/mcp/`              | MCP protocol interface           | Lightweight HTTP wrapper, MCP tools, session management            |
-| **Agents**               | `python/src/agents/`           | PydanticAI agent hosting         | Document and RAG agents, streaming responses                       |
-| **Agent Work Orders** *(optional)* | `python/src/agent_work_orders/` | Workflow execution engine | Claude Code CLI automation, repository management, SSE updates |
+| Component              | Location                       | Purpose                          |
+| ---------------------- | ------------------------------ | -------------------------------- |
+| **Frontend**           | `archon-ui-main/`              | Web interface and dashboard      |
+| **Server**             | `python/src/server/`           | Core APIs, MCP tools, agents     |
+| **MCP Server**         | `python/src/mcp_server/`       | MCP protocol (stdio transport)   |
+| **Database**           | Embedded in container          | PostgreSQL + pgvector            |
 
 ### Communication Patterns
 
-- **HTTP-based**: All inter-service communication uses HTTP APIs
+- **HTTP**: API requests to port 8181
 - **Socket.IO**: Real-time updates from Server to Frontend
-- **MCP Protocol**: AI clients connect to MCP Server via SSE or stdio
-- **No Direct Imports**: Services are truly independent with no shared code dependencies
+- **MCP Protocol**: AI clients connect via stdio (docker exec)
+- **Direct Imports**: All components run in same process
 
 ### Key Architectural Benefits
 
-- **Lightweight Containers**: Each service contains only required dependencies
-- **Independent Scaling**: Services can be scaled independently based on load
-- **Development Flexibility**: Teams can work on different services without conflicts
-- **Technology Diversity**: Each service uses the best tools for its specific purpose
+- **Simple Deployment**: Single container to manage
+- **Lower Overhead**: No inter-service HTTP calls
+- **Easier Debugging**: Single log stream, one stack trace
+- **Direct Imports**: Full type safety, no serialization
+- **Local-First**: Designed for local development and use
 
 ## 🔧 Configuring Custom Ports & Hostname
 
-By default, Archon services run on the following ports:
+By default, Archon runs on the following ports:
 
-- **archon-ui**: 3737
-- **archon-server**: 8181
-- **archon-mcp**: 8051
-- **archon-agents**: 8052 (optional)
-- **archon-agent-work-orders**: 8053 (optional)
+- **archon (UI + API)**: 8181 (API), 3737 (UI - if enabled)
+- **Database**: Embedded in container (no external port)
 
 ### Changing Ports
 
@@ -332,18 +331,7 @@ To use custom ports, add these variables to your `.env` file:
 
 ```bash
 # Service Ports Configuration
-ARCHON_UI_PORT=3737
 ARCHON_SERVER_PORT=8181
-ARCHON_MCP_PORT=8051
-ARCHON_AGENTS_PORT=8052
-AGENT_WORK_ORDERS_PORT=8053
-```
-
-Example: Running on different ports:
-
-```bash
-ARCHON_SERVER_PORT=8282
-ARCHON_MCP_PORT=8151
 ```
 
 ### Configuring Hostname
@@ -357,20 +345,17 @@ HOST=localhost  # Default
 # Examples of custom hostnames:
 HOST=192.168.1.100     # Use specific IP address
 HOST=archon.local      # Use custom domain
-HOST=myserver.com      # Use public domain
 ```
 
 This is useful when:
-
 - Running Archon on a different machine and accessing it remotely
 - Using a custom domain name for your installation
 - Deploying in a network environment where `localhost` isn't accessible
 
 After changing hostname or ports:
 
-1. Restart Docker containers: `docker compose down && docker compose --profile full up -d`
-2. Access the UI at: `http://${HOST}:${ARCHON_UI_PORT}`
-3. Update your AI client configuration with the new hostname and MCP port
+1. Restart Docker containers: `docker compose down && docker compose up -d`
+2. Access the API at: `http://${HOST}:${ARCHON_SERVER_PORT}`
 
 ## 🔧 Development
 

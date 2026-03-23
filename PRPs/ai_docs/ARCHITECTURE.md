@@ -2,13 +2,13 @@
 
 ## Overview
 
-Archon is a knowledge management system with AI capabilities, built as a monolithic application with vertical slice organization. The frontend uses React with TanStack Query, while the backend runs FastAPI with multiple service components.
+Archon is a **code intelligence platform** with MCP tools for AI agents. It uses a single-container architecture with embedded PostgreSQL.
 
 ## Tech Stack
 
 **Frontend**: React 18, TypeScript 5, TanStack Query v5, Tailwind CSS, Vite
-**Backend**: Python 3.12, FastAPI, Supabase, PydanticAI
-**Infrastructure**: Docker, PostgreSQL + pgvector
+**Backend**: Python 3.12, FastAPI, PostgreSQL + pgvector
+**Infrastructure**: Docker (single container)
 
 ## Directory Structure
 
@@ -59,18 +59,12 @@ components/          # Legacy components (migrating)
 
 ### MCP Server
 **Location**: `python/src/mcp_server/`
-**Purpose**: Exposes tools to AI IDEs (Cursor, Windsurf)
-**Port**: 8051
+**Purpose**: Exposes tools to AI IDEs (Windsurf, ClaudeCode, OctoFriend)
+**Access**: STDIO via `docker exec` (not network)
 
 ### AI Agents
 **Location**: `python/src/agents/`
 **Purpose**: Document processing, code analysis, project generation
-**Port**: 8052
-
-### Agent Work Orders (Optional)
-**Location**: `python/src/agent_work_orders/`
-**Purpose**: Workflow execution engine using Claude Code CLI
-**Port**: 8053
 
 ## API Structure
 

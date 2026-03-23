@@ -1,6 +1,27 @@
 # CLAUDE.md
 
-Archon: AI agent framework built on Pydantic AI with PostgreSQL backend.
+Archon: Code intelligence platform with MCP tools for AI agents.
+
+## Project Goals
+
+- **Code Intelligence**: Rich understanding of codebases through embeddings and knowledge graphs
+- **MCP Tools**: Enable AI agents to search, analyze, and reason about code
+- **Local-First**: Single-container design for local development
+
+## Architecture
+
+- **Single Container**: All services (API, MCP, Agents, Database) run in one container
+- **MCP Transport**: STDIO (not HTTP/SSE) - accessed via `docker exec`
+- **Database**: PostgreSQL with pgvector (embedded in container)
+- **Port**: 8181 (API server), MCP via stdio
+
+### MCP Server Access
+
+```bash
+docker exec -i archon python -m src.mcp_server.mcp_server_stdio
+```
+
+All IDEs use stdio transport with this pattern.
 
 ## Task Execution Protocol (CRITICAL)
 
@@ -55,6 +76,23 @@ Archon: AI agent framework built on Pydantic AI with PostgreSQL backend.
 - Core patterns: `@PRPs/ai_docs/ARCHITECTURE.md`
 - Data fetching: `@PRPs/ai_docs/DATA_FETCHING_ARCHITECTURE.md`
 - Service pattern: `python/src/server/api_routes/` → `services/` → Database
+
+## ADR Process
+
+All architectural decisions must be documented as ADRs in `docs/ADRs/`:
+
+1. **Status**: Proposed → Accepted → Deprecated
+2. **Required sections**: Context, Decision, Consequences
+3. **Review**: During PR review for major changes
+4. **Examples**: See `docs/ADRs/003-*.md` for recent decisions
+
+## Documentation Standards
+
+- No port 8051 references - MCP is stdio only
+- Single-container architecture (not microservices)
+- PostgreSQL is primary (Supabase is optional/legacy)
+- Use ADRs for architectural decisions
+- Keep root docs focused, detailed docs in `docs/`
 
 ## Git & Branch Discipline
 
