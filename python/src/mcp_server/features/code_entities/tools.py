@@ -120,13 +120,13 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
 
             # Get entity from database
             entity = await service.get_entity_by_id(entity_id)
-            
+
             if not entity:
                 return {
                     "success": False,
                     "error": f"Entity not found: {entity_id}",
                 }
-            
+
             # Build response
             result = {
                 "id": entity["id"],
@@ -141,11 +141,11 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
                 "commit_sha": entity.get("commit_sha"),
                 "repo_id": entity.get("repo_id"),
             }
-            
+
             # Include source code if requested
             if include_source:
                 result["source_code"] = entity.get("source_code")
-            
+
             return {
                 "success": True,
                 "entity": result,
@@ -269,23 +269,19 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         try:
             service = CodeEntityService()
             embedding_service = EmbeddingService()
-            
+
             # Generate embedding for the query
-            embedding_result = await embedding_service.get_embeddings(
-                texts=[query],
-                model_preference=None,  # Use default
-            )
-            
-            if not embedding_result.success or not embedding_result.embeddings:
+            query_embedding = await embedding_service.generate(text=query)
+
+            if not query_embedding:
                 return {
                     "success": False,
-                    "error": f"Failed to generate embedding: {embedding_result.error}",
+                    "error": "Failed to generate embedding for query",
                     "query": query,
                 }
-            
-            query_embedding = embedding_result.embeddings[0]
+
             embedding_dimension = len(query_embedding)
-            
+
             # Search for similar entities
             entities = await service.search_entities(
                 query_embedding=query_embedding,
@@ -293,16 +289,16 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
                 match_count=top_k * 2,  # Fetch extra for filtering
                 repo_filter=repo_id,
             )
-            
+
             # Apply filters
             if entity_type:
                 entities = [e for e in entities if e.get("entity_type") == entity_type]
             if language:
                 entities = [e for e in entities if e.get("language") == language]
-            
+
             # Limit results
             entities = entities[:top_k]
-            
+
             return {
                 "success": True,
                 "query": query,
@@ -360,13 +356,13 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         """
         try:
             service = CodeEntityService()
-            
+
             entities = await service.list_entities_in_file(
                 repo_id=repo_id,
                 file_path=file_path,
                 entity_type=entity_type,
             )
-            
+
             return {
                 "success": True,
                 "repo_id": repo_id,
@@ -415,15 +411,15 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         """
         try:
             service = CodeEntityService()
-            
+
             stats = await service.get_repository_stats(repo_id)
-            
+
             if not stats:
                 return {
                     "success": False,
                     "error": f"Failed to get statistics for repository: {repo_id}",
                 }
-            
+
             return {
                 "success": True,
                 "stats": stats,
@@ -431,6 +427,345 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.exception("codebase_get_repository_stats_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def codebase_entity_evolution(
+        repo_id: str,
+        entity_name: str,
+        entity_type: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Track an entity's evolution across commits.
+
+        Shows all versions of an entity (function, class, etc.) across
+        different commits, revealing how the code has changed over time.
+
+        Args:
+            repo_id: Repository UUID
+            entity_name: Name of the entity to track
+            entity_type: Optional filter by entity type (function, class, method, etc.)
+            limit: Maximum number of versions to return (default 10)
+
+        Returns:
+            Dict with entity versions across commits
+
+        Example:
+            >>> await codebase_entity_evolution(
+            ...     repo_id="uuid",
+            ...     entity_name="authenticate_user",
+            ...     entity_type="function"
+            ... )
+        """
+        try:
+            from src.server.services.database.db_connector import get_database_connector
+
+            db = get_database_connector()
+
+            # Build query
+            query = """
+                SELECT 
+                    e.name,
+                    e.entity_type,
+                    e.file_path,
+                    e.line_start,
+                    e.line_end,
+                    e.commit_sha,
+                    e.parent_commit_sha,
+                    e.branch_name,
+                    e.change_type,
+                    e.created_at,
+                    e.source_code
+                FROM archon_code_entities e
+                JOIN archon_code_repos r ON e.repo_id = r.id
+                WHERE r.id = $1
+                  AND e.name = $2
+            """
+
+            params = [repo_id, entity_name]
+
+            if entity_type:
+                query += " AND e.entity_type = $3"
+                params.append(entity_type)
+
+            query += " ORDER BY e.created_at DESC LIMIT $" + str(len(params) + 1)
+            params.append(limit)
+
+            entities = await db.fetch(query, *params)
+
+            return {
+                "success": True,
+                "entity_name": entity_name,
+                "count": len(entities),
+                "versions": [
+                    {
+                        "name": e["name"],
+                        "entity_type": e["entity_type"],
+                        "file_path": e["file_path"],
+                        "lines": f"{e['line_start']}-{e['line_end']}",
+                        "commit_sha": e["commit_sha"][:8] if e["commit_sha"] else None,
+                        "branch": e["branch_name"],
+                        "change_type": e["change_type"] or "unknown",
+                        "created_at": str(e["created_at"]),
+                    }
+                    for e in entities
+                ],
+            }
+
+        except Exception as e:
+            logger.exception("codebase_entity_evolution_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+                "entity_name": entity_name,
+            }
+
+    @mcp.tool()
+    async def codebase_commits(
+        repo_id: str,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        List commits with code changes.
+
+        Returns commits with summaries of what changed:
+        number of entities added, modified, deleted.
+
+        Args:
+            repo_id: Repository UUID
+            limit: Maximum number of commits to return (default 20)
+
+        Returns:
+            Dict with commits and change summaries
+
+        Example:
+            >>> await codebase_commits(repo_id="uuid", limit=10)
+        """
+        try:
+            from src.server.services.database.db_connector import get_database_connector
+
+            db = get_database_connector()
+
+            commits = await db.fetch(
+                """
+                SELECT 
+                    e.commit_sha,
+                    e.branch_name,
+                    COUNT(*) as entity_count,
+                    COUNT(DISTINCT e.file_path) as files_changed,
+                    COUNT(*) FILTER (WHERE e.change_type = 'added') as added,
+                    COUNT(*) FILTER (WHERE e.change_type = 'modified') as modified,
+                    COUNT(*) FILTER (WHERE e.change_type = 'deleted') as deleted
+                FROM archon_code_entities e
+                JOIN archon_code_repos r ON e.repo_id = r.id
+                WHERE r.id = $1
+                GROUP BY e.commit_sha, e.branch_name
+                ORDER BY MAX(e.created_at) DESC
+                LIMIT $2
+                """,
+                repo_id,
+                limit,
+            )
+
+            return {
+                "success": True,
+                "count": len(commits),
+                "commits": [
+                    {
+                        "commit_sha": c["commit_sha"][:8] if c["commit_sha"] else "unknown",
+                        "branch": c["branch_name"],
+                        "entities": c["entity_count"],
+                        "files_changed": c["files_changed"],
+                        "added": c["added"] or 0,
+                        "modified": c["modified"] or 0,
+                        "deleted": c["deleted"] or 0,
+                    }
+                    for c in commits
+                ],
+            }
+
+        except Exception as e:
+            logger.exception("codebase_commits_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def codebase_compare_branches(
+        repo_id: str,
+        branch1: str,
+        branch2: str,
+    ) -> dict[str, Any]:
+        """
+        Compare code entities between two branches.
+
+        Shows entities unique to each branch and entities that differ
+        between branches.
+
+        Args:
+            repo_id: Repository UUID
+            branch1: First branch name (e.g., "main")
+            branch2: Second branch name (e.g., "feature/auth")
+
+        Returns:
+            Dict with comparison results
+
+        Example:
+            >>> await codebase_compare_branches(
+            ...     repo_id="uuid",
+            ...     branch1="main",
+            ...     branch2="feature/auth"
+            ... )
+        """
+        try:
+            from src.server.services.database.db_connector import get_database_connector
+
+            db = get_database_connector()
+
+            # Get entities unique to branch1
+            branch1_only = await db.fetch(
+                """
+                SELECT DISTINCT e.name, e.entity_type, e.file_path
+                FROM archon_code_entities e
+                JOIN archon_code_repos r ON e.repo_id = r.id
+                WHERE r.id = $1
+                  AND e.branch_name = $2
+                  AND e.entity_identity NOT IN (
+                      SELECT entity_identity 
+                      FROM archon_code_entities e2
+                      JOIN archon_code_repos r2 ON e2.repo_id = r2.id
+                      WHERE r2.id = $1 AND e2.branch_name = $3
+                  )
+                ORDER BY e.file_path, e.name
+                LIMIT 50
+                """,
+                repo_id,
+                branch1,
+                branch2,
+            )
+
+            # Get entities unique to branch2
+            branch2_only = await db.fetch(
+                """
+                SELECT DISTINCT e.name, e.entity_type, e.file_path
+                FROM archon_code_entities e
+                JOIN archon_code_repos r ON e.repo_id = r.id
+                WHERE r.id = $1
+                  AND e.branch_name = $2
+                  AND e.entity_identity NOT IN (
+                      SELECT entity_identity 
+                      FROM archon_code_entities e2
+                      JOIN archon_code_repos r2 ON e2.repo_id = r2.id
+                      WHERE r2.id = $1 AND e2.branch_name = $3
+                  )
+                ORDER BY e.file_path, e.name
+                LIMIT 50
+                """,
+                repo_id,
+                branch2,
+                branch1,
+            )
+
+            return {
+                "success": True,
+                "branch1": branch1,
+                "branch2": branch2,
+                "only_in_branch1": {
+                    "count": len(branch1_only),
+                    "entities": [
+                        {"name": e["name"], "type": e["entity_type"], "file": e["file_path"]}
+                        for e in branch1_only[:20]  # Limit to 20
+                    ],
+                },
+                "only_in_branch2": {
+                    "count": len(branch2_only),
+                    "entities": [
+                        {"name": e["name"], "type": e["entity_type"], "file": e["file_path"]}
+                        for e in branch2_only[:20]  # Limit to 20
+                    ],
+                },
+            }
+
+        except Exception as e:
+            logger.exception("codebase_compare_branches_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def codebase_when_added(
+        repo_id: str,
+        entity_name: str,
+    ) -> dict[str, Any]:
+        """
+        Find when an entity was first added to the codebase.
+
+        Returns the first commit where the entity appeared,
+        including commit SHA, branch, and date.
+
+        Args:
+            repo_id: Repository UUID
+            entity_name: Name of the entity
+
+        Returns:
+            Dict with first appearance information
+
+        Example:
+            >>> await codebase_when_added(
+            ...     repo_id="uuid",
+            ...     entity_name="UserService"
+            ... )
+        """
+        try:
+            from src.server.services.database.db_connector import get_database_connector
+
+            db = get_database_connector()
+
+            result = await db.fetchrow(
+                """
+                SELECT 
+                    e.name,
+                    e.entity_type,
+                    e.file_path,
+                    e.commit_sha,
+                    e.branch_name,
+                    MIN(e.created_at) as first_seen
+                FROM archon_code_entities e
+                JOIN archon_code_repos r ON e.repo_id = r.id
+                WHERE r.id = $1
+                  AND e.name = $2
+                GROUP BY e.name, e.entity_type, e.file_path, e.commit_sha, e.branch_name
+                ORDER BY first_seen ASC
+                LIMIT 1
+                """,
+                repo_id,
+                entity_name,
+            )
+
+            if not result:
+                return {
+                    "success": False,
+                    "error": f"Entity '{entity_name}' not found",
+                }
+
+            return {
+                "success": True,
+                "entity_name": result["name"],
+                "entity_type": result["entity_type"],
+                "file_path": result["file_path"],
+                "commit_sha": result["commit_sha"][:8] if result["commit_sha"] else None,
+                "branch": result["branch_name"],
+                "first_seen": str(result["first_seen"]),
+            }
+
+        except Exception as e:
+            logger.exception("codebase_when_added_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),
