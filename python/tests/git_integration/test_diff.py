@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from src.server.services.git.git_diff_service import GitDiffService
 from src.server.services.git.git_repository_service import GitRepositoryService
 from tests.git_integration.test_git_repository_integration import (

@@ -7,6 +7,8 @@ import pytest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+pytestmark = pytest.mark.integration
+
 from src.mcp_server.features.code_audit.code_audit_tools import register_code_audit_tools
 from src.server.services.code_metrics_service import (
     CodeMetricsService,

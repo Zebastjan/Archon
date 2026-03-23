@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
 from uuid import uuid4
 
+pytestmark = pytest.mark.integration
+
 from src.mcp_server.features.worktree.worktree_tools import register_worktree_tools
 from src.server.services.worktree_service import (
     WorktreeService, 

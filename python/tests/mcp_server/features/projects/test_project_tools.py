@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.server.fastmcp import Context
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def mock_mcp():

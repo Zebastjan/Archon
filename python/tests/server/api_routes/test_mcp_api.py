@@ -8,11 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.server.api_routes.mcp_api import (
-    get_container_status,
-    get_container_status_docker,
-    get_container_status_http,
-)
+from src.server.api_routes.mcp_api import router
 from src.server.config.config import MCPMonitoringConfig
 
 

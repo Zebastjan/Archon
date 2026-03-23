@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from src.server.services.code_entity_service import CodeEntityService
 from src.server.services.languages import CodeEntity, CodeRelationship
 

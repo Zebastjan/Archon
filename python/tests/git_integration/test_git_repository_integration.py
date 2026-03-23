@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from src.server.services.git.git_repository_service import GitRepositoryService
 
 

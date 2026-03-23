@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from src.server.services.git.git_repository_service import (
     GitFileNotFoundError,
     GitRepositoryService,
