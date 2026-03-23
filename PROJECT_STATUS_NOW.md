@@ -69,6 +69,20 @@
 **Relationship Types**:
 - CALLS, INHERITS, IMPORTS, DEFINES
 
+**Cross-Commit Knowledge Graph** (NEW - March 2026):
+- ✅ Schema supports: `commit_sha`, `branch_name`, `parent_commit_sha`, `entity_identity`, `change_type`
+- ✅ Indexes on: (repo_id, commit_sha), (repo_id, branch_name), entity_identity
+- ✅ Automatic commit tracking on indexing
+- ✅ Branch-aware entity storage
+- ✅ Multi-commit indexing: `scripts/index_commits.py --repo archon --commits 10`
+- ✅ Cross-commit query tools: `scripts/kg_query.py`
+  - `evolution`: Show entity versions across commits
+  - `commits`: List commits with change summaries
+  - `compare-branches`: Compare entities between branches
+  - `when-added`: Find when entity was first added
+- ✅ Change detection: added, modified, deleted tracking
+- Next: MCP tool integration for knowledge graph queries
+
 ### 4. Code Repository Lifecycle
 
 **MCP Tools**:
@@ -347,6 +361,128 @@ curl http://localhost:8181/health
 await code_repos_list()
 
 # 4. Check audit context
+```
+
+---
+
+## Repository Indexing Workflow
+
+### Commands
+
+| Command | Purpose |
+|---------|---------|
+| `make index-repos` | Index all 4 repos (archon, octofriend, Omnibus, syllablaze) |
+| `make index-commits REPO=archon COMMITS=10` | Index multiple commits for knowledge graph |
+| `make deploy` | Rebuild container + verify health |
+| `git commit` | Auto-triggers incremental reindex (via git hooks) |
+
+### Knowledge Graph Queries
+
+Available commands for cross-commit/branch analysis:
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `make kg-evolution` | Show entity evolution | `make kg-evolution REPO=archon ENTITY=load_config` |
+| `make kg-commits` | List commits with changes | `make kg-commits REPO=archon` |
+| `make kg-compare` | Compare branches | `make kg-compare REPO=archon BRANCH1=main BRANCH2=feature/xyz` |
+| `make kg-when` | Find when entity was added | `make kg-when REPO=archon ENTITY=SomeClass` |
+
+Or use the scripts directly:
+```bash
+# Index last 10 commits
+docker exec archon python /archon/scripts/index_commits.py --repo archon --commits 10
+
+# Query entity evolution
+docker exec archon python /archon/scripts/kg_query.py --repo archon evolution --entity load_config
+
+# List all commits with change summaries
+docker exec archon python /archon/scripts/kg_query.py --repo archon commits
+
+# Compare two branches
+docker exec archon python /archon/scripts/kg_query.py --repo archon compare-branches main feature/xyz
+```
+
+### Repositories
+
+**Multi-Commit Knowledge Graph** (as of March 2026):
+
+| Repo | Commits | Entities | Language | Status |
+|------|---------|----------|----------|--------|
+| archon | 3 | 4,698 | Python | ✅ Multi-commit indexed |
+| syllablaze | 7 | 1,755 | Python | ✅ Multi-commit indexed |
+| octofriend | 7 | 1,067 | TypeScript | ✅ Multi-commit indexed |
+| Omnibus | 9 | 998 | Nim | ✅ Multi-commit indexed |
+
+**Total**: 26 commits, 8,518 entities tracked
+**Embeddings**: 339/8,518 generated (4% complete - generation in progress)
+
+### Embeddings Generation ✅
+
+**Status**: ✅ FULLY WORKING - BGE-M3 embeddings generating successfully
+
+**Configuration**:
+- Ollama configured to accept connections from Docker bridge (172.17.0.1:11434)
+- Container uses `OLLAMA_URL=http://172.17.0.1:11434`
+- Secure: Ollama not exposed to network, only localhost + Docker
+
+**Generate embeddings**:
+```bash
+# Generate for all repos
+make generate-embeddings
+
+# Generate for specific repo
+make generate-embeddings REPO=archon
+
+# Generate with larger batch size
+make generate-embeddings BATCH_SIZE=100
+
+# Or run directly in container
+docker exec archon python /archon/scripts/generate_embeddings.py --batch-size 50
+```
+
+**Performance**: ~33 entities/second with BGE-M3
+
+**Auto-generation on commit**: ✅ Git hooks now trigger embedding generation automatically after each commit
+
+### Auto-Reindex on Commit
+
+Git hooks are set up in each repo to auto-index AND auto-generate embeddings on `git commit`:
+- **archon**: ✅ Hook installed with auto-embeddings
+- **syllablaze**: ✅ Hook installed with auto-embeddings
+- **octofriend**: ✅ Using shared hooks with auto-embeddings
+- **Omnibus**: ✅ Using shared hooks with auto-embeddings
+
+**What happens on commit**:
+1. Code changes are extracted and indexed with commit metadata
+2. New entities automatically get BGE-M3 embeddings generated
+3. Background process runs so commit is not blocked
+
+**Hook location**: `/home/zebastjan/dev/archon/scripts/git-hooks/post-commit`
+
+**Setup** (already done):
+```bash
+# Configure git hooks for a repo
+cd /path/to/repo
+git config core.hooksPath /home/zebastjan/dev/archon/scripts/git-hooks
+```
+
+### Troubleshooting
+
+```bash
+# Check entity counts
+docker exec archon psql -U archon -d archon -c "
+  SELECT r.name, COUNT(e.id) as entities
+  FROM archon_code_repos r
+  LEFT JOIN archon_code_entities e ON r.id = e.repo_id
+  GROUP BY r.name;"
+
+# Force re-index all repos
+make index-repos
+
+# Check services are healthy
+curl http://localhost:8181/health
+curl http://localhost:8051/health
+```
 await audit_get_context("archon")
 
 # 5. Check current worktree

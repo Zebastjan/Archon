@@ -1,0 +1,41 @@
+#!/bin/bash
+# Auto-sync code entities and generate embeddings after each commit
+# Works for all repos: archon, octofriend, Omnibus, syllablaze
+
+REPO_NAME=$(basename $(git rev-parse --show-toplevel))
+REPO_ID=$(cd /home/zebastjan/dev/archon/python && python -c "
+import asyncio
+import os
+os.environ['ARCHON_DATABASE_URL'] = 'postgresql://archon:archon_local_dev@localhost:5432/archon'
+from src.server.services.database import get_database_connector
+
+async def get_repo_id():
+    db = get_database_connector()
+    result = await db.fetchrow(
+        'SELECT id FROM archon_code_repos WHERE name = \$1',
+        '$REPO_NAME'
+    )
+    print(result['id'] if result else '')
+
+asyncio.run(get_repo_id())
+")
+
+if [ -n "$REPO_ID" ]; then
+    echo "[Archon] Queueing code sync for $REPO_NAME..."
+    
+    # Trigger incremental code sync
+    curl -s -X POST http://localhost:8181/api/code-repos/$REPO_ID/sync \
+        -H "Content-Type: application/json" \
+        -d '{"incremental": true}' > /dev/null 2>&1 || echo "[Archon] Sync failed (server may not be running)"
+    
+    # Trigger embedding generation in container (background)
+    echo "[Archon] Starting embedding generation for new entities..."
+    (
+        # Wait a few seconds for sync to complete
+        sleep 5
+        # Generate embeddings inside container (uses OLLAMA_URL env var)
+        docker exec archon python /archon/scripts/generate_embeddings.py \
+            --repo $REPO_ID \
+            --batch-size 20 2>&1 >> /tmp/archon-embeddings.log
+    ) &
+fi

@@ -5,7 +5,7 @@ SHELL := /bin/bash
 # Docker compose command - prefer newer 'docker compose' plugin over standalone 'docker-compose'
 COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: help dev dev-docker dev-docker-full dev-work-orders dev-hybrid-work-orders stop test test-fe test-be lint lint-fe lint-be clean install check agent-work-orders health-check
+.PHONY: help dev dev-docker dev-docker-full dev-work-orders dev-hybrid-work-orders stop test test-fe test-be lint lint-fe lint-be clean install check agent-work-orders health-check deploy index-repos setup-hooks index-commits kg-evolution kg-commits kg-compare kg-when
 
 help:
 	@echo "Archon Development Commands"
@@ -27,6 +27,14 @@ help:
 	@echo "  make clean                  - Remove containers and volumes"
 	@echo "  make install                - Install dependencies"
 	@echo "  make check                  - Check environment setup"
+	@echo "  make deploy                 - Rebuild container and verify health"
+	@echo "  make index-repos            - Index all repositories"
+	@echo "  make index-commits          - Index multiple commits (REPO=archon COMMITS=10)"
+	@echo "  make kg-evolution           - Show entity evolution (REPO=archon ENTITY=func_name)"
+	@echo "  make kg-commits             - List commits with changes (REPO=archon)"
+	@echo "  make kg-compare             - Compare branches (REPO=archon BRANCH1=main BRANCH2=feat)"
+	@echo "  make kg-when                - Find when entity was added (REPO=archon ENTITY=func_name)"
+	@echo "  make generate-embeddings    - Generate BGE-M3 embeddings (REPO=archon BATCH_SIZE=50)"
 
 # Install dependencies
 install:
@@ -196,3 +204,69 @@ mcp-status:
 # MCP logs (follow mode)
 mcp-logs:
 	@docker logs -f archon-mcp --tail 20
+
+# Index all repositories (archon, octofriend, Omnibus, syllablaze)
+# Auto-reindex is also triggered on each git commit via hooks
+index-repos:
+	@echo "Indexing all repositories..."
+	@docker exec archon python /archon/scripts/index_all_repos.py
+	@echo "✅ Indexing complete"
+
+# Set up git hooks for all repositories to auto-reindex on commit
+# Run this from within each repo:
+#   git config core.hooksPath /home/zebastjan/dev/archon/scripts/git-hooks
+setup-hooks:
+	@echo "Setting up git hooks for all repos..."
+	@cd /home/zebastjan/dev/archon && git config core.hooksPath /home/zebastjan/dev/archon/scripts/git-hooks || true
+	@cd /home/zebastjan/dev/syllablaze && git config core.hooksPath /home/zebastjan/dev/archon/scripts/git-hooks || true
+	@cd /home/zebastjan/dev/octofriend && git config core.hooksPath /home/zebastjan/dev/archon/scripts/git-hooks || true
+	@cd /home/zebastjan/dev/Omnibus && git config core.hooksPath /home/zebastjan/dev/archon/scripts/git-hooks || true
+	@echo "✅ Git hooks configured in all repos"
+
+# Index multiple commits for knowledge graph (cross-commit tracking)
+# Example: make index-commits REPO=archon COMMITS=10
+index-commits:
+	@echo "Indexing multiple commits for knowledge graph..."
+	@docker exec archon python /archon/scripts/index_commits.py --repo $(REPO) --commits $(COMMITS)
+	@echo "✅ Multi-commit indexing complete"
+
+# Query the knowledge graph
+# Example: make kg-evolution REPO=archon ENTITY=load_config
+# Example: make kg-commits REPO=archon
+kg-evolution:
+	@docker exec archon python /archon/scripts/kg_query.py --repo $(REPO) evolution --entity $(ENTITY)
+
+kg-commits:
+	@docker exec archon python /archon/scripts/kg_query.py --repo $(REPO) commits
+
+kg-compare:
+	@docker exec archon python /archon/scripts/kg_query.py --repo $(REPO) compare-branches $(BRANCH1) $(BRANCH2)
+
+kg-when:
+	@docker exec archon python /archon/scripts/kg_query.py --repo $(REPO) when-added --entity $(ENTITY)
+
+# Generate embeddings for code entities
+# Example: make generate-embeddings (all repos)
+# Example: make generate-embeddings REPO=archon
+# Example: make generate-embeddings BATCH_SIZE=100
+generate-embeddings:
+	@echo "Generating embeddings..."
+	@docker exec archon python /archon/scripts/generate_embeddings.py \
+		$(if $(REPO),--repo $(REPO),) \
+		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),--batch-size 50)
+
+# Deploy: rebuild and restart container with health verification
+deploy:
+	@echo "Syncing .env to container..."
+	@docker cp .env archon:/app/.env 2>/dev/null || true
+	@echo "Building Docker image..."
+	@$(COMPOSE) build --no-cache
+	@echo "Stopping current container..."
+	@$(COMPOSE) down
+	@echo "Starting new container..."
+	@$(COMPOSE) up -d
+	@echo "Running migrations..."
+	@docker exec archon python -c "from src.server.api_routes.migration import run_migrations; import asyncio; asyncio.run(run_migrations())" 2>/dev/null || echo "No migrations to run or migration module not found"
+	@echo "Verifying health..."
+	@./scripts/validate_health.sh
+	@echo "✅ Deploy complete!"
