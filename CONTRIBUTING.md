@@ -529,3 +529,14 @@ Contributors receive:
 ---
 
 **Ready to contribute?** Start by exploring the codebase, reading the architecture documentation, and finding an area that interests you. Every contribution makes Archon better for the entire AI development community.
+
+## 🔧 Development Notes
+
+### Git Remote
+
+This project uses the Zebastjan fork at `github.com/Zebastjan/Archon`. The original `coleam00/archon` is no longer used.
+
+To update your local remotes:
+```bash
+git remote set-url origin git@github.com:Zebastjan/Archon.git
+```
