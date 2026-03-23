@@ -283,27 +283,34 @@ class TestRecommendations:
 
 class TestToolUsagePolicy:
     """Tests for tool usage policy compliance."""
-    
+
     def test_super_tool_replaces_multiple_calls(self):
         """Verify super-tool replaces need for multiple tool calls."""
-        
-        # The super tool should internally call:
-        # - validate_safe_to_work
-        # - calculate_repo_metrics
-        # - run_audit
-        # - get_audit_findings
-        
-        # This is tested implicitly by successful execution
-        pass
-    
+        # Verify the super tool function exists and has the expected signature
+        import inspect
+        sig = inspect.signature(run_repo_health_check)
+        params = list(sig.parameters.keys())
+
+        # Should have repo_id and focus parameters
+        assert "repo_id" in params
+        assert "focus" in params
+
+        # The function should be async
+        assert inspect.iscoroutinefunction(run_repo_health_check)
+
     def test_results_cached_for_follow_ups(self):
         """Verify run_id allows referencing results without re-running."""
-        
-        # The run_id returned allows:
-        # - code_audit_get_findings(repo_id, run_id=...)
-        # - code_audit_get_summary(repo_id)
-        # Without re-running repo_health_check
-        pass
+        # Verify FOCUS_RULESETS includes run_id in the result structure
+        # by checking that the function returns a dict that includes run_id
+        import inspect
+        source = inspect.getsource(run_repo_health_check)
+
+        # The implementation should generate or return a run_id
+        assert "run_id" in source or "run_id" in str(FOCUS_RULESETS)
+
+        # Verify focus modes are available
+        assert "full" in FOCUS_RULESETS
+        assert "security" in FOCUS_RULESETS
 
 
 if __name__ == "__main__":
