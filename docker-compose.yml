@@ -8,10 +8,10 @@ services:
       dockerfile: Dockerfile.server
     container_name: archon
     ports:
-      - "8181:8181"
       - "8051:8051"
     environment:
       - ARCHON_SERVER_PORT=8181
+      - ARCHON_SERVER_HOST=localhost
       # Database is embedded in the same container
       - ARCHON_DATABASE_URL=postgresql://archon:archon_local_dev@localhost:5432/archon
       # Ollama on host (accessible via Docker bridge IP 172.17.0.1)

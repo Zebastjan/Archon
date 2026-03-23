@@ -14,6 +14,7 @@ Note: Crawling and document upload operations are handled directly by the
 API service and frontend, not through MCP tools.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -118,9 +119,9 @@ async def perform_health_checks(context: ArchonContext):
             import httpx
             from urllib.parse import urljoin
 
-            api_health_url = os.getenv("API_SERVICE_URL", "http://archon-server:8181")
+            api_health_url = os.getenv("API_SERVICE_URL", "http://localhost:8181")
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-                response = await client.get(urljoin(api_health_url, "/health"))
+                response = await client.get(urljoin(api_health_url, "/api/health"))
                 if response.status_code == 200:
                     data = response.json()
                     # DB is healthy if archon-server reports ready and schema valid
@@ -754,7 +755,7 @@ def main():
         mcp_logger.info("🔥 Logfire initialized for MCP server")
         mcp_logger.info(f"🌟 Starting MCP server - host={server_host}, port={server_port}")
 
-        mcp.run(transport="streamable-http")
+        mcp.run(transport="streamable-http")  # HTTP transport (not SSE)
 
     except Exception as e:
         mcp_logger.error(f"💥 Fatal error in main - error={str(e)}, error_type={type(e).__name__}")
