@@ -1,41 +1,68 @@
 #!/bin/bash
 # Auto-sync code entities and generate embeddings after each commit
 # Works for all repos: archon, octofriend, Omnibus, syllablaze
+# Uses jq for JSON parsing (install: sudo apt-get install jq)
 
 REPO_NAME=$(basename $(git rev-parse --show-toplevel))
-REPO_ID=$(cd /home/zebastjan/dev/archon/python && python -c "
-import asyncio
-import os
-os.environ['ARCHON_DATABASE_URL'] = 'postgresql://archon:archon_local_dev@localhost:5432/archon'
-from src.server.services.database import get_database_connector
+API_BASE="http://localhost:8181/api/code_repos"
 
-async def get_repo_id():
-    db = get_database_connector()
-    result = await db.fetchrow(
-        'SELECT id FROM archon_code_repos WHERE name = \$1',
-        '$REPO_NAME'
-    )
-    print(result['id'] if result else '')
+# Get all repos via API
+REPO_RESPONSE=$(curl -s "${API_BASE}" 2>/dev/null)
 
-asyncio.run(get_repo_id())
-")
-
-if [ -n "$REPO_ID" ]; then
-    echo "[Archon] Queueing code sync for $REPO_NAME..."
-    
-    # Trigger incremental code sync
-    curl -s -X POST http://localhost:8181/api/code-repos/$REPO_ID/sync \
-        -H "Content-Type: application/json" \
-        -d '{"incremental": true}' > /dev/null 2>&1 || echo "[Archon] Sync failed (server may not be running)"
-    
-    # Trigger embedding generation in container (background)
-    echo "[Archon] Starting embedding generation for new entities..."
-    (
-        # Wait a few seconds for sync to complete
-        sleep 5
-        # Generate embeddings inside container (uses OLLAMA_URL env var)
-        docker exec archon python /archon/scripts/generate_embeddings.py \
-            --repo $REPO_ID \
-            --batch-size 20 2>&1 >> /tmp/archon-embeddings.log
-    ) &
+if [ -z "$REPO_RESPONSE" ] || [ "$REPO_RESPONSE" = "[]" ]; then
+    echo "[Archon] No repos found or server not running. Run: make index-repos"
+    exit 0
 fi
+
+# Extract repo_id using jq
+if command -v jq &> /dev/null; then
+    REPO_ID=$(echo "$REPO_RESPONSE" | jq -r ".[] | select(.name == \"$REPO_NAME\") | .repo_id")
+else
+    echo "[Archon] ⚠ jq not installed. Install with: sudo apt-get install jq"
+    # Fallback: use Python
+    REPO_ID=$(echo "$REPO_RESPONSE" | python3 -c "
+import sys, json
+repos = json.load(sys.stdin)
+for repo in repos:
+    if repo.get('name') == '$REPO_NAME':
+        print(repo.get('repo_id', ''))
+        break
+")
+fi
+
+if [ -z "$REPO_ID" ]; then
+    echo "[Archon] Repository '$REPO_NAME' not found. Run: make index-repos"
+    exit 0
+fi
+
+echo "[Archon] Commit detected in $REPO_NAME (ID: ${REPO_ID:0:8}...)"
+
+# Trigger incremental indexing via docker exec
+echo "[Archon] Starting incremental code sync..."
+
+# Run index_commits.py for just this commit inside the container
+(docker exec archon python /archon/scripts/index_commits.py \
+    --repo "$REPO_NAME" \
+    --commits 1 \
+    2>&1 | tail -5 > /tmp/archon-sync-${REPO_NAME}.log) &
+
+SYNC_PID=$!
+
+# Trigger embedding generation in background
+echo "[Archon] Starting embedding generation (background)..."
+(
+    # Wait for sync to complete
+    wait $SYNC_PID
+    
+    # Generate embeddings for entities in this repo
+    docker exec archon python /archon/scripts/generate_embeddings.py \
+        --repo "$REPO_ID" \
+        --batch-size 50 >> /tmp/archon-embeddings-${REPO_NAME}.log 2>&1
+    
+    echo "[Archon] ✓ Processing complete for $REPO_NAME"
+) &
+
+echo "[Archon] ✓ All processes started in background"
+echo "[Archon] Check logs:"
+echo "  tail -f /tmp/archon-sync-${REPO_NAME}.log"
+echo "  tail -f /tmp/archon-embeddings-${REPO_NAME}.log"

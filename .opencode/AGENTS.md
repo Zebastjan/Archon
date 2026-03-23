@@ -18,7 +18,7 @@ Example:
 Example:
 - "Find code that handles git commits"
 - "Show me database connection pooling"
-- "Find React components that manage state"
+- "Find error handling patterns"
 
 ### Skill 3: Understand Code Context
 **When**: You found code and want to understand it fully
@@ -70,15 +70,14 @@ Example:
 
 Use these IDs when querying:
 
-### ✅ Fully Ingested (with BGE-large 1024-dim embeddings)
+### ✅ Fully Ingested (with BGE-M3 1024-dim embeddings)
 | Repository | ID | Entities | Embeddings | Language |
 |------------|-----|----------|------------|----------|
-| **archon-python** | `76abe5b8-693a-40e4-a3a3-c08289465d7d` | 1478 | ✅ 100% | Python |
-| **archon-ui** | `59f97679-1483-4be6-822b-5798e6c29679` | 1216 | ✅ 100% | TypeScript |
-| **syllablaze** | `c8b210fa-8d64-4cb2-9c17-446bc314191f` | 1217 | ✅ 100% | Python |
-| **octofriend** | `358e1fae-5794-4be8-a160-d32df0e97d0f` | 598 | ✅ 100% | TypeScript |
+| **archon-python** | `76abe5b8-693a-40e4-a3a3-c08289465d7d` | ~5,000 | ✅ 100% | Python |
+| **syllablaze** | `c8b210fa-8d64-4cb2-9c17-446bc314191f` | ~3,000 | ✅ 100% | Python |
+| **octofriend** | `358e1fae-5794-4be8-a160-d32df0e97d0f` | ~600 | ✅ 100% | TypeScript |
 
-**Total**: 4,509 entities with BGE-large 1024-dim embeddings
+**Total**: ~8,600 entities with BGE-M3 1024-dim embeddings
 
 ### Semantic Search
 ✅ **All repositories support semantic search** via `codebase_search_by_semantics`
@@ -109,7 +108,6 @@ Use codebase_find_callers in repo "archon-python" for function "generate_embeddi
 
 When working with files, automatically detect the repo:
 - `.py` files in `python/src/` → archon-python
-- `.ts/.tsx` files in `archon-ui-main/` → archon-ui
 - `.py` files in `octofriend/` → octofriend
 - `.ts/.tsx` files in `syllablaze/` → syllablaze
 
@@ -117,7 +115,7 @@ When working with files, automatically detect the repo:
 
 1. **Start broad, then narrow**: Use semantic search first, then find exact entities
 2. **Check relationships**: Always look at callers and callees
-3. **Use embeddings**: BGE-large 1024-dim embeddings understand code semantics
+3. **Use embeddings**: BGE-M3 1024-dim embeddings understand code semantics
 4. **Link to GitHub**: When showing results, generate GitHub URLs for reference
 5. **Incremental updates**: Repos auto-update on commit via git hooks
 
@@ -127,4 +125,4 @@ If tools aren't working:
 1. Check if archon-mcp is running: `curl http://localhost:8051/health`
 2. Verify repo_id is correct
 3. Try simpler queries first
-4. Check logs: `docker logs archon-mcp`
+4. Check logs: `docker logs archon`

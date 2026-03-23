@@ -38,9 +38,10 @@ from starlette.responses import JSONResponse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Load environment variables from the project root .env file
+# NOTE: We don't override existing env vars - Dockerfile ENV takes precedence
 project_root = Path(__file__).resolve().parent.parent
 dotenv_path = project_root / ".env"
-load_dotenv(dotenv_path, override=True)
+load_dotenv(dotenv_path, override=False)
 
 # Configure logging FIRST before any imports that might use it
 logging.basicConfig(
@@ -48,9 +49,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/tmp/mcp_server.log", mode="a")
-        if os.path.exists("/tmp")
-        else logging.NullHandler(),
+        logging.FileHandler("/tmp/mcp_server.log", mode="a") if os.path.exists("/tmp") else logging.NullHandler(),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -118,6 +117,7 @@ async def perform_health_checks(context: ArchonContext):
         try:
             import httpx
             from urllib.parse import urljoin
+
             api_health_url = os.getenv("API_SERVICE_URL", "http://archon-server:8181")
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 response = await client.get(urljoin(api_health_url, "/health"))
@@ -132,10 +132,7 @@ async def perform_health_checks(context: ArchonContext):
             context.health_status["database"] = False
 
         # Overall status - all critical services must be ready
-        all_critical_ready = (
-            context.health_status["api_service"] and 
-            context.health_status.get("database", False)
-        )
+        all_critical_ready = context.health_status["api_service"] and context.health_status.get("database", False)
 
         context.health_status["status"] = "healthy" if all_critical_ready else "degraded"
         context.health_status["last_health_check"] = datetime.now().isoformat()
@@ -192,27 +189,33 @@ async def lifespan(server: FastMCP) -> AsyncIterator[ArchonContext]:
             # Perform initial health check with retry logic
             max_retries = 10
             retry_delay = 2  # seconds
-            
+
             for attempt in range(max_retries):
                 try:
                     await perform_health_checks(context)
-                    
+
                     # Check if database is connected
                     if context.health_status.get("database", False):
                         logger.info(f"✓ Health check passed on attempt {attempt + 1}")
                         break
                     else:
                         if attempt < max_retries - 1:
-                            logger.warning(f"⚠ Database not ready (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                            logger.warning(
+                                f"⚠ Database not ready (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s..."
+                            )
                             await asyncio.sleep(retry_delay)
                             retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff capped at 10s
                         else:
                             logger.error(f"💥 Database connectivity failed after {max_retries} attempts")
-                            raise RuntimeError("Database connectivity failed - archon-server health check reports DB unavailable")
-                            
+                            raise RuntimeError(
+                                "Database connectivity failed - archon-server health check reports DB unavailable"
+                            )
+
                 except Exception as health_e:
                     if attempt < max_retries - 1:
-                        logger.warning(f"⚠ Health check failed (attempt {attempt + 1}/{max_retries}): {health_e}, retrying...")
+                        logger.warning(
+                            f"⚠ Health check failed (attempt {attempt + 1}/{max_retries}): {health_e}, retrying..."
+                        )
                         await asyncio.sleep(retry_delay)
                         retry_delay = min(retry_delay * 1.5, 10)
                     else:
@@ -361,15 +364,23 @@ Create feature-level tasks:
 """
 
 # Initialize the main FastMCP server with fixed configuration
+# Explicitly set host/port from environment to ensure they're respected
 try:
     logger.info("🏗️ MCP SERVER INITIALIZATION:")
     logger.info("   Server Name: archon-mcp-server")
     logger.info("   Description: MCP server using HTTP calls")
 
+    # Get host/port from environment with defaults
+    mcp_host = os.getenv("FASTMCP_HOST", "0.0.0.0")
+    mcp_port = int(os.getenv("FASTMCP_PORT", "8051"))
+    logger.info(f"   Host: {mcp_host}, Port: {mcp_port}")
+
     mcp = FastMCP(
         "archon-mcp-server",
         instructions=MCP_INSTRUCTIONS,
         lifespan=lifespan,
+        host=mcp_host,
+        port=mcp_port,
     )
     logger.info("✓ FastMCP server instance created successfully")
 
@@ -394,38 +405,46 @@ async def health_check(ctx: Context) -> str:
 
         if context is None:
             # Server starting up
-            return json.dumps({
-                "success": True,
-                "status": "starting",
-                "message": "MCP server is initializing...",
-                "timestamp": datetime.now().isoformat(),
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "status": "starting",
+                    "message": "MCP server is initializing...",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
         # Server is ready - perform health checks
         if hasattr(context, "health_status") and context.health_status:
             await perform_health_checks(context)
 
-            return json.dumps({
-                "success": True,
-                "health": context.health_status,
-                "uptime_seconds": time.time() - context.startup_time,
-                "timestamp": datetime.now().isoformat(),
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "health": context.health_status,
+                    "uptime_seconds": time.time() - context.startup_time,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
         else:
-            return json.dumps({
-                "success": True,
-                "status": "ready",
-                "message": "MCP server is running",
-                "timestamp": datetime.now().isoformat(),
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "status": "ready",
+                    "message": "MCP server is running",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return json.dumps({
-            "success": False,
-            "error": f"Health check failed: {str(e)}",
-            "timestamp": datetime.now().isoformat(),
-        })
+        return json.dumps(
+            {
+                "success": False,
+                "error": f"Health check failed: {str(e)}",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
 
 # Session management endpoint
@@ -451,19 +470,23 @@ async def session_info(ctx: Context) -> str:
         if context and hasattr(context, "startup_time"):
             session_info_data["server_uptime_seconds"] = time.time() - context.startup_time
 
-        return json.dumps({
-            "success": True,
-            "session_management": session_info_data,
-            "timestamp": datetime.now().isoformat(),
-        })
+        return json.dumps(
+            {
+                "success": True,
+                "session_management": session_info_data,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
     except Exception as e:
         logger.error(f"Session info failed: {e}")
-        return json.dumps({
-            "success": False,
-            "error": f"Failed to get session info: {str(e)}",
-            "timestamp": datetime.now().isoformat(),
-        })
+        return json.dumps(
+            {
+                "success": False,
+                "error": f"Failed to get session info: {str(e)}",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
 
 # Import and register modules
@@ -676,30 +699,37 @@ async def http_health_endpoint(request: Request):
             uptime = time.time() - _shared_context.startup_time
             await perform_health_checks(_shared_context)
 
-            return JSONResponse({
-                "success": True,
-                "health": _shared_context.health_status,
-                "uptime_seconds": uptime,
-                "timestamp": datetime.now().isoformat(),
-            })
+            return JSONResponse(
+                {
+                    "success": True,
+                    "health": _shared_context.health_status,
+                    "uptime_seconds": uptime,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
         else:
             # Server starting up or no MCP connections yet - use module load time as fallback
             uptime = time.time() - _server_start_time
-            return JSONResponse({
-                "success": True,
-                "status": "ready",
-                "uptime_seconds": uptime,
-                "message": "MCP server is running (no active connections yet)",
-                "timestamp": datetime.now().isoformat(),
-            })
+            return JSONResponse(
+                {
+                    "success": True,
+                    "status": "ready",
+                    "uptime_seconds": uptime,
+                    "message": "MCP server is running (no active connections yet)",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
     except Exception as e:
         logger.error(f"HTTP health check failed: {e}", exc_info=True)
-        return JSONResponse({
-            "success": False,
-            "error": f"Health check failed: {str(e)}",
-            "uptime_seconds": time.time() - _server_start_time,
-            "timestamp": datetime.now().isoformat(),
-        }, status_code=500)
+        return JSONResponse(
+            {
+                "success": False,
+                "error": f"Health check failed: {str(e)}",
+                "uptime_seconds": time.time() - _server_start_time,
+                "timestamp": datetime.now().isoformat(),
+            },
+            status_code=500,
+        )
 
 
 # Register health endpoint using FastMCP's custom_route decorator

@@ -136,10 +136,26 @@ echo "PostgreSQL setup complete!"
 # Start Archon Server
 export ARCHON_DATABASE_URL="postgresql://archon:archon_local_dev@localhost:5432/archon"
 export ARCHON_SERVER_PORT="${ARCHON_SERVER_PORT:-8181}"
-export ARCHON_MCP_PORT="${ARCHON_SERVER_PORT}"
+export ARCHON_MCP_PORT="${ARCHON_MCP_PORT:-8051}"
 export PATH="/venv/bin:$PATH"
 export PYTHONPATH="/app:$PYTHONPATH"
 export PYTHONUNBUFFERED=1
+
+# FastMCP host/port already set via ENV in Dockerfile
+# Start MCP server in background
+echo "Starting MCP Server on port ${ARCHON_MCP_PORT}..."
+python -m src.mcp_server.mcp_server &
+MCP_PID=$!
+
+# Wait a moment for MCP to initialize
+sleep 3
+
+# Check if MCP started successfully
+if ! kill -0 $MCP_PID 2>/dev/null; then
+    echo "WARNING: MCP server failed to start!"
+else
+    echo "✓ MCP Server started on port ${ARCHON_MCP_PORT}"
+fi
 
 echo "Starting Archon Server on port ${ARCHON_SERVER_PORT}..."
 exec python -m uvicorn src.server.main:app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1
@@ -154,7 +170,11 @@ ENV PGDATA=/var/lib/postgresql/data
 
 ARG ARCHON_SERVER_PORT=8181
 ENV ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT}
-EXPOSE ${ARCHON_SERVER_PORT}
+ARG ARCHON_MCP_PORT=8051
+ENV ARCHON_MCP_PORT=${ARCHON_MCP_PORT}
+ENV FASTMCP_HOST="0.0.0.0"
+ENV FASTMCP_PORT=${ARCHON_MCP_PORT}
+EXPOSE ${ARCHON_SERVER_PORT} ${ARCHON_MCP_PORT}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8181/health')\"" || exit 1

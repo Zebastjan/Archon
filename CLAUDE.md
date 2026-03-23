@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Archon: AI agent framework built on Pydantic AI with Postgres/Supabase backends.
+Archon: AI agent framework built on Pydantic AI with PostgreSQL backend.
 
 ## Task Execution Protocol (CRITICAL)
 
@@ -47,7 +47,7 @@ Archon: AI agent framework built on Pydantic AI with Postgres/Supabase backends.
 
 **ALWAYS:**
 - Use `uv` for Python dependency management
-- Route DB operations through `db_connector.py` (Postgres/Supabase wrapper)
+- Route DB operations through `db_connector.py` (PostgreSQL asyncpg wrapper)
 - Test on both X11 and Wayland when changing window management (if applicable)
 
 ## Architecture References

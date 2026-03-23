@@ -13,8 +13,9 @@
 
 ## Repository IDs
 
-- **archon-python**: `76abe5b8-693a-40e4-a3a3-c08289465d7d` (1478 entities)
-- **archon-ui**: `59f97679-1483-4be6-822b-5798e6c29679` (1216 entities)
+- **archon-python**: `76abe5b8-693a-40e4-a3a3-c08289465d7d` (~5,000 entities)
+- **syllablaze**: `c8b210fa-8d64-4cb2-9c17-446bc314191f` (~3,000 entities)
+- **octofriend**: `358e1fae-5794-4be8-a160-d32df0e97d0f` (~600 entities)
 
 ## Tool Details
 
@@ -201,9 +202,9 @@ curl http://localhost:8051/tools
 
 When agents ask about "our codebase", they're usually referring to:
 - **Python backend**: `76abe5b8-693a-40e4-a3a3-c08289465d7d`
-- **UI frontend**: `59f97679-1483-4be6-822b-5798e6c29679`
+- **OctoFriend**: `358e1fae-5794-4be8-a160-d32df0e97d0f`
 
 The agent should automatically determine which repo based on:
 - File extension (.py vs .ts/.tsx)
-- Path patterns (src/server vs archon-ui-main)
+- Path patterns (python/src/ vs octofriend/)
 - Query context
