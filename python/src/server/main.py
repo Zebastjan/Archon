@@ -76,162 +76,9 @@ uvicorn_logger.setLevel(logging.WARNING)  # Only log warnings and errors, not ev
 # Global flag to track if initialization is complete
 _initialization_complete = False
 
-# MCP Server - Single Container Architecture
-# Global FastMCP instance registered directly in FastAPI
-_mcp_instance = None
-
-
-def get_mcp_instance():
-    """Get or create the global MCP instance."""
-    global _mcp_instance
-    if _mcp_instance is None:
-        from mcp.server.fastmcp import FastMCP
-
-        _mcp_instance = FastMCP("archon-server")
-    return _mcp_instance
-
-
-async def _initialize_mcp_tools():
-    """Initialize all MCP tools from the mcp_server modules."""
-    global _mcp_instance
-
-    logger.info("🔧 Initializing MCP tools...")
-
-    from mcp.server.fastmcp import FastMCP
-
-    _mcp_instance = FastMCP("archon-server")
-
-    modules_registered = 0
-
-    # Import and register RAG tools
-    try:
-        from src.mcp_server.features.rag import register_rag_tools
-
-        register_rag_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ RAG tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ RAG tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering RAG tools: {e}")
-
-    # Import and register Project tools
-    try:
-        from src.mcp_server.features.projects import register_project_tools
-
-        register_project_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Project tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Project tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Project tools: {e}")
-
-    # Import and register Task tools
-    try:
-        from src.mcp_server.features.tasks import register_task_tools
-
-        register_task_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Task tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Task tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Task tools: {e}")
-
-    # Import and register Document tools
-    try:
-        from src.mcp_server.features.documents import register_document_tools
-
-        register_document_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Document tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Document tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Document tools: {e}")
-
-    # Import and register Worktree tools
-    try:
-        from src.mcp_server.features.worktree import register_worktree_tools
-
-        register_worktree_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Worktree tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Worktree tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Worktree tools: {e}")
-
-    # Import and register Code Audit tools
-    try:
-        from src.mcp_server.features.code_audit import register_code_audit_tools
-
-        register_code_audit_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Code audit tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Code audit tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Code audit tools: {e}")
-
-    # Import and register Code Entity tools
-    try:
-        from src.mcp_server.features.code_entities import register_code_entity_tools
-
-        register_code_entity_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Code entity tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Code entity tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Code entity tools: {e}")
-
-    # Import and register Code Repos tools
-    try:
-        from src.mcp_server.features.code_repos import register_code_repos_tools
-
-        register_code_repos_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Code repos tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Code repos tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Code repos tools: {e}")
-
-    # Import and register Feature tools
-    try:
-        from src.mcp_server.features.feature_tools import register_feature_tools
-
-        register_feature_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Feature tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Feature tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Feature tools: {e}")
-
-    # Import and register Version tools
-    try:
-        from src.mcp_server.features.documents import register_version_tools
-
-        register_version_tools(_mcp_instance)
-        modules_registered += 1
-        logger.info("✓ Version tools registered")
-    except ImportError as e:
-        logger.warning(f"⚠ Version tools not available: {e}")
-    except Exception as e:
-        logger.error(f"✗ Error registering Version tools: {e}")
-
-    logger.info(f"📦 Total MCP tool modules registered: {modules_registered}")
-
-
-async def _shutdown_mcp_tools():
-    """Clean up MCP tools on shutdown."""
-    global _mcp_instance
-    logger.info("🧹 Cleaning up MCP tools...")
-    _mcp_instance = None
-    logger.info("✓ MCP tools cleared")
+# MCP Server - Removed from FastAPI server
+# MCP tools are now handled by the dedicated stdio server
+# See: python/src/mcp_server/mcp_server_stdio.py
 
 
 @asynccontextmanager
@@ -390,12 +237,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             api_logger.warning(f"Could not initialize prompt service: {e}")
 
-        # Initialize MCP tools in the same container (single-container architecture)
-        try:
-            await _initialize_mcp_tools()
-            api_logger.info("✅ MCP tools initialized (single-container mode)")
-        except Exception as e:
-            api_logger.warning(f"Could not initialize MCP tools: {e}")
+        # MCP tools are now handled by dedicated stdio server
+        # No MCP initialization needed in FastAPI server
 
         # Initialize PydanticAI agents
         try:
@@ -419,8 +262,7 @@ async def lifespan(app: FastAPI):
     api_logger.info("🛑 Shutting down Archon backend...")
 
     try:
-        # MCP tools cleanup
-        await _shutdown_mcp_tools()
+        # MCP tools cleanup not needed - handled by dedicated server
 
         # Cleanup crawling context
         try:
@@ -471,7 +313,7 @@ async def skip_health_check_logs(request, call_next):
 
 # Include API routers
 app.include_router(settings_router)
-app.include_router(mcp_router)
+# MCP router removed - MCP tools now handled by dedicated stdio server
 # app.include_router(mcp_client_router)  # Removed - not part of new architecture
 app.include_router(knowledge_router)
 
@@ -505,7 +347,7 @@ async def root():
         "version": "1.0.0",
         "description": "Backend API for knowledge management and project automation",
         "status": "healthy",
-        "modules": ["settings", "mcp", "mcp-clients", "knowledge", "projects"],
+        "modules": ["settings", "knowledge", "projects"],
     }
 
 

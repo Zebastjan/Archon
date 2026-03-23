@@ -1,9 +1,12 @@
 {
   "mcpServers": {
-    "archon-codebase": {
-      "type": "sse",
-      "url": "http://localhost:8051/mcp",
-      "headers": {}
+    "archon": {
+      "command": "docker",
+      "args": [
+        "exec", "-i", "archon",
+        "python", "-m", "src.mcp_server.mcp_server_stdio"
+      ],
+      "type": "stdio"
     }
   }
 }

@@ -1,9 +1,13 @@
 {
   "mcpServers": {
-    "archon-codebase": {
-      "url": "http://localhost:8051/mcp",
-      "type": "sse",
-      "description": "Archon Codebase Intelligence - MCP server on port 8051"
+    "archon": {
+      "command": "docker",
+      "args": [
+        "exec", "-i", "archon",
+        "python", "-m", "src.mcp_server.mcp_server_stdio"
+      ],
+      "type": "stdio",
+      "description": "Archon Codebase Intelligence - MCP server via stdio transport"
     }
   }
 }

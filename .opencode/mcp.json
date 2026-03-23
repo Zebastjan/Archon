@@ -1,9 +1,12 @@
 {
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "archon-codebase": {
-      "type": "remote",
-      "url": "http://localhost:8051/mcp",
+  "mcpServers": {
+    "archon": {
+      "command": "docker",
+      "args": [
+        "exec", "-i", "archon",
+        "python", "-m", "src.mcp_server.mcp_server_stdio"
+      ],
+      "type": "stdio",
       "enabled": true
     }
   }
