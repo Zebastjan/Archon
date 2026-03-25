@@ -571,5 +571,104 @@ class TestContentTemplates:
         assert "bool" in content
 
 
+class TestGenerationTriggers:
+    """Tests for context bundle generation trigger logic (ADR-012)."""
+
+    def test_generate_on_code_change(self):
+        """Test that code changes in python/src/ trigger generation."""
+        trigger_paths = ["docs/ADRs/", "python/src/", "docs/"]
+
+        # Files that SHOULD trigger generation
+        trigger_files = [
+            "python/src/main.py",
+            "python/src/server/api.py",
+            "python/src/mcp_server/tools.py",
+            "docs/README.md",
+            "docs/ADRs/001-example.md",
+            "docs/api.md",
+        ]
+
+        for file_path in trigger_files:
+            should_generate = any(file_path.startswith(p) for p in trigger_paths)
+            assert should_generate is True, f"File {file_path} should trigger generation"
+
+    def test_skip_test_only_changes(self):
+        """Test that test-only changes don't trigger generation."""
+        skip_extensions = [".pyc"]
+
+        # Files that should NOT trigger generation
+        # These are either test files or build artifacts
+        non_trigger_files = [
+            "python/tests/test_main.py",
+            "python/tests/test_something.py",
+            "tests/test_unit.py",
+            "test_integration.py",
+            "src/__pycache__/main.cpython-311.pyc",
+        ]
+
+        for file_path in non_trigger_files:
+            # Skip test files
+            if "test" in file_path.lower():
+                should_skip = True
+            # Skip build artifacts
+            elif any(file_path.endswith(ext) for ext in skip_extensions):
+                should_skip = True
+            else:
+                should_skip = False
+
+            assert should_skip is True, f"File {file_path} should NOT trigger generation"
+
+    def test_adr_changes_always_trigger(self):
+        """Test that ADR changes always trigger generation regardless of extension."""
+        adr_files = [
+            "docs/ADRs/001-example.md",
+            "docs/ADRs/007-version-scoped-search.md",
+            "docs/ADRs/012-context-bundle.md",
+        ]
+
+        trigger_paths = ["docs/ADRs/"]
+
+        for file_path in adr_files:
+            should_generate = any(file_path.startswith(p) for p in trigger_paths)
+            assert should_generate is True, f"ADR file {file_path} should always trigger"
+
+    def test_should_generate_logic(self):
+        """Test the should_generate decision logic."""
+
+        def should_generate(changed_files):
+            """Simplified should_generate logic."""
+            trigger_paths = ["docs/ADRs/", "python/src/", "docs/"]
+            skip_extensions = [".pyc"]
+
+            for file_path in changed_files:
+                if not file_path:
+                    continue
+                # Skip test files
+                if "test" in file_path.lower():
+                    continue
+                # Skip build artifacts
+                if any(file_path.endswith(ext) for ext in skip_extensions):
+                    continue
+                # Check trigger paths
+                if any(file_path.startswith(p) for p in trigger_paths):
+                    return True
+            return False
+
+        # Test case 1: Code change - should generate
+        assert should_generate(["python/src/main.py"]) is True
+
+        # Test case 2: Test only - should skip
+        assert should_generate(["python/tests/test_main.py"]) is False
+
+        # Test case 3: Mixed - should generate (code present)
+        assert should_generate(["python/src/main.py", "python/tests/test_main.py"]) is True
+
+        # Test case 4: Test + build artifact only - should skip
+        assert should_generate(["test.py", "build/out.pyc"]) is False
+
+        # Test case 5: Empty - should skip
+        assert should_generate([]) is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

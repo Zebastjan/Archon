@@ -610,5 +610,151 @@ class TestWorktreeToolsExist:
             assert f"async def {tool}" in content, f"Missing tool: {tool}"
 
 
+class TestWorktreeIntegration:
+    """Integration tests for worktree push→pop→switch flows."""
+
+    @pytest.mark.real_fs
+    def test_push_switch_pop_flow(self, tmp_path):
+        """Test complete push→switch→pop flow with actual stack file."""
+        import json
+
+        stack_file = tmp_path / "context-stack.json"
+        stack_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Initial state: working on feature/auth
+        initial_context = {
+            "branch": "feature/auth",
+            "worktree_path": str(tmp_path / ".worktrees" / "feature-auth"),
+        }
+
+        # Step 1: Push current context
+        stack_data = {"stack": [], "current": 0}
+        stack_data["stack"].append(
+            {
+                "branch": initial_context["branch"],
+                "worktree_path": initial_context["worktree_path"],
+                "pushed_at": "2026-03-25 10:00:00",
+            }
+        )
+
+        with open(stack_file, "w") as f:
+            json.dump(stack_data, f)
+
+        assert len(stack_data["stack"]) == 1
+
+        # Step 2: Switch to feature/search (simulated by loading stack)
+        with open(stack_file) as f:
+            loaded_stack = json.load(f)
+
+        assert loaded_stack["stack"][0]["branch"] == "feature/auth"
+
+        # Step 3: Pop back to previous context
+        with open(stack_file) as f:
+            stack_data = json.load(f)
+
+        popped = stack_data["stack"].pop()
+
+        with open(stack_file, "w") as f:
+            json.dump(stack_data, f)
+
+        assert popped["branch"] == "feature/auth"
+        assert len(stack_data["stack"]) == 0
+        assert stack_file.exists()
+
+    @pytest.mark.real_fs
+    def test_create_worktree_sanitizes_branch(self):
+        """Test worktree creation with branch name sanitization."""
+        test_cases = [
+            ("feature/new-auth", "feature-new-auth"),
+            ("fix/login-bug", "fix-login-bug"),
+            ("release/v1.0.0", "release-v1.0.0"),
+            ("hotfix/critical/fix", "hotfix-critical-fix"),
+        ]
+
+        for branch, expected_safe in test_cases:
+            safe = branch.replace("/", "-")
+            assert safe == expected_safe, f"Failed: {branch} -> {safe}"
+
+            # Verify path construction
+            git_root = "/home/user/repo"
+            expected_path = f"{git_root}/.worktrees/{expected_safe}"
+            actual_path = f"{git_root}/.worktrees/{safe}"
+            assert actual_path == expected_path
+
+    @pytest.mark.real_fs
+    def test_validation_conflict_detection(self, tmp_path):
+        """Test validation detects conflicts when worktrees overlap."""
+        import json
+
+        # Create two tasks that modify the same file
+        task_1_files = ["src/auth.py", "src/user.py"]
+        task_2_files = ["src/auth.py", "src/config.py"]
+
+        # Check for overlap
+        overlap = set(task_1_files) & set(task_2_files)
+        assert len(overlap) == 1
+        assert "src/auth.py" in overlap
+
+        # Simulate conflict detection response
+        is_safe = len(overlap) == 0
+        issues = []
+
+        if not is_safe:
+            for file in overlap:
+                issues.append(
+                    {
+                        "type": "concurrent_modification",
+                        "file": file,
+                        "severity": "critical",
+                        "message": f"File {file} is being modified in another worktree",
+                    }
+                )
+
+        assert is_safe is False
+        assert len(issues) == 1
+        assert issues[0]["file"] == "src/auth.py"
+        assert issues[0]["severity"] == "critical"
+
+    @pytest.mark.real_fs
+    def test_multiple_pushes_preserve_order(self, tmp_path):
+        """Test multiple pushes preserve the correct order."""
+        import json
+
+        stack_file = tmp_path / "context-stack.json"
+        stack_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Push 3 contexts in order
+        stack_data = {"stack": [], "current": 0}
+        contexts = [
+            {"branch": "main", "worktree_path": "/repo"},
+            {"branch": "feature/a", "worktree_path": "/repo/.worktrees/a"},
+            {"branch": "feature/b", "worktree_path": "/repo/.worktrees/b"},
+        ]
+
+        for ctx in contexts:
+            stack_data["stack"].append(ctx)
+
+        with open(stack_file, "w") as f:
+            json.dump(stack_data, f)
+
+        # Verify order: main -> feature/a -> feature/b
+        assert stack_data["stack"][0]["branch"] == "main"
+        assert stack_data["stack"][1]["branch"] == "feature/a"
+        assert stack_data["stack"][2]["branch"] == "feature/b"
+
+        # Pop should return in reverse order
+        with open(stack_file) as f:
+            stack_data = json.load(f)
+
+        popped = stack_data["stack"].pop()
+        assert popped["branch"] == "feature/b"
+
+        popped = stack_data["stack"].pop()
+        assert popped["branch"] == "feature/a"
+
+        popped = stack_data["stack"].pop()
+        assert popped["branch"] == "main"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -1,0 +1,59 @@
+{
+  "version": "1.0",
+  "commit": "e1e081baf86f126f58c18bc02ba32b3f11e49131",
+  "short_commit": "e1e081b",
+  "branch": "feature/multi-language-code-intelligence",
+  "commit_message": "docs: Add IDE setup guides and version-controlled hooks",
+  "generated_at": "2026-03-25T18:32:36.790663+00:00",
+  "stages": {
+    "doc_maintenance": {
+      "status": "pass",
+      "details": {
+        "changed_files": [
+          "docs/ADRs/012-per-commit-context-bundle.md",
+          "docs/ADRs/013-skills-prompts-documentation.md",
+          "docs/ADRs/014-worktree-branch-discipline.md",
+          "git_hooks/README.md",
+          "git_hooks/install.sh",
+          "git_hooks/post-commit",
+          "skills/ide-setup/claude-code.md",
+          "skills/workflows/feature-branch.md"
+        ],
+        "code_files_changed": 0,
+        "doc_files_changed": 6,
+        "pending_adrs": [
+          "001-restartable-rag-pipeline.md",
+          "013-skills-prompts-documentation.md"
+        ]
+      },
+      "issues": [],
+      "recommendations": []
+    },
+    "test_coverage": {
+      "status": "warning",
+      "details": {
+        "source_files_changed": 0,
+        "test_files_changed": 0,
+        "pytest_error": "ImportError while loading conftest '/home/zebastjan/dev/archon/python/tests/conftest.py'.\npython/tests/conftest.py:27: in <module>\n    from src.server.services import database\npython/src/server/servic"
+      },
+      "issues": [
+        "Pytest collection had issues"
+      ],
+      "recommendations": []
+    },
+    "code_audit": {
+      "status": "skip",
+      "details": {
+        "files_audited": 0,
+        "reason": "No Python files changed"
+      },
+      "findings": {
+        "critical": 0,
+        "error": 0,
+        "warning": 0,
+        "info": 0
+      },
+      "issues": []
+    }
+  }
+}

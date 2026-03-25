@@ -150,10 +150,10 @@ Each stage:
 
 - [x] Create `commit_with_review` MCP tool in worktree module
 - [x] Add checklist step functions (docs, tests, audit)
-- [ ] Create `scripts/commit_pipeline/` structure
-- [ ] Implement stage_1_doc_maintenance.py
-- [ ] Implement stage_2_test_coverage.py
-- [ ] Implement stage_3_code_audit.py
-- [ ] Update hooks-last-run.json generation
+- [x] Create `scripts/commit_pipeline/` structure
+- [x] Implement stage_1_doc_maintenance.py
+- [x] Implement stage_2_test_coverage.py
+- [x] Implement stage_3_code_audit.py
+- [x] Update hooks-last-run.json generation
 - [ ] Test: complete commit flow with checklist
 - [ ] Test: verify async pipeline runs after commit

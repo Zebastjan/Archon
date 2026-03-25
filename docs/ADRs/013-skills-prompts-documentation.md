@@ -197,6 +197,6 @@ Add to `~/.config/opencode/mcp-config.json`:
 - [x] Write MCP usage guides (version-scoped-search)
 - [x] Write workflow guides (zig-zag, feature-branch)
 - [x] Write IDE setup guides (opencode, claude-code)
-- [ ] Write prompt templates
+- [x] Write prompt templates (session-bootstrap, branch-discipline, leverage-mcp-tools)
 - [ ] Add skill drift detection to commit hook
 - [ ] Test: update tool → skill flagged for update
