@@ -189,7 +189,7 @@ if not validation.is_safe:
 - [x] Add worktree_pop() tool
 - [x] Add worktree_create() tool
 - [x] Implement context-stack.json management
-- [ ] Update IDE setup docs with worktree commands
+- [x] Update IDE setup docs with worktree commands
 - [x] Add skill: workflows/zig-zag-workflow.md
 - [ ] Test: push → switch → pop flow
 - [ ] Test: create new worktree via tool
