@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 # Set test environment - always override to ensure test isolation
+# NOTE: These can be overridden by specific tests that need real DB
 os.environ["TEST_MODE"] = "true"
 os.environ["TESTING"] = "true"
 # Set fake database credentials to prevent connection attempts
@@ -46,25 +47,35 @@ for p in _global_patches:
     p.start()
 
 
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "real_db: mark test to use real database instead of mock")
+    config.addinivalue_line("markers", "real_fs: mark test to use real filesystem instead of mock")
+
+
 @pytest.fixture(autouse=True)
 def ensure_test_environment():
     """Ensure test environment is properly set for each test."""
     # Force test environment settings - this runs before each test
+    # But allow tests to override via markers
     os.environ["TEST_MODE"] = "true"
     os.environ["TESTING"] = "true"
-    os.environ["ARCHON_DATABASE_URL"] = "postgresql://test:test@localhost:5434/test"
-    os.environ["SUPABASE_URL"] = ""
-    os.environ["SUPABASE_SERVICE_KEY"] = ""
-    os.environ["ARCHON_SERVER_PORT"] = "8181"
-    os.environ["ARCHON_MCP_PORT"] = "8051"
-    # ARCHON_AGENTS_PORT removed - agents now integrated into main server
-    os.environ["ARCHON_DB_PORT"] = "5434"
     yield
 
 
 @pytest.fixture(autouse=True)
-def prevent_real_db_calls():
-    """Automatically prevent any real database calls in all tests."""
+def prevent_real_db_calls(request):
+    """Automatically prevent any real database calls in all tests.
+
+    Unless the test is marked with @pytest.mark.real_db, in which case
+    we allow real database access.
+    """
+    # Check if test wants real DB
+    if request.node.get_closest_marker("real_db"):
+        # Test wants real DB - don't mock it
+        yield
+        return
+
     # Create a mock database connector to use everywhere
     mock_db = MagicMock()
 

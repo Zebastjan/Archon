@@ -1,0 +1,23 @@
+# Changes Since Last Release
+
+## Uncommitted (this branch)
+
+### Added
+{% for file in added %}
+- `{{ file }}`
+{% endfor %}
+
+### Modified
+{% for file in modified %}
+- `{{ file }}`
+{% endfor %}
+
+### Deleted
+{% for file in deleted %}
+- `{{ file }}`
+{% endfor %}
+
+{% if ai_summary %}
+## AI Summary
+{{ ai_summary }}
+{% endif %}

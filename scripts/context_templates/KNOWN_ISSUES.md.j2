@@ -1,0 +1,28 @@
+# Known Issues
+
+## Open Audit Findings
+{% if audit_findings %}
+{% for finding in audit_findings %}
+- **{{ finding.severity }}**: {{ finding.message }} (`{{ finding.file_path }}`)
+{% endfor %}
+{% else %}
+No open audit findings.
+{% endif %}
+
+## Dismissed Findings (Previously Flagged)
+{% if dismissed_findings %}
+{% for finding in dismissed_findings %}
+- **{{ finding.severity }}**: {{ finding.message }} (`{{ finding.file_path }}`) - Status: {{ finding.status }}
+{% endfor %}
+{% else %}
+No dismissed findings.
+{% endif %}
+
+## Tech Debt
+{% if tech_debt %}
+{% for item in tech_debt %}
+- {{ item }}
+{% endfor %}
+{% else %}
+No tracked tech debt items.
+{% endif %}

@@ -2,9 +2,14 @@
 
 Exposes capabilities to query extracted code entities and their relationships,
 enabling AI agents to understand code structure and dependencies.
+
+Version-Scoped Search (ADR-007):
+- Default search filters to current branch (HEAD)
+- Historical search available via explicit branch/commit parameters
 """
 
 from typing import Any
+import os
 
 from mcp.server.fastmcp import FastMCP
 
@@ -12,6 +17,16 @@ from src.mcp_server.utils.error_handling import MCPErrorFormatter
 from src.server.config.logfire_config import get_logger
 from src.server.services.code_entity_service import CodeEntityService
 from src.server.services.embedding_service import EmbeddingService
+
+# Check if we're in test mode
+_TEST_MODE = os.environ.get("TEST_MODE", "false").lower() == "true"
+
+try:
+    from src.mcp_server import worktree_context
+
+    HAS_WORKTREE_CONTEXT = True
+except ImportError:
+    HAS_WORKTREE_CONTEXT = False
 
 logger = get_logger(__name__)
 
@@ -31,6 +46,8 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         name: str,
         entity_type: str | None = None,
         language: str | None = None,
+        branch: str | None = None,
+        commit_sha: str | None = None,
     ) -> dict[str, Any]:
         """
         Find code entities by name in a repository.
@@ -38,11 +55,16 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         Searches for functions, classes, methods, or other code entities
         matching the given name (supports partial matching).
 
+        By default, searches only the current branch at HEAD (version-scoped).
+        Use branch/commit parameters to search specific versions.
+
         Args:
             repo_id: Repository UUID
             name: Entity name to search for (partial match)
             entity_type: Optional filter by entity type (function, class, method, etc.)
             language: Optional filter by language (python, typescript, javascript)
+            branch: Optional branch to search (default: current worktree branch)
+            commit_sha: Optional specific commit to search (overrides branch)
 
         Returns:
             Dict with matching entities and count
@@ -57,8 +79,32 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         try:
             service = CodeEntityService()
 
-            # Build filter
+            # Determine search scope - default to current branch
+            # In test mode, don't auto-use worktree context (tests provide their own data)
+            search_branch = branch
+            search_commit = commit_sha
+
+            if not search_branch and HAS_WORKTREE_CONTEXT and not _TEST_MODE:
+                search_branch = worktree_context.get_current_branch()
+
+            # Get all entities matching name
             entities = await service.find_entity_by_name(repo_id, name, entity_type)
+
+            # Filter by branch/commit if specified (version-scoped)
+            if search_branch or search_commit:
+                filtered = []
+                for e in entities:
+                    # Skip deleted entities by default
+                    if e.get("is_deleted"):
+                        continue
+                    # Filter by commit if specified
+                    if search_commit and e.get("commit_sha") != search_commit:
+                        continue
+                    # Filter by branch if specified
+                    if search_branch and e.get("branch_name") != search_branch:
+                        continue
+                    filtered.append(e)
+                entities = filtered
 
             # Apply language filter if specified
             if language and entities:
@@ -66,18 +112,26 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
 
             return {
                 "success": True,
+                "search_scope": {
+                    "branch": search_branch,
+                    "commit": commit_sha[:8] if commit_sha else None,
+                    "version_scoped": bool(search_branch or search_commit),
+                },
                 "count": len(entities),
                 "entities": [
                     {
                         "id": e["id"],
                         "name": e["name"],
                         "entity_type": e["entity_type"],
-                        "language": e["language"],
+                        "language": e.get("language"),
                         "file_path": e["file_path"],
                         "line_start": e["line_start"],
                         "line_end": e["line_end"],
                         "signature": e.get("signature"),
                         "docstring": e.get("docstring"),
+                        "commit_sha": e.get("commit_sha", "")[:8] if e.get("commit_sha") else None,
+                        "branch": e.get("branch_name"),
+                        "is_deleted": e.get("is_deleted", False),
                     }
                     for e in entities[:20]  # Limit to 20 results
                 ],
@@ -241,6 +295,8 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         entity_type: str | None = None,
         language: str | None = None,
         top_k: int = 10,
+        branch: str | None = None,
+        commit_sha: str | None = None,
     ) -> dict[str, Any]:
         """
         Search code entities by semantic similarity.
@@ -249,12 +305,17 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
         to the query text. Good for finding functionality when you don't
         know the exact function names.
 
+        By default, searches only the current branch at HEAD (version-scoped).
+        Use branch/commit parameters to search specific versions.
+
         Args:
             repo_id: Repository UUID
             query: Natural language query describing what you're looking for
             entity_type: Optional filter by entity type
             language: Optional filter by language
             top_k: Number of results to return (default 10)
+            branch: Optional branch to search (default: current worktree branch)
+            commit_sha: Optional specific commit to search (overrides branch)
 
         Returns:
             Dict with matching entities ranked by similarity
@@ -273,6 +334,7 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             # CRITICAL: Determine which embedding model was used for this repo
             # We must use the SAME model for the query to get valid results!
             from src.server.services.database.db_connector import get_database_connector, initialize_database
+
             await initialize_database()
             db = get_database_connector()
             await db.initialize()
@@ -285,7 +347,7 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
                 WHERE repo_id = $1 AND embedding_model IS NOT NULL
                 LIMIT 1
                 """,
-                repo_id
+                repo_id,
             )
 
             if not repo_model_result:
@@ -326,7 +388,31 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
                 repo_filter=repo_id,
             )
 
-            # Apply filters
+            # Determine search scope - default to current branch
+            # In test mode, don't auto-use worktree context (tests provide their own data)
+            search_branch = branch
+            search_commit = commit_sha
+
+            if not search_branch and HAS_WORKTREE_CONTEXT and not _TEST_MODE:
+                search_branch = worktree_context.get_current_branch()
+
+            # Apply version-scoped filtering (default to current branch)
+            if search_branch or search_commit:
+                filtered = []
+                for e in entities:
+                    # Skip deleted entities
+                    if e.get("is_deleted"):
+                        continue
+                    # Filter by commit if specified
+                    if search_commit and e.get("commit_sha") != search_commit:
+                        continue
+                    # Filter by branch if specified
+                    if search_branch and e.get("branch_name") != search_branch:
+                        continue
+                    filtered.append(e)
+                entities = filtered
+
+            # Apply other filters
             if entity_type:
                 entities = [e for e in entities if e.get("entity_type") == entity_type]
             if language:
@@ -338,19 +424,26 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
             return {
                 "success": True,
                 "query": query,
+                "search_scope": {
+                    "branch": search_branch,
+                    "commit": commit_sha[:8] if commit_sha else None,
+                    "version_scoped": bool(search_branch or search_commit),
+                },
                 "count": len(entities),
                 "entities": [
                     {
                         "id": e["id"],
                         "name": e["name"],
                         "entity_type": e["entity_type"],
-                        "language": e["language"],
+                        "language": e.get("language"),
                         "file_path": e["file_path"],
                         "line_start": e["line_start"],
                         "line_end": e["line_end"],
                         "signature": e.get("signature"),
                         "docstring": e.get("docstring"),
                         "similarity": round(e.get("similarity", 0), 4),
+                        "branch": e.get("branch_name"),
+                        "is_deleted": e.get("is_deleted", False),
                     }
                     for e in entities
                 ],
@@ -363,6 +456,95 @@ def register_code_entity_tools(mcp: FastMCP) -> None:
                 "error": str(e),
                 "query": query,
             }
+
+    @mcp.tool()
+    async def codebase_search_at_commit(
+        repo_id: str,
+        commit_sha: str,
+        query: str,
+        entity_type: str | None = None,
+        language: str | None = None,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Search code entities at a specific commit (time travel).
+
+        This tool allows you to query code as it existed at a specific commit,
+        useful for understanding historical implementations or investigating
+        bugs in past versions.
+
+        Args:
+            repo_id: Repository UUID
+            commit_sha: Full or partial commit SHA to search at
+            query: Natural language query describing what you're looking for
+            entity_type: Optional filter by entity type
+            language: Optional filter by language
+            top_k: Number of results to return (default 10)
+
+        Returns:
+            Dict with matching entities from that commit
+
+        Example:
+            >>> await codebase_search_at_commit(
+            ...     repo_id="uuid",
+            ...     commit_sha="abc1234def",
+            ...     query="user authentication"
+            ... )
+        """
+        # Call semantic search with explicit commit
+        return await codebase_search_by_semantics(
+            repo_id=repo_id,
+            query=query,
+            entity_type=entity_type,
+            language=language,
+            top_k=top_k,
+            commit_sha=commit_sha,
+            branch=None,  # commit takes precedence
+        )
+
+    @mcp.tool()
+    async def codebase_search_on_branch(
+        repo_id: str,
+        branch_name: str,
+        query: str,
+        entity_type: str | None = None,
+        language: str | None = None,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Search code entities on a specific branch.
+
+        This tool allows you to query code on any branch, useful for comparing
+        implementations across branches or checking feature branches.
+
+        Args:
+            repo_id: Repository UUID
+            branch_name: Name of the branch to search
+            query: Natural language query describing what you're looking for
+            entity_type: Optional filter by entity type
+            language: Optional filter by language
+            top_k: Number of results to return (default 10)
+
+        Returns:
+            Dict with matching entities on that branch
+
+        Example:
+            >>> await codebase_search_on_branch(
+            ...     repo_id="uuid",
+            ...     branch_name="feature/new-auth",
+            ...     query="user authentication"
+            ... )
+        """
+        # Call semantic search with explicit branch
+        return await codebase_search_by_semantics(
+            repo_id=repo_id,
+            query=query,
+            entity_type=entity_type,
+            language=language,
+            top_k=top_k,
+            branch=branch_name,
+            commit_sha=None,
+        )
 
     @mcp.tool()
     async def codebase_list_entities_in_file(

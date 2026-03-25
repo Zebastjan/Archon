@@ -15,24 +15,25 @@ logger = logging.getLogger(__name__)
 
 class Migration:
     """Single migration."""
-    
+
     def __init__(self, version: int, name: str, up_sql: str, down_sql: str = ""):
         self.version = version
         self.name = name
         self.up_sql = up_sql
         self.down_sql = down_sql
-    
+
     async def apply(self) -> bool:
         """Apply this migration."""
         try:
             db = get_database_connector()
             await db.execute(self.up_sql)
-            
+
             await db.execute(
                 "INSERT INTO archon_migrations (version, name, applied_at) VALUES ($1, $2, NOW()) ON CONFLICT (version) DO UPDATE SET applied_at = NOW()",
-                self.version, self.name
+                self.version,
+                self.name,
             )
-            
+
             logger.info(f"Applied migration {self.version}: {self.name}")
             return True
         except Exception as e:
@@ -103,7 +104,7 @@ MIGRATIONS = [
         DROP TABLE IF EXISTS archon_tasks;
         DROP TABLE IF EXISTS archon_projects;
         DROP TABLE IF EXISTS archon_migrations;
-        """
+        """,
     ),
     Migration(
         version=2,
@@ -134,7 +135,7 @@ MIGRATIONS = [
         down_sql="""
         DROP TABLE IF EXISTS archon_audit_findings;
         DROP TABLE IF EXISTS archon_audit_rules;
-        """
+        """,
     ),
     Migration(
         version=3,
@@ -147,7 +148,7 @@ MIGRATIONS = [
         ('broad-except', 'Broad Exception Handler', 'Catches all exceptions', 'security', 'error')
         ON CONFLICT (rule_id) DO NOTHING;
         """,
-        down_sql="DELETE FROM archon_audit_rules WHERE rule_id IN ('complexity-high', 'missing-docstring', 'broad-except');"
+        down_sql="DELETE FROM archon_audit_rules WHERE rule_id IN ('complexity-high', 'missing-docstring', 'broad-except');",
     ),
     Migration(
         version=4,
@@ -166,7 +167,7 @@ MIGRATIONS = [
             created_at TIMESTAMP DEFAULT NOW()
         );
         """,
-        down_sql="DROP TABLE IF EXISTS archon_code_entities;"
+        down_sql="DROP TABLE IF EXISTS archon_code_entities;",
     ),
     Migration(
         version=5,
@@ -226,7 +227,101 @@ MIGRATIONS = [
         DROP TABLE IF EXISTS archon_embeddings;
         DROP TABLE IF EXISTS archon_knowledge_items;
         DROP TABLE IF EXISTS archon_embedding_models;
-        """
+        """,
+    ),
+    Migration(
+        version=6,
+        name="add_version_scope_to_code_entities",
+        up_sql="""
+        -- Add columns for version-scoped search (ADR-007)
+        ALTER TABLE archon_code_entities ADD COLUMN IF NOT EXISTS branch_name TEXT;
+        ALTER TABLE archon_code_entities ADD COLUMN IF NOT EXISTS commit_sha TEXT;
+        ALTER TABLE archon_code_entities ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+        ALTER TABLE archon_code_entities ADD COLUMN IF NOT EXISTS parent_commit_sha TEXT;
+        ALTER TABLE archon_code_entities ADD COLUMN IF NOT EXISTS change_type TEXT;  -- added, modified, deleted
+        ALTER TABLE archon_code_entities ADD COLUMN IF NOT EXISTS entity_identity TEXT;  -- stable ID across commits
+
+        -- Create index for efficient branch filtering
+        CREATE INDEX IF NOT EXISTS idx_code_entities_branch 
+        ON archon_code_entities(repo_id, branch_name, is_deleted);
+
+        CREATE INDEX IF NOT EXISTS idx_code_entities_identity 
+        ON archon_code_entities(repo_id, entity_identity);
+
+        CREATE INDEX IF NOT EXISTS idx_code_entities_commit 
+        ON archon_code_entities(commit_sha);
+        """,
+        down_sql="""
+        DROP INDEX IF EXISTS idx_code_entities_branch;
+        DROP INDEX IF EXISTS idx_code_entities_identity;
+        DROP INDEX IF EXISTS idx_code_entities_commit;
+        ALTER TABLE archon_code_entities DROP COLUMN IF EXISTS branch_name;
+        ALTER TABLE archon_code_entities DROP COLUMN IF EXISTS commit_sha;
+        ALTER TABLE archon_code_entities DROP COLUMN IF EXISTS is_deleted;
+        ALTER TABLE archon_code_entities DROP COLUMN IF EXISTS parent_commit_sha;
+        ALTER TABLE archon_code_entities DROP COLUMN IF EXISTS change_type;
+        ALTER TABLE archon_code_entities DROP COLUMN IF EXISTS entity_identity;
+        """,
+    ),
+    Migration(
+        version=7,
+        name="add_audit_feedback_loop_tables",
+        up_sql="""
+        -- Extend archon_audit_findings with outcome tracking (ADR-011)
+        ALTER TABLE archon_audit_findings ADD COLUMN IF NOT EXISTS resolution_note TEXT;
+        ALTER TABLE archon_audit_findings ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;
+        ALTER TABLE archon_audit_findings ADD COLUMN IF NOT EXISTS category TEXT;
+
+        -- Audit outcomes table
+        CREATE TABLE IF NOT EXISTS archon_audit_outcomes (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            finding_id UUID REFERENCES archon_audit_findings(id) ON DELETE CASCADE,
+            outcome_type TEXT NOT NULL,  -- bug_filed, bug_hit_production, validated_correct
+            outcome_at TIMESTAMP DEFAULT NOW(),
+            notes TEXT,
+            related_issue_id TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Learning events table
+        CREATE TABLE IF NOT EXISTS archon_audit_learning_events (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            finding_id UUID REFERENCES archon_audit_findings(id) ON DELETE CASCADE,
+            outcome_id UUID REFERENCES archon_audit_outcomes(id) ON DELETE SET NULL,
+            event_type TEXT NOT NULL,  -- false_negative, dismissed_then_hit, correct_dismissal
+            retrospective_task_id TEXT,
+            correlation_data JSONB DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Indexes for efficient querying
+        CREATE INDEX IF NOT EXISTS idx_audit_outcomes_finding 
+        ON archon_audit_outcomes(finding_id);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_outcomes_type 
+        ON archon_audit_outcomes(outcome_type);
+
+        CREATE INDEX IF NOT EXISTS idx_learning_events_finding 
+        ON archon_audit_learning_events(finding_id);
+
+        CREATE INDEX IF NOT EXISTS idx_learning_events_type 
+        ON archon_audit_learning_events(event_type);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_findings_category 
+        ON archon_audit_findings(category);
+        """,
+        down_sql="""
+        DROP INDEX IF EXISTS idx_audit_findings_category;
+        DROP INDEX IF EXISTS idx_learning_events_type;
+        DROP INDEX IF EXISTS idx_learning_events_finding;
+        DROP INDEX IF EXISTS idx_audit_outcomes_type;
+        DROP INDEX IF EXISTS idx_audit_outcomes_finding;
+        DROP TABLE IF EXISTS archon_audit_learning_events;
+        DROP TABLE IF EXISTS archon_audit_outcomes;
+        ALTER TABLE archon_audit_findings DROP COLUMN IF EXISTS category;
+        ALTER TABLE archon_audit_findings DROP COLUMN IF EXISTS resolved_at;
+        ALTER TABLE archon_audit_findings DROP COLUMN IF EXISTS resolution_note;
+        """,
     ),
 ]
 
@@ -265,17 +360,17 @@ async def migrate(target_version: int | None = None) -> bool:
         logger.error("pgvector extension is not available!")
         logger.error("See PGVECTOR_INSTALL.md for installation instructions")
         return False
-    
+
     current = await get_current_version()
     logger.info(f"Current schema version: {current}")
-    
+
     if target_version is None:
         target_version = max(m.version for m in MIGRATIONS)
-    
+
     if current >= target_version:
         logger.info(f"Already at version {current}")
         return True
-    
+
     for migration in MIGRATIONS:
         if migration.version > current and migration.version <= target_version:
             print(f"Applying migration {migration.version}: {migration.name}...")
@@ -283,7 +378,7 @@ async def migrate(target_version: int | None = None) -> bool:
             if not success:
                 logger.error(f"Migration {migration.version} failed!")
                 return False
-    
+
     logger.info(f"Migrated to version {target_version}")
     return True
 
@@ -308,7 +403,7 @@ async def status():
     pgv = await check_pgvector()
     current = await get_current_version()
     latest = max(m.version for m in MIGRATIONS)
-    
+
     print(f"pgvector available: {pgv}")
     print(f"Current version: {current}")
     print(f"Latest version: {latest}")
@@ -320,11 +415,11 @@ async def main():
     import argparse
     import asyncio
     import sys
-    
+
     parser = argparse.ArgumentParser(description="Database migrations")
     parser.add_argument("command", choices=["migrate", "reset", "status"])
     args = parser.parse_args()
-    
+
     if args.command == "migrate":
         success = await migrate()
         sys.exit(0 if success else 1)
@@ -337,4 +432,5 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     import sys
+
     asyncio.run(main())

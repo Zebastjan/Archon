@@ -13,11 +13,46 @@ import traceback
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Worktree context - populated at startup
+WORKTREE_CONTEXT = {
+    "branch": os.getenv("ARCHON_BRANCH", "main"),
+    "commit": os.getenv("ARCHON_COMMIT", ""),
+    "worktree_path": os.getenv("ARCHON_WORKTREE_PATH", ""),
+    "repo_root": os.getenv("ARCHON_REPO_ROOT", ""),
+}
+
+# Log worktree context at startup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,
+)
+logger = logging.getLogger(__name__)
+
+if WORKTREE_CONTEXT["branch"] != "main" or WORKTREE_CONTEXT["commit"]:
+    logger.info(
+        f"[Worktree] Branch: {WORKTREE_CONTEXT['branch']}, Commit: {WORKTREE_CONTEXT['commit'][:8] if WORKTREE_CONTEXT['commit'] else 'unknown'}"
+    )
+
 # Load environment from project root .env if it exists
 project_root = Path(__file__).resolve().parent.parent
 dotenv_path = project_root / ".env"
 if dotenv_path.exists():
     load_dotenv(dotenv_path, override=True)
+
+# Populate worktree_context module for tools to use
+try:
+    from src.mcp_server import worktree_context as wt_ctx
+
+    wt_ctx.set_worktree_context(
+        branch=os.getenv("ARCHON_BRANCH", "main"),
+        commit=os.getenv("ARCHON_COMMIT", ""),
+        worktree_path=os.getenv("ARCHON_WORKTREE_PATH", ""),
+        repo_root=os.getenv("ARCHON_REPO_ROOT", ""),
+    )
+    logger.info(f"✓ Worktree context loaded: branch={wt_ctx.get_current_branch()}")
+except Exception as e:
+    logger.warning(f"Could not load worktree context: {e}")
 
 # Configure logging to stderr (stdout is reserved for stdio protocol)
 logging.basicConfig(
@@ -30,15 +65,23 @@ logger = logging.getLogger(__name__)
 # Import FastMCP
 try:
     from mcp.server.fastmcp import FastMCP
+
     logger.info("✓ FastMCP imported")
 except ImportError as e:
     logger.error(f"Failed to import FastMCP: {e}")
     logger.error("Make sure to run with: uv run --group mcp")
     sys.exit(1)
 
+
+# Worktree context for tools
+def get_worktree_context():
+    """Get current worktree context."""
+    return WORKTREE_CONTEXT
+
+
 # Use Archon's default MCP instructions
 # We don't import from mcp_server.py to avoid HTTP-specific dependencies
-MCP_INSTRUCTIONS = """
+MCP_INSTRUCTIONS = f"""
 # Archon MCP Server Instructions
 
 ## 🚨 CRITICAL RULES (ALWAYS FOLLOW)
@@ -46,16 +89,22 @@ MCP_INSTRUCTIONS = """
 2. **Research First**: Before implementing, use rag_search_knowledge_base and rag_search_code_examples
 3. **Task-Driven Development**: Never code without checking current tasks first
 
+## 🌿 Worktree Context
+- **Current Branch**: {WORKTREE_CONTEXT["branch"]}
+- **Current Commit**: {WORKTREE_CONTEXT["commit"][:8] if WORKTREE_CONTEXT["commit"] else "unknown"}
+- All code search tools automatically scope to this branch
+
 ## 🔍 Research Patterns
 - Keep queries short and focused (2-5 keywords)
 - Use `rag_search_knowledge_base()` for documentation searches
 - Use `rag_search_code_examples()` for code patterns
 
 ## 📋 Core Workflow
-1. Check tasks with `list_tasks()`
-2. Research with RAG tools
-3. Implement based on findings
-4. Update task status
+1. Check current context: `worktree_get_current_info()`
+2. Check tasks: `list_tasks()`
+3. Research with RAG tools
+4. Implement based on findings
+5. Commit with: `commit_with_review()`
 
 For full documentation, see Archon project documentation.
 """
@@ -74,6 +123,7 @@ logger.info("Registering MCP tool modules...")
 
 try:
     from src.mcp_server.tool_registration import register_all_tool_modules
+
     count = register_all_tool_modules(mcp)
     if count == 0:
         logger.warning("No tool modules registered - server will have limited functionality")

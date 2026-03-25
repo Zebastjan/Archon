@@ -17,6 +17,14 @@ Archon: Code intelligence platform with MCP tools for AI agents.
 
 ### MCP Server Access
 
+**Recommended (worktree-aware):**
+```bash
+./scripts/archon-mcp
+```
+
+This wrapper automatically detects the current branch and commit, enabling version-scoped search.
+
+**Legacy (manual):**
 ```bash
 docker exec -i archon python -m src.mcp_server.mcp_server_stdio
 ```

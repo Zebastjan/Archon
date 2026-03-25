@@ -1,0 +1,103 @@
+#!/bin/bash
+# archon-mcp: Auto-detects worktree context and invokes MCP server
+#
+# Usage:
+#   archon-mcp              # Auto-detect branch and run
+#   archon-mcp --branch main  # Force specific branch
+#   archon-mcp --help         # Show help
+#
+# This wrapper detects the current git branch/commit from the working directory
+# and passes them to the MCP server via environment variables.
+
+set -e
+
+CONTAINER_NAME="archon"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+
+# Default values
+FORCE_BRANCH=""
+FORCE_COMMIT=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --branch)
+            FORCE_BRANCH="$2"
+            shift 2
+            ;;
+        --commit)
+            FORCE_COMMIT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "archon-mcp - Worktree-aware MCP server wrapper"
+            echo ""
+            echo "Usage: archon-mcp [options]"
+            echo ""
+            echo "Options:"
+            echo "  --branch <name>  Force specific branch"
+            echo "  --commit <sha>   Force specific commit"
+            echo "  --help, -h       Show this help"
+            echo ""
+            echo "Environment:"
+            echo "  ARCHON_CONTAINER  Container name (default: archon)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage"
+            exit 1
+            ;;
+    esac
+done
+
+# Detect git context if not forced
+if [ -n "$FORCE_BRANCH" ]; then
+    BRANCH="$FORCE_BRANCH"
+elif command -v git &> /dev/null && [ -d ".git" ]; then
+    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+else
+    BRANCH="unknown"
+fi
+
+if [ -n "$FORCE_COMMIT" ]; then
+    COMMIT="$FORCE_COMMIT"
+elif command -v git &> /dev/null && [ -d ".git" ]; then
+    COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+else
+    COMMIT="unknown"
+fi
+
+WORKTREE_PATH="$(pwd)"
+
+# Handle detached HEAD
+if [ "$BRANCH" = "HEAD" ]; then
+    BRANCH="detached-$COMMIT"
+fi
+
+# Export for MCP server
+export ARCHON_BRANCH="$BRANCH"
+export ARCHON_COMMIT="$COMMIT"
+export ARCHON_WORKTREE_PATH="$WORKTREE_PATH"
+export ARCHON_REPO_ROOT="$REPO_ROOT"
+
+# Check if container is running
+if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "[archon-mcp] ERROR: Container '$CONTAINER_NAME' is not running" >&2
+    echo "[archon-mcp] Start with: docker start $CONTAINER_NAME" >&2
+    exit 1
+fi
+
+echo "[archon-mcp] Branch: $BRANCH, Commit: ${COMMIT:0:8}, Path: $WORKTREE_PATH"
+
+# Run MCP server with context via docker exec
+# -i: interactive (required for stdio)
+# -e: pass environment variables
+# --init: ensure proper signal handling
+exec docker exec -i -e ARCHON_BRANCH="$ARCHON_BRANCH" \
+    -e ARCHON_COMMIT="$ARCHON_COMMIT" \
+    -e ARCHON_WORKTREE_PATH="$ARCHON_WORKTREE_PATH" \
+    -e ARCHON_REPO_ROOT="$ARCHON_REPO_ROOT" \
+    "$CONTAINER_NAME" \
+    python -m src.mcp_server.mcp_server_stdio

@@ -5,13 +5,29 @@ This guide covers how to connect various IDEs to the Archon MCP server using STD
 ## Prerequisites
 
 - Docker container `archon` must be running
-- MCP server module: `src.mcp_server.mcp_server_stdio`
+- The `scripts/archon-mcp` wrapper script must be executable and accessible
+
+## Recommended: Worktree-Aware Wrapper
+
+The `archon-mcp` wrapper automatically detects the current git branch and commit, enabling version-scoped search. This is the recommended approach.
+
+```bash
+# Make sure it's executable
+chmod +x scripts/archon-mcp
+
+# Test it
+./scripts/archon-mcp --help
+```
 
 ## Claude Code
 
-### Method: CLI (Recommended)
+### Method: CLI (Recommended with wrapper)
 
-Use the `claude mcp add` command to add the MCP server:
+```bash
+claude mcp add --transport stdio --scope user archon -- /path/to/archon/scripts/archon-mcp
+```
+
+### Method: CLI (Legacy - no worktree awareness)
 
 ```bash
 claude mcp add --transport stdio --scope user archon -- docker exec -i archon python -m src.mcp_server.mcp_server_stdio
@@ -26,7 +42,7 @@ claude mcp add --transport stdio --scope user archon -- docker exec -i archon py
 claude mcp list
 ```
 
-Should show: `archon: docker exec -i archon python -m src.mcp_server.mcp_server_stdio - ✓ Connected`
+Should show: `archon: ...archon-mcp - ✓ Connected`
 
 ### Troubleshooting
 
@@ -35,7 +51,21 @@ Should show: `archon: docker exec -i archon python -m src.mcp_server.mcp_server_
 
 ## Windsurf
 
-Project-level config in `.windsurf/mcp.json`:
+### Worktree-Aware (Recommended)
+
+```json
+{
+  "mcpServers": {
+    "archon": {
+      "command": "/path/to/archon/scripts/archon-mcp",
+      "args": [],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+### Legacy
 
 ```json
 {
@@ -51,7 +81,22 @@ Project-level config in `.windsurf/mcp.json`:
 
 ## Cursor
 
-Project-level config in `.cursor/mcp.json`:
+### Worktree-Aware (Recommended)
+
+```json
+{
+  "mcpServers": {
+    "archon": {
+      "command": "/path/to/archon/scripts/archon-mcp",
+      "args": [],
+      "type": "stdio",
+      "enabled": true
+    }
+  }
+}
+```
+
+### Legacy
 
 ```json
 {
@@ -68,7 +113,21 @@ Project-level config in `.cursor/mcp.json`:
 
 ## OctoFriend
 
-Project-level config in `.octofriend/octofriend.json5`:
+### Worktree-Aware (Recommended)
+
+```json5
+{
+  mcpServers: {
+    archon: {
+      command: "/path/to/archon/scripts/archon-mcp",
+      args: [],
+      type: "stdio",
+    },
+  },
+}
+```
+
+### Legacy
 
 ```json5
 {
@@ -84,7 +143,21 @@ Project-level config in `.octofriend/octofriend.json5`:
 
 ## OpenCode
 
-Project-level config in `.opencode/opencode.jsonc`:
+### Worktree-Aware (Recommended)
+
+```jsonc
+{
+  "mcp": {
+    "archon": {
+      "type": "local",
+      "command": ["/path/to/archon/scripts/archon-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+### Legacy
 
 ```jsonc
 {
@@ -124,9 +197,25 @@ docker ps --filter "name=archon"
 Test the MCP server manually:
 
 ```bash
-docker exec archon python -m src.mcp_server.mcp_server_stdio
+# Worktree-aware
+./scripts/archon-mcp
+
+# Legacy
+docker exec -i archon python -m src.mcp_server.mcp_server_stdio
 ```
+
+## Worktree Context
+
+When using the wrapper, the MCP server automatically:
+
+1. Detects current branch: `git rev-parse --abbrev-ref HEAD`
+2. Detects current commit: `git rev-parse HEAD`
+3. Passes these to the MCP server via environment variables
+4. All code search tools automatically scope to the current branch
+
+Use `worktree_get_current_info()` to see current context, and `worktree_switch("branch-name")` to get instructions for switching worktrees.
 
 ## Related
 
 - [ADR-003: MCP Server Consolidation to STDIO Transport](../ADRs/003-mcp-server-consolidation.md)
+- [ADR-008: Worktree-Per-Context Model](../ADRs/008-worktree-context-binding.md)

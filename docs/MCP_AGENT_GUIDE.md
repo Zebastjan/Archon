@@ -208,3 +208,41 @@ The agent should automatically determine which repo based on:
 - File extension (.py vs .ts/.tsx)
 - Path patterns (python/src/ vs octofriend/)
 - Query context
+
+---
+
+## Version-Scoped Search (ADR-007)
+
+All code search tools automatically scope to the current branch at HEAD. This prevents agents from receiving stale code context from deleted functions.
+
+### Default Search (HEAD only)
+These tools search only the current branch by default:
+
+- `codebase_find_entity(repo_id, name)` - Find by name
+- `codebase_search_by_semantics(repo_id, query)` - Semantic search
+- `codebase_list_entities_in_file(repo_id, file_path)` - List in file
+
+Each returns `search_scope` in the response:
+```json
+{
+  "success": true,
+  "search_scope": {
+    "branch": "feature/new-auth",
+    "version_scoped": true
+  },
+  ...
+}
+```
+
+### Historical Search (explicit)
+Use these tools to query historical code:
+
+- `codebase_search_at_commit(repo_id, commit_sha, query)` - Search at specific commit
+- `codebase_search_on_branch(repo_id, branch_name, query)` - Search on specific branch
+- `codebase_entity_evolution(repo_id, entity_name)` - Track entity changes (already exists)
+
+### Worktree Context
+The MCP server auto-detects the current branch from the git context:
+- Run `./scripts/archon-mcp` to start MCP (recommended)
+- Or use `worktree_get_current_info()` to see current context
+- Use `worktree_switch("branch-name")` for instructions to switch worktrees

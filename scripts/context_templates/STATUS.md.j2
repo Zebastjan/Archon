@@ -1,0 +1,19 @@
+# Archon Status
+
+## Current Branch: {{ branch }}
+**Purpose**: {{ purpose }}
+
+## Recent Changes
+{% for commit in recent_commits %}
+- {{ commit.sha }} - {{ commit.message }}
+{% endfor %}
+
+## Active Worktrees
+{% for wt in active_worktrees %}
+- {{ wt.branch }} ({{ "this branch" if wt.is_current else wt.path }})
+{% endfor %}
+
+## Quick Commands
+- Run tests: `pytest python/tests/`
+- Start MCP: `archon-mcp`
+- Commit: `commit_with_review()`
