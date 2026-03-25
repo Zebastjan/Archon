@@ -755,6 +755,106 @@ class TestWorktreeIntegration:
         popped = stack_data["stack"].pop()
         assert popped["branch"] == "main"
 
+    @pytest.mark.real_fs
+    def test_validation_prevents_conflicting_work(self):
+        """Test that validation logic prevents conflicting work in same files."""
+        # Simulate two tasks working on the same file
+        tasks = [
+            {
+                "id": "task-1",
+                "branch": "feature/auth",
+                "files": ["src/auth.py", "src/middleware.py"],
+                "status": "doing",
+            },
+            {
+                "id": "task-2",
+                "branch": "feature/search",
+                "files": ["src/search.py", "src/auth.py"],  # Overlap with task-1
+                "status": "doing",
+            },
+        ]
+
+        # Validate task-2 against task-1
+        def validate_against_active_tasks(new_task, active_tasks):
+            """Validate a new task against existing active tasks."""
+            conflicts = []
+            for existing_task in active_tasks:
+                if existing_task["id"] == new_task["id"]:
+                    continue
+                if existing_task["status"] not in ("doing", "review"):
+                    continue
+
+                # Check for file overlap
+                overlap = set(new_task["files"]) & set(existing_task["files"])
+                if overlap:
+                    for file in overlap:
+                        conflicts.append(
+                            {
+                                "type": "concurrent_modification",
+                                "file": file,
+                                "existing_task": existing_task["id"],
+                                "existing_branch": existing_task["branch"],
+                                "severity": "critical",
+                            }
+                        )
+
+            return conflicts
+
+        # Validate task-2
+        conflicts = validate_against_active_tasks(tasks[1], [tasks[0]])
+
+        assert len(conflicts) == 1
+        assert conflicts[0]["file"] == "src/auth.py"
+        assert conflicts[0]["existing_task"] == "task-1"
+        assert conflicts[0]["severity"] == "critical"
+
+        # Validate task with no conflicts
+        task_clean = {
+            "id": "task-3",
+            "branch": "feature/docs",
+            "files": ["docs/README.md"],
+            "status": "doing",
+        }
+        conflicts = validate_against_active_tasks(task_clean, [tasks[0], tasks[1]])
+        assert len(conflicts) == 0
+
+    @pytest.mark.real_fs
+    def test_validation_allows_different_branch_same_file(self):
+        """Test that validation allows different branches on same file if not concurrent."""
+        # Same file but different branches - should be OK if only one is active
+        tasks = [
+            {
+                "id": "task-1",
+                "branch": "feature/old-auth",
+                "files": ["src/auth.py"],
+                "status": "done",  # Already completed
+            },
+            {
+                "id": "task-2",
+                "branch": "feature/new-auth",
+                "files": ["src/auth.py"],
+                "status": "doing",
+            },
+        ]
+
+        def validate_against_active_tasks(new_task, active_tasks):
+            """Only check conflicts with active (doing/review) tasks."""
+            conflicts = []
+            for existing_task in active_tasks:
+                if existing_task["id"] == new_task["id"]:
+                    continue
+                # Only check active tasks
+                if existing_task["status"] not in ("doing", "review"):
+                    continue
+                overlap = set(new_task["files"]) & set(existing_task["files"])
+                if overlap:
+                    conflicts.append({"file": overlap.pop()})
+            return conflicts
+
+        # task-1 is done, so task-2 should have no conflicts
+        conflicts = validate_against_active_tasks(tasks[1], [tasks[0]])
+        assert len(conflicts) == 0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

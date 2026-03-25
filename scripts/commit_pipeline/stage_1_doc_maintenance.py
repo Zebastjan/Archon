@@ -100,6 +100,17 @@ def run_stage_1_doc_maintenance(repo_root: Path) -> dict[str, Any]:
                         f"Context bundle is {int(age_hours)} hours old - consider regenerating"
                     )
 
+        # Skill drift detection: check if tool changes require skill updates
+        skill_drift = check_skill_drift(repo_root, changed_files)
+        if skill_drift:
+            result["details"]["skill_drift"] = skill_drift
+            if skill_drift.get("affected_skills"):
+                result["status"] = "warning"
+                result["issues"].append(
+                    f"Tool changes may require {len(skill_drift['affected_skills'])} skill updates"
+                )
+                result["recommendations"].extend(skill_drift.get("recommendations", []))
+
         if not result["issues"] and not result["recommendations"]:
             result["status"] = "pass"
 
@@ -108,3 +119,79 @@ def run_stage_1_doc_maintenance(repo_root: Path) -> dict[str, Any]:
         result["issues"].append(f"Error in doc maintenance check: {str(e)}")
 
     return result
+
+
+def check_skill_drift(
+    repo_root: Path, changed_files: list[str]
+) -> dict[str, Any] | None:
+    """Check if tool changes require skill documentation updates.
+
+    Maps MCP tool files to skills that document their usage.
+    Returns None if no drift detected, or dict with affected skills.
+
+    Args:
+        repo_root: Root directory of git repository
+        changed_files: List of files changed in commit
+
+    Returns:
+        Dict with skill drift information, or None
+    """
+    # Map tool file patterns to related skills
+    TOOL_TO_SKILL_MAP = {
+        # Code entity tools → version-scoped search skill
+        "python/src/mcp_server/features/code_entities/": [
+            "skills/mcp/version-scoped-search.md",
+        ],
+        # Worktree tools → worktree workflow skills
+        "python/src/mcp_server/features/worktree/": [
+            "skills/workflows/zig-zag-workflow.md",
+            "skills/workflows/feature-branch.md",
+        ],
+        # Code audit tools → audit-related skills
+        "python/src/mcp_server/features/code_audit/": [
+            "skills/mcp/version-scoped-search.md",  # References audit tools
+        ],
+        # Main MCP server → all skills
+        "python/src/mcp_server/mcp_server_stdio.py": [
+            "skills/ide-setup/opencode.md",
+            "skills/ide-setup/claude-code.md",
+        ],
+    }
+
+    affected_skills: list[str] = []
+    tool_files_changed: list[str] = []
+
+    # Check if any tool files changed
+    for file_path in changed_files:
+        for tool_pattern, skills in TOOL_TO_SKILL_MAP.items():
+            if file_path.startswith(tool_pattern) or file_path == tool_pattern:
+                tool_files_changed.append(file_path)
+                affected_skills.extend(skills)
+
+    if not tool_files_changed:
+        return None
+
+    # Deduplicate skills
+    affected_skills = list(set(affected_skills))
+
+    # Check if affected skills actually exist
+    existing_skills = []
+    for skill_path in affected_skills:
+        if (repo_root / skill_path).exists():
+            existing_skills.append(skill_path)
+
+    # Generate recommendations
+    recommendations = []
+    if existing_skills:
+        recommendations.append(
+            f"Review these skills for accuracy: {', '.join(existing_skills)}"
+        )
+        recommendations.append(
+            "Check if tool signatures, parameters, or behavior changed"
+        )
+
+    return {
+        "tool_files_changed": tool_files_changed,
+        "affected_skills": existing_skills,
+        "recommendations": recommendations,
+    }
