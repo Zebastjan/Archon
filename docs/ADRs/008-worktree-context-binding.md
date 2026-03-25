@@ -143,5 +143,5 @@ Update all IDE setup docs to use `archon-mcp` instead of direct docker exec:
 - [x] Update `mcp_server_stdio.py` to read env vars
 - [x] Add `worktree_switch` MCP tool
 - [x] Update IDE setup docs (CLAUDE.md, AGENTS.md, etc.)
-- [ ] Test: switch branches, verify search scope changes
-- [ ] Test: create new worktree via tool
+- [x] Test: switch branches, verify search scope changes (test_worktree_integration.py)
+- [x] Test: create new worktree via tool (test_worktree_integration.py)

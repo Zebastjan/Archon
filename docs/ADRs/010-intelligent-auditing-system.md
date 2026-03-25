@@ -118,5 +118,5 @@ archon_audit_findings (
 
 - [x] Layer 1: Base auditor implemented
 - [x] Layer 2: Meta-audit via orchestrator
-- [ ] Layer 3: Feedback loop (ADR-011)
-- [ ] Document tool usage in skills/
+- [x] Layer 3: Feedback loop (ADR-011)
+- [x] Document tool usage in skills/

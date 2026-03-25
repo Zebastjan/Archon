@@ -193,10 +193,10 @@ Add to `~/.config/opencode/mcp-config.json`:
 ## Implementation Checklist
 
 - [x] Create `skills/` directory structure
-- [ ] Write commit-hook skills (doc, test, audit)
+- [x] Write commit-hook skills (doc, test, audit)
 - [x] Write MCP usage guides (version-scoped-search)
 - [x] Write workflow guides (zig-zag, feature-branch)
 - [x] Write IDE setup guides (opencode, claude-code)
 - [x] Write prompt templates (session-bootstrap, branch-discipline, leverage-mcp-tools)
 - [x] Add skill drift detection to commit hook
-- [ ] Test: update tool → skill flagged for update
+- [x] Test: update tool → skill flagged for update (test_worktree_integration.py)

@@ -191,6 +191,6 @@ if not validation.is_safe:
 - [x] Implement context-stack.json management
 - [x] Update IDE setup docs with worktree commands
 - [x] Add skill: workflows/zig-zag-workflow.md
-- [ ] Test: push → switch → pop flow
-- [ ] Test: create new worktree via tool
-- [ ] Test: validation prevents conflicting work
+- [x] Test: push → switch → pop flow (test_worktree_stack.py)
+- [x] Test: create new worktree via tool (test_worktree_stack.py)
+- [x] Test: validation prevents conflicting work (test_worktree_stack.py)

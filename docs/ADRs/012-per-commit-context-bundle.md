@@ -150,5 +150,5 @@ Post-commit hook runs async stages → writes `.archon/hooks/last-run.json` → 
 - [x] Implement `scripts/generate_context_bundle.py`
 - [x] Integrate with post-commit hook (on-change detection)
 - [x] Update STATUS.md with current branch info
-- [ ] Test: generate on code change
-- [ ] Test: don't generate on test-only change
+- [x] Test: generate on code change (test_context_bundle.py)
+- [x] Test: don't generate on test-only change (test_context_bundle.py)

@@ -155,5 +155,5 @@ Each stage:
 - [x] Implement stage_2_test_coverage.py
 - [x] Implement stage_3_code_audit.py
 - [x] Update hooks-last-run.json generation
-- [ ] Test: complete commit flow with checklist
-- [ ] Test: verify async pipeline runs after commit
+- [x] Test: complete commit flow with checklist (test_worktree_integration.py)
+- [x] Test: verify async pipeline runs after commit (test_worktree_integration.py)
