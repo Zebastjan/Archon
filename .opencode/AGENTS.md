@@ -47,6 +47,33 @@ Example:
 - "How many functions are in this codebase?"
 - "Show me the file structure"
 
+### Skill 6: Working Tree Management
+**When**: You need to manage your current working state
+**Tools**: `reindex_file()`, `reindex_working_tree()`, `working_tree_stats()`
+
+Example:
+- "Index my current changes before searching"
+- "Show me what's in the working tree"
+- "Re-index this file after I edited it"
+
+### Skill 7: Working Tree Search
+**When**: You want to search your current working state
+**Tools**: `search_working_tree()`, `search_all_states()`
+
+Example:
+- "Find my current auth implementation"
+- "Search across both working tree and committed code"
+- "Find what I just wrote in the working tree"
+
+### Skill 8: Skills Management
+**When**: You want to index or manage skill files
+**Tools**: `skills_index()`, `skills_discover()`, `skills_delete()`
+
+Example:
+- "Index all skills in the skills/ directory"
+- "What skills do we have available?"
+- "Remove this old skill from the index"
+
 ## Workflow Patterns
 
 ### Pattern 1: Understand a Feature
@@ -65,6 +92,17 @@ Example:
 2. **find_by_file**: Look at key files
 3. **semantic_search**: Find relevant features
 4. **get_entity_context**: Deep dive
+
+### Pattern 4: Work with Working Tree
+1. **reindex_working_tree**: Index all modified files
+2. **search_working_tree**: Find what you're working on
+3. **working_tree_stats**: See what's indexed
+4. **reindex_file**: Index specific file after edit
+
+### Pattern 5: Search Across States
+1. **search_all_states**: Search both working_tree and committed
+2. **compare results**: See differences between states
+3. **working_tree_stats**: Understand working tree status
 
 ## Repository IDs
 
@@ -102,6 +140,83 @@ Use codebase_get_entity_context with entity_id "uuid-from-previous-search"
 ### For Finding Callers
 ```
 Use codebase_find_callers in repo "archon-python" for function "generate_embeddings"
+```
+
+## Working Tree Tools
+
+### Reindex Tools (ADR-016)
+Use these tools when you've made changes and need to update the search index:
+
+```
+# Re-index a single file after editing
+await reindex_file(repo_id="uuid", filepath="src/auth.py")
+
+# Re-index all modified files in working tree
+await reindex_working_tree(repo_id="uuid")
+
+# Get statistics about working tree
+await working_tree_stats(repo_id="uuid")
+```
+
+### Working Tree Search
+Search across both working tree and committed code:
+
+```
+# Search only working tree (current state)
+await search_working_tree(repo_id="uuid", query="authentication logic")
+
+# Search both working tree and committed
+await search_all_states(repo_id="uuid", query="database connection")
+
+# Filter by file path
+await search_working_tree(
+    repo_id="uuid",
+    query="auth",
+    file_path_filter="src/auth/%"
+)
+```
+
+## Skills Management
+
+### Index Skills Directory
+Make the skills/ directory searchable:
+
+```
+# Index all skills
+await skills_index(repo_id="uuid")
+
+# Discover what skills exist
+await skills_discover()
+
+# Remove a skill from index
+await skills_delete(repo_id="uuid", skill_path="skills/prompts/old-skill.md")
+```
+
+## Content Type Filter
+
+Filter search results by content type:
+
+```
+# Search only code entities
+await codebase_search_by_semantics(
+    repo_id="uuid",
+    query="authentication",
+    content_type="code"
+)
+
+# Search only documentation
+await codebase_search_by_semantics(
+    repo_id="uuid",
+    query="setup guide",
+    content_type="docs"
+)
+
+# Search all (default)
+await codebase_search_by_semantics(
+    repo_id="uuid",
+    query="configuration",
+    content_type="all"
+)
 ```
 
 ## Automatic Repository Detection

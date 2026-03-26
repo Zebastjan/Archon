@@ -18,6 +18,7 @@ even if `foo()` was deleted in the current commit. Now:
 
 ### Default Search (HEAD only)
 - `codebase_search_by_semantics(repo_id, query)` - Semantic search at HEAD
+- `codebase_search_by_semantics(repo_id, query, content_type="code")` - Filter by content type
 - `codebase_find_entity(repo_id, name)` - Find entity at HEAD
 - `codebase_list_entities_in_file(repo_id, file_path)` - List entities at HEAD
 
@@ -25,6 +26,12 @@ even if `foo()` was deleted in the current commit. Now:
 - `codebase_search_at_commit(repo_id, commit_sha, query)` - Search at specific commit
 - `codebase_search_on_branch(repo_id, branch_name, query)` - Search on specific branch
 - `codebase_entity_evolution(repo_id, entity_name)` - Track entity changes over time
+
+### Working Tree Search (current uncommitted state)
+- `search_working_tree(repo_id, query)` - Search only working tree chunks
+- `search_all_states(repo_id, query)` - Search both working_tree and committed
+- `reindex_file(repo_id, filepath)` - Update index for single file
+- `reindex_working_tree(repo_id)` - Update index for all modified files
 
 ## Examples
 
@@ -57,6 +64,46 @@ result = await codebase_search_on_branch(
 )
 ```
 
+### Search working tree (uncommitted changes)
+```python
+# First re-index modified files
+await reindex_working_tree(repo_id="uuid")
+
+# Then search your current working state
+result = await search_working_tree(
+    repo_id="uuid",
+    query="authentication logic"
+)
+```
+
+### Search across both states
+```python
+# See both working tree and committed code in one query
+result = await search_all_states(
+    repo_id="uuid",
+    query="database connection",
+    include_working_tree=True,
+    include_committed=True
+)
+```
+
+### Filter by content type
+```python
+# Search only code entities
+result = await codebase_search_by_semantics(
+    repo_id="uuid",
+    query="authentication",
+    content_type="code"
+)
+
+# Search only documentation
+result = await codebase_search_by_semantics(
+    repo_id="uuid",
+    query="setup guide",
+    content_type="docs"
+)
+```
+
 ## Current Branch Detection
 
 The MCP server automatically detects the current branch from:
@@ -69,6 +116,12 @@ To check current search scope:
 ```python
 result = await worktree_get_current_info()
 # Returns: {branch_name, commit_sha, is_clean, ...}
+```
+
+To check working tree index status:
+```python
+stats = await working_tree_stats(repo_id="uuid")
+# Returns: {chunks_by_source, working_tree_embeddings, ...}
 ```
 
 ## Search Results Include Branch Info
@@ -84,3 +137,8 @@ Each search result now includes:
 ```
 
 This lets you verify the result is from the expected branch.
+
+## See Also
+
+- [Working Tree Re-indexing](./working-tree-reindex.md) - Tools for updating the index
+- [Skills Indexing](./skills-indexing.md) - Making skills searchable
