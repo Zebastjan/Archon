@@ -323,6 +323,31 @@ MIGRATIONS = [
         ALTER TABLE archon_audit_findings DROP COLUMN IF EXISTS resolution_note;
         """,
     ),
+    Migration(
+        version=8,
+        name="add_working_tree_indexing_support",
+        up_sql="""
+        -- Add source and commit_sha fields to archon_chunks (ADR-016)
+        -- source: 'committed' or 'working_tree'
+        -- commit_sha: SHA of the commit (NULL for working_tree source)
+        ALTER TABLE archon_chunks ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'committed';
+        ALTER TABLE archon_chunks ADD COLUMN IF NOT EXISTS commit_sha TEXT;
+        ALTER TABLE archon_chunks ADD COLUMN IF NOT EXISTS file_path TEXT;
+        ALTER TABLE archon_chunks ADD COLUMN IF NOT EXISTS repo_id UUID REFERENCES archon_code_repos(id) ON DELETE CASCADE;
+
+        -- Index for efficient working_tree chunk queries
+        CREATE INDEX IF NOT EXISTS idx_chunks_source ON archon_chunks(source);
+        CREATE INDEX IF NOT EXISTS idx_chunks_file_path ON archon_chunks(file_path, repo_id);
+        """,
+        down_sql="""
+        DROP INDEX IF EXISTS idx_chunks_file_path;
+        DROP INDEX IF EXISTS idx_chunks_source;
+        ALTER TABLE archon_chunks DROP COLUMN IF EXISTS repo_id;
+        ALTER TABLE archon_chunks DROP COLUMN IF EXISTS file_path;
+        ALTER TABLE archon_chunks DROP COLUMN IF EXISTS commit_sha;
+        ALTER TABLE archon_chunks DROP COLUMN IF EXISTS source;
+        """,
+    ),
 ]
 
 

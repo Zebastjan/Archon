@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 
 def register_all_tool_modules(mcp: FastMCP) -> int:
     """Register all MCP tool modules with the given FastMCP instance.
-    
+
     Args:
         mcp: FastMCP instance to register tools with
-        
+
     Returns:
         Number of tool modules successfully registered
     """
@@ -27,6 +27,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # RAG Module
     try:
         from .features.rag import register_rag_tools
+
         register_rag_tools(mcp)
         modules_registered += 1
         logger.info("✓ RAG tools registered")
@@ -36,6 +37,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Project Management
     try:
         from .features.projects import register_project_tools
+
         register_project_tools(mcp)
         modules_registered += 1
         logger.info("✓ Project tools registered")
@@ -45,6 +47,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Task Management
     try:
         from .features.tasks import register_task_tools
+
         register_task_tools(mcp)
         modules_registered += 1
         logger.info("✓ Task tools registered")
@@ -54,6 +57,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Document Management
     try:
         from .features.documents import register_document_tools
+
         register_document_tools(mcp)
         modules_registered += 1
         logger.info("✓ Document tools registered")
@@ -63,6 +67,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Version Management
     try:
         from .features.documents import register_version_tools
+
         register_version_tools(mcp)
         modules_registered += 1
         logger.info("✓ Version tools registered")
@@ -72,6 +77,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Feature Tools
     try:
         from .features.feature_tools import register_feature_tools
+
         register_feature_tools(mcp)
         modules_registered += 1
         logger.info("✓ Feature tools registered")
@@ -81,6 +87,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Code Entity Tools
     try:
         from .features.code_entities import register_code_entity_tools
+
         register_code_entity_tools(mcp)
         modules_registered += 1
         logger.info("✓ Code entity tools registered")
@@ -90,6 +97,7 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Worktree Tools
     try:
         from .features.worktree import register_worktree_tools
+
         register_worktree_tools(mcp)
         modules_registered += 1
         logger.info("✓ Worktree tools registered")
@@ -99,11 +107,22 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     # Code Audit Tools
     try:
         from .features.code_audit import register_code_audit_tools
+
         register_code_audit_tools(mcp)
         modules_registered += 1
         logger.info("✓ Code audit tools registered")
     except Exception as e:
         logger.warning(f"⚠ Could not register code audit tools: {e}")
+
+    # Reindex Tools (ADR-016)
+    try:
+        from .features.reindex_tools import register_reindex_tools
+
+        register_reindex_tools(mcp)
+        modules_registered += 1
+        logger.info("✓ Reindex tools registered")
+    except Exception as e:
+        logger.warning(f"⚠ Could not register reindex tools: {e}")
 
     logger.info(f"📦 Registered {modules_registered} tool modules")
     return modules_registered
