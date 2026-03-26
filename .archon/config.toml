@@ -1,0 +1,27 @@
+[watcher]
+# File watcher configuration for incremental re-indexing (ADR-016)
+# Disable to use only manual reindex_file() tool
+enabled = true
+
+# Debounce delay in milliseconds before re-indexing a changed file
+# Prevents rapid successive saves from flooding the embedding queue
+debounce_ms = 500
+
+# Maximum file size to re-index (in KB)
+# Files larger than this are skipped
+max_file_size_kb = 512
+
+# File extensions to watch
+# Empty = use defaults (.py, .ts, .go, .rs, .md, .rst, .org, .sql, .yaml, .toml, .json)
+# watch_extensions = []
+
+# Patterns to ignore (glob patterns)
+ignore_patterns = [
+    ".git/",
+    "__pycache__/",
+    "node_modules/",
+    ".archon/",
+    "dist/",
+    "build/",
+    "*.pyc"
+]

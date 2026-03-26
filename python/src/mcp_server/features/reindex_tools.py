@@ -16,12 +16,26 @@ from src.server.services.file_watcher_service import (
     reindex_single_file,
     IndexStatus,
 )
+from src.server.services.file_watcher_config import get_watcher_config
 from src.server.services.database import get_database_connector
 
 logger = get_logger(__name__)
 
 # Check if we're in test mode
 _TEST_MODE = os.environ.get("TEST_MODE", "false").lower() == "true"
+
+# Global watcher service instance
+_watcher_service: FileWatcherService | None = None
+
+
+def get_watcher_service() -> FileWatcherService:
+    """Get or create the global FileWatcherService instance."""
+    global _watcher_service
+    if _watcher_service is None:
+        config = get_watcher_config()
+        _watcher_service = FileWatcherService(config)
+        logger.info(f"Created FileWatcherService (enabled={config.enabled})")
+    return _watcher_service
 
 
 def register_reindex_tools(mcp: FastMCP) -> None:
@@ -119,7 +133,7 @@ def register_reindex_tools(mcp: FastMCP) -> None:
 
             repo_root = worktree_context.get_repo_root() or os.getcwd()
 
-            service = FileWatcherService()
+            service = get_watcher_service()
             results = await service.reindex_all_modified(
                 repo_id=repo_id,
                 repo_root=repo_root,
