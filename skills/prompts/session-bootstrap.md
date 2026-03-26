@@ -29,6 +29,10 @@ Before starting work, verify your environment:
    - `codebase_get_entity_context(id)` - Understand relationships
    - `codebase_find_callers(name)` - See who uses what
 
+6. **Recovery Check**: If worktree is not safe or you detect a hung state:
+   - Read `skills/prompts/session-recovery.md` for recovery instructions
+   - Follow the recovery decision tree
+
 After verification, proceed with your task.
 ```
 
@@ -37,6 +41,7 @@ After verification, proceed with your task.
 - Starting a new coding session
 - Switching to work on a different feature/branch
 - After a long pause in work
+- When resuming after an interruption
 
 ## Example Flow
 
@@ -52,5 +57,16 @@ info = await worktree_get_current_info()
 safe = await worktree_validate_safe_to_work()
 # Returns: {"is_safe": true, ...}
 
-# 4. Now start working
+# 4. If not safe, recover
+if not safe["is_safe"]:
+    # Read skills/prompts/session-recovery.md
+    # Follow recovery instructions
+
+# 5. Now start working
 ```
+
+## See Also
+
+- [Session Recovery](./session-recovery.md) - Recovery from interrupted sessions
+- [Branch Discipline](./branch-discipline.md) - Worktree management
+- [Leverage MCP Tools](./leverage-mcp-tools.md) - When to use which tool
