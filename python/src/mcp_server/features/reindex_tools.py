@@ -18,6 +18,11 @@ from src.server.services.file_watcher_service import (
 )
 from src.server.services.file_watcher_config import get_watcher_config
 from src.server.services.database import get_database_connector
+from src.server.services.search.working_tree_search_service import (
+    search_working_tree_chunks,
+    search_all_chunks,
+    get_working_tree_stats,
+)
 
 logger = get_logger(__name__)
 
@@ -232,6 +237,154 @@ def register_reindex_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.exception("replace_working_tree_chunks_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def search_working_tree(
+        repo_id: str,
+        query: str,
+        top_k: int = 10,
+        file_path_filter: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Search working tree chunks by semantic similarity.
+
+        Searches only the current working state, not committed state.
+        Requires embeddings to be generated via reindex_file() or reindex_working_tree() first.
+
+        Args:
+            repo_id: Repository UUID
+            query: Natural language search query
+            top_k: Number of results to return (default 10)
+            file_path_filter: Optional file path filter (LIKE pattern, e.g., "src/%.py")
+
+        Returns:
+            Dict with search results:
+            - results: List of matching chunks with similarity scores
+            - count: Number of results returned
+
+        Example:
+            >>> await search_working_tree(
+            ...     repo_id="uuid",
+            ...     query="authentication logic",
+            ...     file_path_filter="src/auth/%"
+            ... )
+        """
+        try:
+            results = await search_working_tree_chunks(
+                query=query,
+                repo_id=repo_id,
+                top_k=top_k,
+                file_path_filter=file_path_filter,
+            )
+
+            return {
+                "success": True,
+                "results": results,
+                "count": len(results),
+            }
+
+        except Exception as e:
+            logger.exception("search_working_tree_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+                "results": [],
+                "count": 0,
+            }
+
+    @mcp.tool()
+    async def search_all_states(
+        repo_id: str,
+        query: str,
+        top_k: int = 10,
+        include_working_tree: bool = True,
+        include_committed: bool = True,
+        file_path_filter: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Search both working tree and committed chunks by semantic similarity.
+
+        Returns results from both states, allowing agents to see current
+        working state alongside committed state.
+
+        Args:
+            repo_id: Repository UUID
+            query: Natural language search query
+            top_k: Number of results to return (default 10)
+            include_working_tree: Include working_tree chunks (default True)
+            include_committed: Include committed chunks (default True)
+            file_path_filter: Optional file path filter (LIKE pattern)
+
+        Returns:
+            Dict with search results from both states
+
+        Example:
+            >>> await search_all_states(
+            ...     repo_id="uuid",
+            ...     query="database connection",
+            ...     include_working_tree=True,
+            ...     include_committed=True
+            ... )
+        """
+        try:
+            results = await search_all_chunks(
+                query=query,
+                repo_id=repo_id,
+                top_k=top_k,
+                include_working_tree=include_working_tree,
+                include_committed=include_committed,
+                file_path_filter=file_path_filter,
+            )
+
+            working_tree_count = sum(1 for r in results if r["source"] == "working_tree")
+            committed_count = sum(1 for r in results if r["source"] == "committed")
+
+            return {
+                "success": True,
+                "results": results,
+                "count": len(results),
+                "working_tree_count": working_tree_count,
+                "committed_count": committed_count,
+            }
+
+        except Exception as e:
+            logger.exception("search_all_states_failed: %s", str(e))
+            return {
+                "success": False,
+                "error": str(e),
+                "results": [],
+                "count": 0,
+            }
+
+    @mcp.tool()
+    async def working_tree_stats(
+        repo_id: str,
+    ) -> dict[str, Any]:
+        """
+        Get statistics about working tree chunks.
+
+        Returns counts of chunks by source (working_tree vs committed),
+        files with working_tree chunks, and embedding status.
+
+        Args:
+            repo_id: Repository UUID
+
+        Returns:
+            Dict with working tree statistics
+
+        Example:
+            >>> await working_tree_stats(repo_id="uuid")
+        """
+        try:
+            stats = await get_working_tree_stats(repo_id)
+            return stats
+
+        except Exception as e:
+            logger.exception("working_tree_stats_failed: %s", str(e))
             return {
                 "success": False,
                 "error": str(e),

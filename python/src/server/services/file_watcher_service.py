@@ -61,7 +61,7 @@ class WatcherConfig:
     enabled: bool = True
     debounce_ms: int = 500
     max_file_size_kb: int = 512
-    watch_extensions: set[str] = field(default_factory=lambda: WATCHED_EXTENSIONS)
+    watch_extensions: set[str] | frozenset[str] = field(default_factory=lambda: WATCHED_EXTENSIONS)
 
 
 def _compute_content_hash(content: bytes) -> str:
@@ -110,6 +110,7 @@ async def _update_working_tree_chunks(
     chunks: list[str],
     content_hash: str,
     commit_sha: str | None = None,
+    generate_embeddings: bool = True,
 ) -> int:
     """Update working_tree chunks for a file.
 
@@ -119,6 +120,7 @@ async def _update_working_tree_chunks(
         chunks: List of chunk content strings
         content_hash: SHA256 hash of the file content
         commit_sha: Commit SHA (None for working_tree source)
+        generate_embeddings: Whether to generate embeddings for chunks
 
     Returns:
         Number of chunks updated
@@ -137,14 +139,15 @@ async def _update_working_tree_chunks(
         )
 
         # Insert new working_tree chunks
-        count = 0
+        chunk_ids = []
         for i, chunk_content in enumerate(chunks):
             token_count = len(chunk_content.split()) * 4 // 3
-            await db.execute(
+            result = await db.fetch(
                 """
                 INSERT INTO archon_chunks
                 (repo_id, file_path, chunk_index, content, token_count, source, commit_sha)
                 VALUES ($1, $2, $3, $4, $5, 'working_tree', NULL)
+                RETURNING id
                 """,
                 repo_id,
                 file_path,
@@ -152,9 +155,35 @@ async def _update_working_tree_chunks(
                 chunk_content,
                 token_count,
             )
-            count += 1
+            if result:
+                chunk_ids.append((str(result[0]["id"]), chunk_content))
 
-        return count
+        # Generate embeddings for chunks if enabled
+        if generate_embeddings and chunk_ids:
+            try:
+                from src.server.services.embeddings.unified_embedding_service import get_unified_embedding_service
+
+                embedding_service = get_unified_embedding_service()
+
+                for chunk_id, content in chunk_ids:
+                    try:
+                        embedding = await embedding_service.generate(
+                            content,
+                            use_cache=True,
+                            store=True,
+                            item_id=chunk_id,
+                            item_type="chunk",
+                        )
+                        logger.debug(f"Generated embedding for chunk {chunk_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for chunk {chunk_id}: {e}")
+
+            except ImportError:
+                logger.warning("Embedding service not available - chunks stored without embeddings")
+            except Exception as e:
+                logger.warning(f"Embedding generation failed: {e}")
+
+        return len(chunk_ids)
 
     except Exception as e:
         logger.error(f"Failed to update working_tree chunks: {e}")
