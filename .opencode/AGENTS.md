@@ -1,5 +1,28 @@
 # OpenCode Agent Instructions for Archon
 
+## Quick Reference: MCP Tools vs. Git Commands
+
+**Use Git commands when:**
+- Understanding what changed (`git diff`, `git status`)
+- Viewing recent history (`git log`)
+- Basic file operations (read, edit)
+
+**Use MCP tools when:**
+- Finding code by concept/meaning (semantic search)
+- Exploring unfamiliar codebases
+- Understanding code relationships
+- Searching across different branches/commits
+
+| Task | Best Tool |
+|------|-----------|
+| "What did I change?" | `git diff` |
+| "Which files changed?" | `git status` |
+| "Recent commits?" | `git log` |
+| "Find auth code" | MCP semantic_search |
+| "Where is X function?" | MCP find_entity |
+| "What calls Y?" | MCP find_callers |
+| "Search across branches" | MCP version-scoped |
+
 ## Skills: When to Use Which Tool
 
 ### Skill 1: Find Code by Name
