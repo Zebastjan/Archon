@@ -124,5 +124,15 @@ def register_all_tool_modules(mcp: FastMCP) -> int:
     except Exception as e:
         logger.warning(f"⚠ Could not register reindex tools: {e}")
 
+    # Skills Tools (ADR-015)
+    try:
+        from .features.skills_tools import register_skills_tools
+
+        register_skills_tools(mcp)
+        modules_registered += 1
+        logger.info("✓ Skills tools registered")
+    except Exception as e:
+        logger.warning(f"⚠ Could not register skills tools: {e}")
+
     logger.info(f"📦 Registered {modules_registered} tool modules")
     return modules_registered
