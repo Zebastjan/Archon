@@ -73,8 +73,8 @@ def discover_files(repo_path: Path) -> list[str]:
     """Discover all supported source files in repo."""
     files = []
     
-    # Priority: Python and TypeScript/JavaScript files
-    extensions = [".py", ".ts", ".tsx", ".js", ".jsx"]
+    # Priority: Python, TypeScript/JavaScript, and Nim files
+    extensions = [".py", ".ts", ".tsx", ".js", ".jsx", ".nim", ".nims", ".nimble"]
     
     for ext in extensions:
         for file_path in repo_path.rglob(f"*{ext}"):
