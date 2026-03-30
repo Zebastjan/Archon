@@ -95,10 +95,7 @@ class ProgressTracker:
         # Remove from database
         try:
             db = get_database_connector()
-            await db.execute(
-                "DELETE FROM archon_operation_progress WHERE progress_id = $1",
-                progress_id
-            )
+            await db.execute("DELETE FROM archon_operation_progress WHERE progress_id = $1", progress_id)
         except Exception as e:
             safe_logfire_error(f"Failed to clear progress from database: {e}")
 
@@ -121,7 +118,7 @@ class ProgressTracker:
                 SELECT * FROM archon_operation_progress
                 WHERE status = ANY($1)
                 """,
-                ["starting", "in_progress", "paused"]
+                ["starting", "in_progress", "paused"],
             )
 
             for record in result:
@@ -164,7 +161,7 @@ class ProgressTracker:
                 FROM archon_operation_progress
                 WHERE status = ANY($1)
                 """,
-                ["in_progress", "crawling", "starting"]
+                ["in_progress", "crawling", "starting"],
             )
 
             if not result:
@@ -182,7 +179,7 @@ class ProgressTracker:
                         """,
                         "paused",
                         datetime.now().isoformat(),
-                        progress_id
+                        progress_id,
                     )
 
                     safe_logfire_info(
@@ -213,7 +210,7 @@ class ProgressTracker:
                 FROM archon_operation_progress
                 WHERE status = $1
                 """,
-                "paused"
+                "paused",
             )
 
             if not result:
@@ -230,9 +227,7 @@ class ProgressTracker:
                     continue
 
                 if not source_id:
-                    safe_logfire_error(
-                        f"Auto-resume failed: missing source_id | progress_id={progress_id}"
-                    )
+                    safe_logfire_error(f"Auto-resume failed: missing source_id | progress_id={progress_id}")
                     # Mark operation as failed since we can't resume without source_id
                     try:
                         await db.execute(
@@ -244,7 +239,7 @@ class ProgressTracker:
                             "failed",
                             "Cannot auto-resume: missing source_id",
                             datetime.now().isoformat(),
-                            progress_id
+                            progress_id,
                         )
                     except Exception:
                         pass
@@ -258,7 +253,7 @@ class ProgressTracker:
                         FROM archon_sources
                         WHERE source_id = $1
                         """,
-                        source_id
+                        source_id,
                     )
 
                     # Check if source record exists
@@ -276,7 +271,7 @@ class ProgressTracker:
                             "failed",
                             f"Cannot auto-resume: source record not found (source_id: {source_id})",
                             datetime.now().isoformat(),
-                            progress_id
+                            progress_id,
                         )
                         continue
 
@@ -289,99 +284,34 @@ class ProgressTracker:
                         """,
                         "in_progress",
                         datetime.now().isoformat(),
-                        progress_id
+                        progress_id,
                     )
 
                     # Restart the crawl operation
+                    # NOTE: Crawl auto-resume disabled - crawling system removed
                     if operation_type == "crawl":
-                        from ...services.crawling.crawling_service import CrawlingService
-                        from ...services.crawler_manager import get_crawler
-
-                        source_url = source_result[0].get("source_url")
-                        metadata = source_result[0].get("metadata", {})
-
-                        crawl_request = {
-                            "url": source_url,
-                            "knowledge_type": metadata.get("knowledge_type", "website"),
-                            "tags": metadata.get("tags", []),
-                            "max_depth": metadata.get("max_depth", 3),
-                            "allow_external_links": metadata.get("allow_external_links", False),
-                        }
-
-                        # Get crawler instance (REQUIRED)
-                        try:
-                            crawler = await get_crawler()
-                            if crawler is None:
-                                raise Exception("Crawler not available for auto-resume")
-                        except Exception as crawler_error:
-                            safe_logfire_error(
-                                f"Failed to get crawler for auto-resume | progress_id={progress_id} | error={str(crawler_error)}"
-                            )
-                            # Mark operation as failed
-                            try:
-                                await db.execute(
-                                    """
-                                    UPDATE archon_operation_progress
-                                    SET status = $1, error_message = $2, updated_at = $3
-                                    WHERE progress_id = $4
-                                    """,
-                                    "failed",
-                                    f"Auto-resume failed: Could not initialize crawler - {str(crawler_error)}",
-                                    datetime.now().isoformat(),
-                                    progress_id
-                                )
-                            except Exception:
-                                pass
-                            continue  # Skip to next operation
-
-                        # Create wrapper function with exception handling
-                        async def _auto_resume_crawl_with_exception_handling():
-                            try:
-                                crawl_service = CrawlingService(
-                                    crawler=crawler,
-                                    progress_id=progress_id
-                                )
-                                await crawl_service.orchestrate_crawl(crawl_request)
-                            except Exception as e:
-                                error_message = f"Auto-resume crawl failed: {str(e)}"
-                                safe_logfire_error(
-                                    f"=== AUTO-RESUME BACKGROUND TASK EXCEPTION ===\n"
-                                    f"Progress ID: {progress_id}\n"
-                                    f"Source ID: {source_id}\n"
-                                    f"Error: {error_message}\n"
-                                    f"Traceback: {traceback.format_exc()}\n"
-                                    f"=== END AUTO-RESUME EXCEPTION ==="
-                                )
-                                # Mark as failed in database (best effort)
-                                try:
-                                    db_inner = get_database_connector()
-                                    await db_inner.execute(
-                                        """
-                                        UPDATE archon_operation_progress
-                                        SET status = $1, error_message = $2, updated_at = $3
-                                        WHERE progress_id = $4
-                                        """,
-                                        "failed",
-                                        error_message,
-                                        datetime.now().isoformat(),
-                                        progress_id
-                                    )
-                                except Exception:
-                                    pass
-
-                        # Start in background
-                        asyncio.create_task(_auto_resume_crawl_with_exception_handling())
-
                         safe_logfire_info(
-                            f"Auto-resumed crawl | progress_id={progress_id} | "
-                            f"source_id={source_id} | url={source_url}"
+                            f"Crawl auto-resume skipped - crawling system removed | progress_id={progress_id}"
                         )
-                        resumed_count += 1
+                        # Mark operation as failed since crawling is no longer supported
+                        try:
+                            await db.execute(
+                                """
+                                UPDATE archon_operation_progress
+                                SET status = $1, error_message = $2, updated_at = $3
+                                WHERE progress_id = $4
+                                """,
+                                "failed",
+                                "Crawling is no longer supported. Please upload documents directly.",
+                                datetime.now().isoformat(),
+                                progress_id,
+                            )
+                        except Exception:
+                            pass
+                        continue  # Skip to next operation
 
                 except Exception as e:
-                    safe_logfire_error(
-                        f"Failed to auto-resume operation | progress_id={progress_id} | error={str(e)}"
-                    )
+                    safe_logfire_error(f"Failed to auto-resume operation | progress_id={progress_id} | error={str(e)}")
                     # Mark as failed with error details
                     try:
                         await db.execute(
@@ -393,7 +323,7 @@ class ProgressTracker:
                             "failed",
                             f"Auto-resume error: {str(e)}",
                             datetime.now().isoformat(),
-                            progress_id
+                            progress_id,
                         )
                     except Exception:
                         pass
@@ -419,7 +349,7 @@ class ProgressTracker:
                 """,
                 "paused",
                 datetime.now().isoformat(),
-                progress_id
+                progress_id,
             )
 
             # Also update in-memory
@@ -446,7 +376,7 @@ class ProgressTracker:
                 """,
                 "in_progress",
                 datetime.now().isoformat(),
-                progress_id
+                progress_id,
             )
 
             # Also update in-memory
@@ -802,7 +732,7 @@ class ProgressTracker:
                 self.state.get("code_blocks_found", 0),
                 json.dumps(stats),
                 self.state.get("error"),
-                datetime.now().isoformat()
+                datetime.now().isoformat(),
             )
 
         except Exception as e:
@@ -814,10 +744,7 @@ class ProgressTracker:
         """Restore progress state from database if it exists."""
         try:
             db = get_database_connector()
-            result = await db.fetch(
-                "SELECT * FROM archon_operation_progress WHERE progress_id = $1",
-                progress_id
-            )
+            result = await db.fetch("SELECT * FROM archon_operation_progress WHERE progress_id = $1", progress_id)
 
             if result and len(result) > 0:
                 record = dict(result[0])
@@ -840,7 +767,7 @@ class ProgressTracker:
                 SELECT * FROM archon_operation_progress
                 WHERE status = ANY($1)
                 """,
-                ["in_progress", "paused"]
+                ["in_progress", "paused"],
             )
 
             operations = [dict(row) for row in result] if result else []
@@ -866,7 +793,7 @@ class ProgressTracker:
                     LIMIT 1
                     """,
                     source_id,
-                    operation_type
+                    operation_type,
                 )
             else:
                 result = await db.fetch(
@@ -876,7 +803,7 @@ class ProgressTracker:
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
-                    source_id
+                    source_id,
                 )
 
             if result and len(result) > 0:

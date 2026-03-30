@@ -47,7 +47,7 @@ Determine what needs reviewing:
 
 #### Where to Complete but Log Clearly:
 
-- **Background tasks** (crawling, embeddings) - Complete the job, log failures per item
+- **Background tasks** (embeddings) - Complete the job, log failures per item
 - **Batch operations** - Process what you can, report what failed with details
 - **WebSocket events** - Don't crash on single event failure, log and continue
 - **Optional features** - If projects/tasks disabled, log and skip

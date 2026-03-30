@@ -5,10 +5,10 @@ Handles document and code storage operations.
 """
 
 from .base_storage_service import BaseStorageService
-from .code_storage_service import (
+from .code_storage import (
     add_code_examples_to_supabase,
     extract_code_blocks,
-    generate_code_example_summary,
+    generate_code_summary as generate_code_example_summary,
 )
 from .document_storage_service import add_documents_to_supabase
 from .storage_services import DocumentStorageService

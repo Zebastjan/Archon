@@ -65,10 +65,7 @@ class KnowledgeItemService:
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
             # Get total count
-            count_result = await db.fetch(
-                f"SELECT COUNT(*) as count FROM archon_sources {where_sql}",
-                *params
-            )
+            count_result = await db.fetch(f"SELECT COUNT(*) as count FROM archon_sources {where_sql}", *params)
             total = count_result[0]["count"] if count_result else 0
 
             # Apply pagination
@@ -77,8 +74,7 @@ class KnowledgeItemService:
 
             # Execute main query with pagination
             sources = await db.fetch(
-                f"SELECT * FROM archon_sources {where_sql} LIMIT ${param_count} OFFSET ${param_count + 1}",
-                *params
+                f"SELECT * FROM archon_sources {where_sql} LIMIT ${param_count} OFFSET ${param_count + 1}", *params
             )
 
             # Get source IDs for batch queries
@@ -94,10 +90,10 @@ class KnowledgeItemService:
 
             if source_ids:
                 # Batch fetch first URLs
-                placeholders = ", ".join(f"${i+1}" for i in range(len(source_ids)))
+                placeholders = ", ".join(f"${i + 1}" for i in range(len(source_ids)))
                 urls_result = await db.fetch(
                     f"SELECT DISTINCT ON (source_id) source_id, url FROM archon_crawled_pages WHERE source_id IN ({placeholders})",
-                    *source_ids
+                    *source_ids,
                 )
 
                 # Group URLs by source_id (take first one for each)
@@ -109,8 +105,7 @@ class KnowledgeItemService:
                 # Fetch counts individually for each source
                 for source_id in source_ids:
                     count_result = await db.fetch(
-                        "SELECT COUNT(*) as count FROM archon_code_examples WHERE source_id = $1",
-                        source_id
+                        "SELECT COUNT(*) as count FROM archon_code_examples WHERE source_id = $1", source_id
                     )
                     code_example_counts[source_id] = count_result[0]["count"] if count_result else 0
 
@@ -210,10 +205,7 @@ class KnowledgeItemService:
 
             # Get the source record
             db = get_database_connector()
-            result = await db.fetch(
-                "SELECT * FROM archon_sources WHERE source_id = $1",
-                source_id
-            )
+            result = await db.fetch("SELECT * FROM archon_sources WHERE source_id = $1", source_id)
 
             if not result:
                 return None
@@ -263,10 +255,7 @@ class KnowledgeItemService:
 
             if metadata_updates:
                 # Get current metadata
-                current_response = await db.fetch(
-                    "SELECT metadata FROM archon_sources WHERE source_id = $1",
-                    source_id
-                )
+                current_response = await db.fetch("SELECT metadata FROM archon_sources WHERE source_id = $1", source_id)
                 if current_response:
                     current_metadata = current_response[0].get("metadata", {})
                     current_metadata.update(metadata_updates)
@@ -293,7 +282,7 @@ class KnowledgeItemService:
             # Perform the update
             result = await db.fetch(
                 f"UPDATE archon_sources SET {', '.join(set_clauses)} WHERE source_id = ${param_count} RETURNING *",
-                *params
+                *params,
             )
 
             if result:
@@ -423,15 +412,14 @@ class KnowledgeItemService:
         try:
             db = get_database_connector()
             pages_response = await db.fetch(
-                "SELECT url FROM archon_crawled_pages WHERE source_id = $1 LIMIT 1",
-                source_id
+                "SELECT url FROM archon_crawled_pages WHERE source_id = $1 LIMIT 1", source_id
             )
 
             if pages_response:
                 return pages_response[0].get("url", f"source://{source_id}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            safe_logfire_error(f"Failed to get first page URL for {source_id}: {e}")
 
         return f"source://{source_id}"
 
@@ -440,13 +428,13 @@ class KnowledgeItemService:
         try:
             db = get_database_connector()
             code_examples_response = await db.fetch(
-                "SELECT id, content, summary, metadata FROM archon_code_examples WHERE source_id = $1",
-                source_id
+                "SELECT id, content, summary, metadata FROM archon_code_examples WHERE source_id = $1", source_id
             )
 
             return [dict(row) for row in code_examples_response] if code_examples_response else []
 
-        except Exception:
+        except Exception as e:
+            safe_logfire_error(f"Failed to get code examples for {source_id}: {e}")
             return []
 
     async def _check_needs_revectorization(self, source: dict[str, Any]) -> bool:
@@ -483,7 +471,8 @@ class KnowledgeItemService:
 
             return False
 
-        except Exception:
+        except Exception as e:
+            safe_logfire_error(f"Failed to check re-vectorization needs: {e}")
             return False
 
     def _determine_source_type(self, metadata: dict[str, Any], url: str) -> str:
@@ -516,8 +505,7 @@ class KnowledgeItemService:
             # Count the actual rows in crawled_pages for this source
             db = get_database_connector()
             result = await db.fetch(
-                "SELECT COUNT(*) as count FROM archon_crawled_pages WHERE source_id = $1",
-                source_id
+                "SELECT COUNT(*) as count FROM archon_crawled_pages WHERE source_id = $1", source_id
             )
 
             # Return the count of pages (chunks)

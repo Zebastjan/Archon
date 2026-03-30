@@ -11,33 +11,18 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 
 from src.mcp_server.utils.error_handling import MCPErrorFormatter
+from src.mcp_server.utils.tool_helpers import optimize_response, truncate_text
 from src.server.services.projects.project_service import ProjectService
 
 logger = logging.getLogger(__name__)
 
 # Optimization constants
-MAX_DESCRIPTION_LENGTH = 1000
 DEFAULT_PAGE_SIZE = 10
-
-
-def truncate_text(text: str, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
-    """Truncate text to maximum length with ellipsis."""
-    if text and len(text) > max_length:
-        return text[:max_length - 3] + "..."
-    return text
 
 
 def optimize_project_response(project: dict) -> dict:
     """Optimize project object for MCP response."""
-    project = project.copy()
-    if "description" in project and project["description"]:
-        project["description"] = truncate_text(project["description"])
-    if "features" in project and isinstance(project["features"], list):
-        project["features_count"] = len(project["features"])
-        if len(project["features"]) > 3:
-            project["features"] = project["features"][:3]
-    return project
-
+    return optimize_response(project, description_field="description")
 
 def register_project_tools(mcp: FastMCP):
     """Register consolidated project management tools with the MCP server."""

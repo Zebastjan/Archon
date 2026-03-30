@@ -23,19 +23,13 @@ def test_create_project(client, test_project, mock_supabase_client):
 
     response = client.post("/api/projects", json=test_project)
     # Should succeed with mocked data
-    assert response.status_code in [200, 201, 422, 500]  # Allow various responses
+    assert response.status_code in [200, 201, 422]  # 200/201 success, 422 validation error
 
     # If successful, check response format
     if response.status_code in [200, 201]:
         data = response.json()
         # Check response format - at least one of these should be present
-        assert (
-            "title" in data
-            or "id" in data
-            or "progress_id" in data
-            or "status" in data
-            or "message" in data
-        )
+        assert "title" in data or "id" in data or "progress_id" in data or "status" in data or "message" in data
 
 
 def test_list_projects(client, mock_supabase_client):
@@ -44,7 +38,7 @@ def test_list_projects(client, mock_supabase_client):
     mock_supabase_client.table.return_value.select.return_value.execute.return_value.data = []
 
     response = client.get("/api/projects")
-    assert response.status_code in [200, 404, 422, 500]  # Allow various responses
+    assert response.status_code in [200, 404, 422]  # 200 success, 404 not found, 422 validation
 
     # If successful, response should be JSON (list or dict)
     if response.status_code == 200:
@@ -63,8 +57,8 @@ def test_create_task(client, test_task):
 def test_list_tasks(client):
     """Test tasks listing endpoint exists."""
     response = client.get("/api/tasks")
-    # Accept 200, 400, 422, or 500 - endpoint exists
-    assert response.status_code in [200, 400, 422, 500]
+    # Accept 200, 400, or 422 - endpoint exists
+    assert response.status_code in [200, 400, 422]
 
 
 def test_start_crawl(client):
@@ -72,15 +66,15 @@ def test_start_crawl(client):
     crawl_request = {"url": "https://example.com", "max_depth": 2, "max_pages": 10}
 
     response = client.post("/api/knowledge/crawl", json=crawl_request)
-    # Accept various status codes - endpoint exists and processes request
-    assert response.status_code in [200, 201, 400, 404, 422, 500]
+    # Crawling system removed - endpoint should return 404 or validation error
+    assert response.status_code in [404, 422]
 
 
 def test_search_knowledge(client):
     """Test knowledge search endpoint exists."""
     response = client.post("/api/knowledge/search", json={"query": "test"})
     # Accept various status codes - endpoint exists
-    assert response.status_code in [200, 400, 404, 422, 500]
+    assert response.status_code in [200, 400, 404, 422]
 
 
 def test_polling_endpoint(client):
@@ -88,14 +82,14 @@ def test_polling_endpoint(client):
     # Test crawl progress endpoint
     response = client.get("/api/knowledge/crawl-progress/test-id")
     # Should return 200 with not_found status or actual progress
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code in [200, 404]
 
 
 def test_authentication(client):
     """Test that API handles auth headers gracefully."""
     # Test with no auth header
     response = client.get("/api/projects")
-    assert response.status_code in [200, 401, 403, 500]  # 500 is OK in test environment
+    assert response.status_code in [200, 401, 403]  # Valid responses only
 
     # Test with invalid auth header
     headers = {"Authorization": "Bearer invalid-token"}

@@ -11,7 +11,7 @@ description: |
 argument-hint: <service> <Specific focus>
 ---
 
-You're about to work on the Archon V2 Beta codebase. This is a microservices-based knowledge management system with MCP integration. Here's what you need to know:
+You're about to work on the Archon V2 Beta codebase. This is a code intelligence platform with MCP tools for AI agents. It uses a single-container architecture with embedded PostgreSQL. Here's what you need to know:
 
 ## Today's Focus area
 
@@ -34,7 +34,7 @@ archon-ui-main/
 │   ├── index.tsx                  # React entry point with theme and settings
 │   ├── components/
 │   │   ├── layouts/               # Layout components (MainLayout, SideNavigation)
-│   │   ├── knowledge-base/        # Knowledge management UI (crawling, items, search)
+│   │   ├── knowledge-base/        # Knowledge management UI (documents, items, search)
 │   │   ├── project-tasks/         # Project and task management components
 │   │   ├── prp/                   # Product Requirements Prompt viewer components
 │   │   ├── mcp/                   # MCP client management and testing UI
@@ -59,49 +59,42 @@ python/src/server/
 ├── config/
 │   ├── config.py                 # Environment variables and app configuration
 │   └── service_discovery.py     # Service URL resolution for Docker/local
-├── fastapi/                      # API route handlers (thin wrappers)
-│   ├── knowledge_api.py         # Knowledge base endpoints (crawl, upload, search)
+├── api_routes/                      # API route handlers (thin wrappers)
+│   ├── knowledge_api.py         # Knowledge base endpoints (upload, search)
 │   ├── projects_api.py          # Project and task management endpoints
 │   ├── mcp_api.py              # MCP tool execution and health checks
 │   └── socketio_handlers.py    # Socket.IO event handlers and broadcasts
 ├── services/                     # Business logic layer
 │   ├── knowledge/
-│   │   ├── crawl_orchestration_service.py  # Website crawling coordination
 │   │   ├── knowledge_item_service.py       # Knowledge item CRUD operations
 │   │   └── code_extraction_service.py      # Extract code examples from docs
 │   ├── projects/
 │   │   ├── project_service.py              # Project management logic
 │   │   ├── task_service.py                 # Task lifecycle and status management
 │   │   └── versioning_service.py           # Document version control
-│   ├── rag/
-│   │   └── crawling_service.py             # Web crawling implementation
 │   ├── search/
 │   │   └── vector_search_service.py        # Semantic search with pgvector
+│   ├── documents/
+│   │   ├── local_document_service.py       # Document processing (Dockling)
+│   │   ├── chunking_service.py             # Document chunking
+│   │   └── summarization_service.py        # Document summarization
 │   ├── embeddings/
 │   │   └── embedding_service.py            # OpenAI embeddings generation
 │   └── storage/
+│       ├── code_storage/                   # Code storage modules
 │       └── document_storage_service.py     # Document chunking and storage
+└── exceptions.py               # Custom exception hierarchy
 ```
 
-### MCP Server (port 8051) - Model Context Protocol
+### MCP Server (STDIO via `docker exec`) - Model Context Protocol
 
 ```
-python/src/mcp/
-├── mcp_server.py                 # FastAPI MCP server with SSE support
-└── modules/
-    ├── project_module.py         # Project and task MCP tools
-    └── rag_module.py            # RAG query and search MCP tools
-```
-
-### Agents Service (port 8052) - PydanticAI
-
-```
-python/src/agents/
-├── server.py                     # FastAPI server for agent endpoints
-├── base_agent.py                # Base agent class with streaming support
-├── document_agent.py            # Document processing and chunking agent
-├── rag_agent.py                # RAG search and reranking agent
-└── mcp_client.py              # Client for calling MCP tools
+python/src/mcp_server/
+├── mcp_server_stdio.py         # MCP server with STDIO transport
+└── features/                   # MCP tool implementations
+    ├── project_tools.py        # Project and task MCP tools
+    ├── code_tools.py           # Code search tools
+    └── search_tools.py         # RAG query and search tools
 ```
 
 ## Key Files to Read for Context
@@ -121,13 +114,14 @@ Key files to consider:
 - `python/src/server/main.py` - FastAPI app setup
 - `python/src/server/services/knowledge/knowledge_item_service.py` - Service pattern example
 - `python/src/server/api_routes/knowledge_api.py` - API endpoint pattern
+- `python/src/server/exceptions.py` - Exception hierarchy
 
 ### When working on MCP
 
 Key files to consider:
 
-- `python/src/mcp/mcp_server.py` - MCP server implementation
-- `python/src/mcp/modules/rag_module.py` - Tool implementations
+- `python/src/mcp_server/mcp_server_stdio.py` - MCP server implementation
+- `python/src/mcp_server/features/` - Tool implementations
 
 ### When working on RAG
 
@@ -135,40 +129,84 @@ Key files to consider:
 
 - `python/src/server/services/search/vector_search_service.py` - Vector search logic
 - `python/src/server/services/embeddings/embedding_service.py` - Embedding generation
-- `python/src/agents/rag_agent.py` - RAG reranking
+- `python/src/mcp_server/features/search_tools.py` - RAG tools
 
-### When working on Crawling
+### When working on Document Processing
 
 Key files to consider:
 
-- `python/src/server/services/rag/crawling_service.py` - Core crawling logic
-- `python/src/server/services/knowledge/crawl_orchestration_service.py` - Crawl coordination
-- `python/src/server/services/storage/document_storage_service.py` - Document storage
+- `python/src/server/services/documents/local_document_service.py` - Document processing (Dockling)
+- `python/src/server/services/documents/chunking_service.py` - Document chunking
+- `python/src/server/services/documents/summarization_service.py` - Document summarization
 
 ### When working on Projects/Tasks
 
 Key files to consider:
 
-- `python/src/server/services/projects/task_service.py` - Task management
-- `archon-ui-main/src/components/project-tasks/TaskBoardView.tsx` - Kanban UI
+- `python/src/server/services/projects/project_service.py` - Project management
+- `python/src/server/services/projects/task_service.py` - Task lifecycle
+- `python/src/mcp_server/features/project_tools.py` - MCP project tools
 
-### When working on Agents
+## Development Patterns
 
-Key files to consider:
+### Error Handling (Beta Philosophy)
 
-- `python/src/agents/base_agent.py` - Agent base class
-- `python/src/agents/rag_agent.py` - RAG agent implementation
+Following CLAUDE.md principles:
 
-## Critical Rules for This Codebase
+**Fail Fast & Loud (where errors MUST bubble up):**
+- Service initialization errors - Crash immediately
+- Configuration errors - Stop the system
+- Database connection failures - Expose them
+- Authentication failures - Be visible
+- Data corruption - Never silently accept bad data
 
-Follow the guidelines in CLAUDE.md
+**Complete but Log Clearly (batch operations):**
+- Background tasks - Complete the job, log failures per item
+- Batch operations - Process what you can, report what failed
+- WebSocket events - Don't crash on single event failure
 
-## Current Focus Areas
+**Example pattern:**
+```python
+# BAD - Silent failure
+try:
+    result = risky_operation()
+except Exception:
+    return None
 
-- The projects feature is optional (toggle in Settings UI)
-- All services communicate via HTTP, not gRPC
-- Socket.IO handles all real-time updates
-- Frontend uses Vite proxy for API calls in development
-- Python backend uses `uv` for dependency management
+# GOOD - Detailed error with context
+try:
+    result = risky_operation()
+except SpecificError as e:
+    logger.error(f"Operation failed at step X: {e}", exc_info=True)
+    raise  # Let it bubble up!
+```
 
-Remember: This is beta software. Prioritize functionality over production patterns. Make it work, make it right, then make it fast.
+### Service Layer Patterns
+
+Services follow these patterns:
+
+1. **Thin API routes** - Routes just validate and call services
+2. **Service layer** - Business logic lives in services
+3. **Exception hierarchy** - Custom exceptions from `exceptions.py`
+4. **Type hints** - All functions have proper type hints
+5. **Async first** - Services use async/await patterns
+
+### MCP Tool Patterns
+
+MCP tools:
+
+1. **STDIO transport** - No HTTP/SSE, uses STDIO via `docker exec`
+2. **Consistent patterns** - All tools follow same structure
+3. **Error propagation** - Detailed errors back to IDE
+4. **Version-scoped** - Search respects current git branch
+
+## Context Collection
+
+Now collect context for the specific focus area. Focus on:
+
+1. **Service structure** - How services are organized
+2. **API patterns** - How routes and services connect
+3. **Error handling** - Current patterns in this area
+4. **Test coverage** - Existing tests you can reference
+
+Create a todo list of files to read based on the focus area, then execute it systematically.

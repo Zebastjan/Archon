@@ -980,7 +980,7 @@ def register_code_audit_tools(mcp: FastMCP) -> None:
 
                     try:
                         correlation = json.loads(correlation)
-                    except:
+                    except json.JSONDecodeError:
                         correlation = {}
 
                 results.append(

@@ -18,6 +18,23 @@ router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 sessions: dict[str, dict] = {}
 
 
+def validate_session(session_id: str) -> dict:
+    """Validate session exists and return session data.
+
+    Args:
+        session_id: The session ID to validate
+
+    Returns:
+        Session data dict if found
+
+    Raises:
+        HTTPException: 404 if session not found
+    """
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return sessions[session_id]
+
+
 # Request/Response models
 class CreateSessionRequest(BaseModel):
     project_id: str | None = None
@@ -52,24 +69,21 @@ async def create_session(request: CreateSessionRequest):
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
     """Get session information."""
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return sessions[session_id]
+    session = validate_session(session_id)
+    return session
 
 
 @router.get("/sessions/{session_id}/messages")
 async def get_messages(session_id: str):
     """Get messages for a session (for polling)."""
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return sessions[session_id].get("messages", [])
+    session = validate_session(session_id)
+    return session.get("messages", [])
 
 
 @router.post("/sessions/{session_id}/messages")
 async def send_message(session_id: str, request: dict):
     """REST endpoint for sending messages."""
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = validate_session(session_id)
 
     # Store user message
     user_msg = {

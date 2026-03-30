@@ -2,6 +2,9 @@
 
 Analyzes commit messages and diffs to automatically classify commits by intent,
 risk level, breaking changes, and other semantic properties.
+
+NOTE: This service requires pydantic-ai. If not available, classification
+will return default values.
 """
 
 from __future__ import annotations
@@ -12,7 +15,14 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+
+try:
+    from pydantic_ai import Agent
+
+    HAS_PYDANTIC_AI = True
+except ImportError:
+    HAS_PYDANTIC_AI = False
+    Agent = None  # type: ignore[misc]
 
 from ...config.logfire_config import get_logger
 from .git_diff_service import GitDiffService, StructuredDiff
@@ -24,9 +34,7 @@ logger = get_logger(__name__)
 class CommitClassification(BaseModel):
     """AI-generated classification of a commit."""
 
-    intent: Literal[
-        "feature", "bugfix", "refactor", "security-fix", "performance", "docs", "test", "chore"
-    ] = Field(
+    intent: Literal["feature", "bugfix", "refactor", "security-fix", "performance", "docs", "test", "chore"] = Field(
         description="Primary intent/purpose of the commit"
     )
 
@@ -34,9 +42,7 @@ class CommitClassification(BaseModel):
         description="Risk level of this change (likelihood of introducing issues)"
     )
 
-    api_breaking: bool = Field(
-        description="Whether this change breaks existing API contracts or interfaces"
-    )
+    api_breaking: bool = Field(description="Whether this change breaks existing API contracts or interfaces")
 
     security_relevant: bool = Field(
         description="Whether this change has security implications (auth, crypto, validation, etc.)"
@@ -46,9 +52,7 @@ class CommitClassification(BaseModel):
         description="Expected impact on performance (positive or negative)"
     )
 
-    test_coverage: Literal["full", "partial", "none"] = Field(
-        description="Extent of test coverage for this change"
-    )
+    test_coverage: Literal["full", "partial", "none"] = Field(description="Extent of test coverage for this change")
 
     confidence: float = Field(
         ge=0.0,
@@ -56,9 +60,7 @@ class CommitClassification(BaseModel):
         description="Confidence score for this classification (0.0-1.0)",
     )
 
-    reasoning: str = Field(
-        description="Brief explanation of the classification decisions"
-    )
+    reasoning: str = Field(description="Brief explanation of the classification decisions")
 
 
 class GitCommitClassifier:
@@ -68,7 +70,7 @@ class GitCommitClassifier:
         self,
         diff_service: GitDiffService,
         model: str = "openai:gpt-4",
-        agent: Agent | None = None,
+        agent: Any = None,
     ):
         """
         Initialize commit classifier.
@@ -84,7 +86,7 @@ class GitCommitClassifier:
         # Use provided agent or create new one
         if agent is not None:
             self.agent = agent
-        else:
+        elif HAS_PYDANTIC_AI and Agent is not None:
             # Create Pydantic AI agent for classification
             self.agent = Agent(
                 model=self.model,
@@ -131,7 +133,7 @@ Classification Guidelines:
 - none: No test changes
 
 Be concise but accurate. When uncertain, prefer conservative estimates (higher risk, lower confidence).""",
-        )
+            )
 
     async def classify_commit(
         self,
@@ -164,6 +166,22 @@ Be concise but accurate. When uncertain, prefer conservative estimates (higher r
                 "reasoning": "..."
             }
         """
+        # Return default classification if pydantic-ai not available
+        if not HAS_PYDANTIC_AI:
+            logger.debug(f"Pydantic-ai not available, returning default classification for {commit_sha}")
+            return {
+                "intent": "chore",
+                "risk_level": "low",
+                "api_breaking": False,
+                "security_relevant": False,
+                "performance_impact": "none",
+                "test_coverage": "none",
+                "confidence": 0.5,
+                "classification_model": self.model,
+                "classification_timestamp": datetime.now(UTC).isoformat(),
+                "reasoning": "Classification skipped - pydantic-ai not available",
+            }
+
         try:
             # Get diff if parent exists
             diff_summary = "Initial commit (no diff available)"
@@ -255,8 +273,7 @@ Provide your classification based on the commit message and changes."""
             }.get(file_diff.status, "")
 
             lines.append(
-                f"  {status_emoji} {file_diff.path} ({file_diff.status}): "
-                f"+{file_diff.additions} -{file_diff.deletions}"
+                f"  {status_emoji} {file_diff.path} ({file_diff.status}): +{file_diff.additions} -{file_diff.deletions}"
             )
 
             # Add language if available

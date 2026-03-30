@@ -15,26 +15,15 @@ RUN apt-get update && apt-get install -y \
     wget \
     ca-certificates \
     curl \
-    # Playwright dependencies
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libatspi2.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libwayland-client0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxkbcommon0 \
-    libxrandr2 \
-    xdg-utils \
+    # Dockling dependencies for PDF/DOCX processing
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    tesseract-ocr \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Install pgvector from source
@@ -53,10 +42,11 @@ RUN uv venv /venv && \
     . /venv/bin/activate && \
     uv pip install . --group server --group server-reranking
 
-# Install Playwright browsers
-ENV PATH=/venv/bin:$PATH
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN playwright install chromium
+# Install tree-sitter-nim from GitHub (not available on PyPI)
+RUN uv pip install git+https://github.com/alaviss/tree-sitter-nim.git@0.6.2 --python /venv/bin/python
+
+# Install tree-sitter-tlaplus for TLA+ specification support
+RUN uv pip install git+https://github.com/tlaplus-community/tree-sitter-tlaplus.git@main --python /venv/bin/python
 
 # Copy application code
 COPY src/ src/
@@ -74,6 +64,10 @@ RUN /usr/lib/postgresql/*/bin/initdb -D /var/lib/postgresql/data --auth=trust &&
     echo "host all all 127.0.0.1/32 trust" >> /var/lib/postgresql/data/pg_hba.conf
 
 USER root
+
+# Create non-root user for running the application (PostgreSQL runs as postgres, app runs as archon)
+RUN useradd -m -u 1001 -s /bin/bash archon && \
+    chown -R archon:archon /app /venv
 
 # Create startup script
 RUN cat > /app/start.sh << 'EOF'
@@ -133,7 +127,7 @@ su - postgres -c "$PSQL -d archon -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public
 
 echo "PostgreSQL setup complete!"
 
-# Start Archon Server
+# Start Archon Server as archon user
 export ARCHON_DATABASE_URL="postgresql://archon:archon_local_dev@localhost:5432/archon"
 export ARCHON_SERVER_PORT="${ARCHON_SERVER_PORT:-8181}"
 export ARCHON_MCP_PORT="${ARCHON_MCP_PORT:-8051}"
@@ -141,12 +135,12 @@ export PATH="/venv/bin:$PATH"
 export PYTHONPATH="/app:$PYTHONPATH"
 export PYTHONUNBUFFERED=1
 
-# Start Archon Server only (MCP handled via docker exec)
 echo "Starting Archon Server on port ${ARCHON_SERVER_PORT}..."
-exec python -m uvicorn src.server.main:app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1
+exec su - archon -c "export ARCHON_DATABASE_URL=\"${ARCHON_DATABASE_URL}\" && export ARCHON_MCP_PORT=\"${ARCHON_MCP_PORT}\" && export ARCHON_SERVER_PORT=\"${ARCHON_SERVER_PORT}\" && export PATH=\"/venv/bin:\$PATH\" && export PYTHONPATH=\"/app:\$PYTHONPATH\" && /venv/bin/python -m uvicorn src.server.main:app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1"
 EOF
 
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/start.sh && \
+    chown archon:archon /app/start.sh
 
 ENV PYTHONPATH="/app:$PYTHONPATH"
 ENV PYTHONUNBUFFERED=1

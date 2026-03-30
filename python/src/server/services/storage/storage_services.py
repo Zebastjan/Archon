@@ -64,13 +64,13 @@ class DocumentStorageService(BaseStorageService):
                 chunks = await self.smart_chunk_text_async(
                     file_content,
                     chunk_size=5000,
-                    progress_callback=lambda msg, pct: report_progress(
-                        f"Chunking: {msg}", 10 + float(pct) * 0.2
-                    ),
+                    progress_callback=lambda msg, pct: report_progress(f"Chunking: {msg}", 10 + float(pct) * 0.2),
                 )
 
                 if not chunks:
-                    raise ValueError(f"No content could be extracted from {filename}. The file may be empty, corrupted, or in an unsupported format.")
+                    raise ValueError(
+                        f"No content could be extracted from {filename}. The file may be empty, corrupted, or in an unsupported format."
+                    )
 
                 await report_progress("Preparing document chunks...", 30)
 
@@ -147,58 +147,8 @@ class DocumentStorageService(BaseStorageService):
                 )
 
                 # Extract code examples if requested
+                # NOTE: Code extraction temporarily disabled - crawling system removed
                 code_examples_count = 0
-                if extract_code_examples and len(chunks) > 0:
-                    try:
-                        await report_progress("Extracting code examples...", 85)
-
-                        logger.info(f"🔍 DEBUG: Starting code extraction for {filename} | extract_code_examples={extract_code_examples}")
-
-                        # Import code extraction service
-                        from ..crawling.code_extraction_service import CodeExtractionService
-
-                        code_service = CodeExtractionService()
-
-                        # Create crawl_results format expected by code extraction service
-                        # markdown: cleaned plaintext (HTML->markdown for HTML files, raw content otherwise)
-                        # html: empty string to prevent HTML extraction path confusion
-                        # content_type: proper type to guide extraction method selection
-                        crawl_results = [{
-                            "url": doc_url,
-                            "markdown": file_content,  # Cleaned plaintext/markdown content
-                            "html": "",  # Empty to prevent HTML extraction path
-                            "content_type": "application/pdf" if filename.lower().endswith('.pdf') else (
-                                "text/markdown" if filename.lower().endswith(('.html', '.htm', '.md')) else "text/plain"
-                            )
-                        }]
-
-                        logger.info(f"🔍 DEBUG: Created crawl_results with url={doc_url}, content_length={len(file_content)}")
-
-                        # Create progress callback for code extraction
-                        async def code_progress_callback(data: dict):
-                            logger.info(f"🔍 DEBUG: Code extraction progress: {data}")
-                            if progress_callback:
-                                # Map code extraction progress (0-100) to our remaining range (85-95)
-                                raw_progress = data.get("progress", data.get("percentage", 0))
-                                mapped_progress = 85 + (raw_progress / 100.0) * 10  # 85% to 95%
-                                message = data.get("log", "Extracting code examples...")
-                                await progress_callback(message, int(mapped_progress))
-
-                        logger.info("🔍 DEBUG: About to call extract_and_store_code_examples...")
-                        code_examples_count = await code_service.extract_and_store_code_examples(
-                            crawl_results=crawl_results,
-                            url_to_full_document=url_to_full_document,
-                            source_id=source_id,
-                            progress_callback=code_progress_callback,
-                            cancellation_check=cancellation_check,
-                        )
-
-                        logger.info(f"🔍 DEBUG: Code extraction completed: {code_examples_count} code examples found for {filename}")
-
-                    except Exception as e:
-                        # Log error with full traceback but don't fail the entire upload
-                        logger.error(f"Code extraction failed for {filename}: {e}", exc_info=True)
-                        code_examples_count = 0
 
                 await report_progress("Document upload completed!", 100)
 
@@ -281,9 +231,7 @@ class DocumentStorageService(BaseStorageService):
         # Extract metadata for each chunk
         processed_chunks = []
         for i, chunk in enumerate(chunks):
-            meta = self.extract_metadata(
-                chunk, {"chunk_index": i, "source": document.get("source", "unknown")}
-            )
+            meta = self.extract_metadata(chunk, {"chunk_index": i, "source": document.get("source", "unknown")})
             processed_chunks.append({"content": chunk, "metadata": meta})
 
         return {
@@ -292,9 +240,7 @@ class DocumentStorageService(BaseStorageService):
             "source": document.get("source"),
         }
 
-    def store_code_examples(
-        self, code_examples: list[dict[str, Any]]
-    ) -> tuple[bool, dict[str, Any]]:
+    def store_code_examples(self, code_examples: list[dict[str, Any]]) -> tuple[bool, dict[str, Any]]:
         """
         Store code examples. This is kept for backward compatibility.
         The actual implementation should use add_code_examples_to_supabase directly.
@@ -311,9 +257,7 @@ class DocumentStorageService(BaseStorageService):
 
             # This method exists for backward compatibility
             # The actual storage should be done through the proper service functions
-            logger.warning(
-                "store_code_examples is deprecated. Use add_code_examples_to_supabase directly."
-            )
+            logger.warning("store_code_examples is deprecated. Use add_code_examples_to_supabase directly.")
 
             return True, {"code_examples_stored": len(code_examples)}
 

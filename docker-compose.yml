@@ -17,6 +17,8 @@ services:
       # Ollama on host (accessible via Docker bridge IP 172.17.0.1)
       # Run scripts/configure_ollama_docker.sh first to configure Ollama
       - OLLAMA_URL=http://172.17.0.1:11434
+      - EMBEDDING_PROVIDER=ollama
+      - OLLAMA_EMBEDDING_MODEL=bge-m3
     volumes:
       # Persist PostgreSQL data
       - postgres_data:/var/lib/postgresql/data

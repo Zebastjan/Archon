@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from ..config.logfire_config import get_logger, logfire
 from ..utils import get_supabase_client
 from ..utils.etag_utils import check_etag, generate_etag
+from ..utils.service_result_handler import handle_service_result
 
 logger = get_logger(__name__)
 
@@ -76,14 +77,10 @@ class CreateTaskRequest(BaseModel):
 
 
 @router.get("/projects")
-async def list_projects(
-    response: Response,
-    include_content: bool = True,
-    if_none_match: str | None = Header(None)
-):
+async def list_projects(response: Response, include_content: bool = True, if_none_match: str | None = Header(None)):
     """
     List all projects.
-    
+
     Args:
         include_content: If True (default), returns full project content.
                         If False, returns lightweight metadata with statistics.
@@ -125,17 +122,14 @@ async def list_projects(
             )
 
         # Generate ETag from stable data (excluding timestamp)
-        etag_data = {
-            "projects": formatted_projects,
-            "count": len(formatted_projects)
-        }
+        etag_data = {"projects": formatted_projects, "count": len(formatted_projects)}
         current_etag = generate_etag(etag_data)
 
         # Generate response with timestamp for polling
         response_data = {
             "projects": formatted_projects,
             "timestamp": datetime.utcnow().isoformat(),
-            "count": len(formatted_projects)
+            "count": len(formatted_projects),
         }
 
         # Check if client's ETag matches
@@ -170,9 +164,7 @@ async def create_project(request: CreateProjectRequest):
         raise HTTPException(status_code=422, detail="Title cannot be empty")
 
     try:
-        logfire.info(
-            f"Creating new project | title={request.title} | github_repo={request.github_repo}"
-        )
+        logfire.info(f"Creating new project | title={request.title} | github_repo={request.github_repo}")
 
         # Prepare kwargs for additional project fields
         kwargs = {}
@@ -207,8 +199,6 @@ async def create_project(request: CreateProjectRequest):
     except Exception as e:
         logfire.error(f"Failed to start project creation | error={str(e)} | title={request.title}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
-
-
 
 
 @router.get("/projects/health")
@@ -258,9 +248,7 @@ async def projects_health():
             },
         }
 
-        logfire.info(
-            f"Projects health check completed | status={result['status']} | schema_valid={schema_valid}"
-        )
+        logfire.info(f"Projects health check completed | status={result['status']} | schema_valid={schema_valid}")
 
         return result
 
@@ -282,7 +270,7 @@ async def get_all_task_counts(
     """
     Get task counts for all projects in a single batch query.
     Optimized endpoint to avoid N+1 query problem.
-    
+
     Returns counts grouped by project_id with todo, doing, and done counts.
     Review status is included in doing count to match frontend logic.
     """
@@ -303,10 +291,7 @@ async def get_all_task_counts(
             raise HTTPException(status_code=500, detail=result)
 
         # Generate ETag from counts data
-        etag_data = {
-            "counts": result,
-            "count": len(result)
-        }
+        etag_data = {"counts": result, "count": len(result)}
         current_etag = generate_etag(etag_data)
 
         # Check if client's ETag matches (304 Not Modified)
@@ -322,9 +307,7 @@ async def get_all_task_counts(
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
         response.headers["Last-Modified"] = datetime.utcnow().isoformat()
 
-        logfire.debug(
-            f"Task counts retrieved | project_count={len(result)} | etag={current_etag}"
-        )
+        logfire.debug(f"Task counts retrieved | project_count={len(result)} | etag={current_etag}")
 
         return result
 
@@ -346,17 +329,11 @@ async def get_project(project_id: str):
         success, result = await project_service.get_project(project_id)
 
         if not success:
-            if "not found" in result.get("error", "").lower():
-                logfire.warning(f"Project not found | project_id={project_id}")
-                raise HTTPException(status_code=404, detail=result)
-            else:
-                raise HTTPException(status_code=500, detail=result)
+            raise HTTPException(status_code=500, detail=result)
 
         project = result["project"]
 
-        logfire.info(
-            f"Project retrieved successfully | project_id={project_id} | title={project['title']}"
-        )
+        logfire.info(f"Project retrieved successfully | project_id={project_id} | title={project['title']}")
 
         # The ProjectService already includes sources, so just add any missing fields
         return {
@@ -443,13 +420,7 @@ async def update_project(project_id: str, request: UpdateProjectRequest):
         project_service = ProjectService(supabase_client)
         success, result = await project_service.update_project(project_id, update_fields)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(
-                    status_code=404, detail={"error": f"Project with ID {project_id} not found"}
-                )
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="project", resource_id=project_id)
 
         project = result["project"]
 
@@ -496,11 +467,7 @@ async def delete_project(project_id: str):
         project_service = ProjectService()
         success, result = await project_service.delete_project(project_id)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result)
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="project", resource_id=project_id)
 
         logfire.info(
             f"Project deleted successfully | project_id={project_id} | deleted_tasks={result.get('deleted_tasks', 0)}"
@@ -528,16 +495,9 @@ async def get_project_features(project_id: str):
         project_service = ProjectService()
         success, result = await project_service.get_project_features(project_id)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                logfire.warning(f"Project not found for features | project_id={project_id}")
-                raise HTTPException(status_code=404, detail=result)
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="project", resource_id=project_id)
 
-        logfire.info(
-            f"Project features retrieved | project_id={project_id} | feature_count={result.get('count', 0)}"
-        )
+        logfire.info(f"Project features retrieved | project_id={project_id} | feature_count={result.get('count', 0)}")
 
         return result
 
@@ -554,7 +514,7 @@ async def list_project_tasks(
     request: Request,
     response: Response,
     include_archived: bool = False,
-    exclude_large_fields: bool = False
+    exclude_large_fields: bool = False,
 ):
     """List all tasks for a specific project with ETag support for efficient polling."""
     try:
@@ -625,18 +585,14 @@ async def list_project_tasks(
             response.status_code = 304
             response.headers["ETag"] = current_etag
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
-            response.headers["Last-Modified"] = format_datetime(
-                last_modified_dt or datetime.now(UTC)
-            )
+            response.headers["Last-Modified"] = format_datetime(last_modified_dt or datetime.now(UTC))
             logfire.debug(f"Tasks unchanged, returning 304 | project_id={project_id} | etag={current_etag}")
             return None
 
         # Set ETag headers for successful response
         response.headers["ETag"] = current_etag
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
-        response.headers["Last-Modified"] = format_datetime(
-            last_modified_dt or datetime.now(UTC)
-        )
+        response.headers["Last-Modified"] = format_datetime(last_modified_dt or datetime.now(UTC))
 
         logfire.debug(
             f"Project tasks retrieved | project_id={project_id} | task_count={len(tasks)} | etag={current_etag}"
@@ -675,9 +631,7 @@ async def create_task(request: CreateTaskRequest):
 
         created_task = result["task"]
 
-        logfire.info(
-            f"Task created successfully | task_id={created_task['id']} | project_id={request.project_id}"
-        )
+        logfire.info(f"Task created successfully | task_id={created_task['id']} | project_id={request.project_id}")
 
         return {"message": "Task created successfully", "task": created_task}
 
@@ -777,17 +731,11 @@ async def get_task(task_id: str):
         task_service = TaskService()
         success, result = await task_service.get_task(task_id)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="task", resource_id=task_id)
 
         task = result["task"]
 
-        logfire.info(
-            f"Task retrieved successfully | task_id={task_id} | project_id={task.get('project_id')}"
-        )
+        logfire.info(f"Task retrieved successfully | task_id={task_id} | project_id={task.get('project_id')}")
 
         return task
 
@@ -861,11 +809,7 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
         task_service = TaskService()
         success, result = await task_service.update_task(task_id, update_fields)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="task", resource_id=task_id)
 
         updated_task = result["task"]
 
@@ -890,13 +834,7 @@ async def delete_task(task_id: str):
         task_service = TaskService()
         success, result = await task_service.archive_task(task_id, archived_by="api")
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            elif "already archived" in result.get("error", "").lower():
-                raise HTTPException(status_code=409, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="task", resource_id=task_id)
 
         logfire.info(f"Task archived successfully | task_id={task_id}")
 
@@ -920,31 +858,21 @@ async def mcp_update_task_status(task_id: str, status: str):
 
         # Use TaskService to update the task
         task_service = TaskService()
-        success, result = await task_service.update_task(
-            task_id=task_id, update_fields={"status": status}
-        )
+        success, result = await task_service.update_task(task_id=task_id, update_fields={"status": status})
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="task", resource_id=task_id)
 
         updated_task = result["task"]
         project_id = updated_task["project_id"]
 
-        logfire.info(
-            f"Task status updated | task_id={task_id} | project_id={project_id} | status={status}"
-        )
+        logfire.info(f"Task status updated | task_id={task_id} | project_id={project_id} | status={status}")
 
         return {"message": "Task status updated successfully", "task": updated_task}
 
     except HTTPException:
         raise
     except Exception as e:
-        logfire.error(
-            f"Failed to update task status | error={str(e)} | task_id={task_id}"
-        )
+        logfire.error(f"Failed to update task status | error={str(e)} | task_id={task_id}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -957,26 +885,20 @@ async def mcp_update_task_status(task_id: str, status: str):
 async def list_project_documents(project_id: str, include_content: bool = False):
     """
     List all documents for a specific project.
-    
+
     Args:
         project_id: Project UUID
         include_content: If True, includes full document content.
                         If False (default), returns metadata only.
     """
     try:
-        logfire.info(
-            f"Listing documents for project | project_id={project_id} | include_content={include_content}"
-        )
+        logfire.info(f"Listing documents for project | project_id={project_id} | include_content={include_content}")
 
         # Use DocumentService to list documents
         document_service = DocumentService()
         success, result = await document_service.list_documents(project_id, include_content=include_content)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(
             f"Documents listed successfully | project_id={project_id} | count={result.get('total_count', 0)} | lightweight={not include_content}"
@@ -995,9 +917,7 @@ async def list_project_documents(project_id: str, include_content: bool = False)
 async def create_project_document(project_id: str, request: CreateDocumentRequest):
     """Create a new document for a project."""
     try:
-        logfire.info(
-            f"Creating document for project | project_id={project_id} | title={request.title}"
-        )
+        logfire.info(f"Creating document for project | project_id={project_id} | title={request.title}")
 
         # Use DocumentService to create document
         document_service = DocumentService()
@@ -1010,15 +930,9 @@ async def create_project_document(project_id: str, request: CreateDocumentReques
             author=request.author,
         )
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=400, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
-        logfire.info(
-            f"Document created successfully | project_id={project_id} | doc_id={result['document']['id']}"
-        )
+        logfire.info(f"Document created successfully | project_id={project_id} | doc_id={result['document']['id']}")
 
         return {"message": "Document created successfully", "document": result["document"]}
 
@@ -1039,11 +953,7 @@ async def get_project_document(project_id: str, doc_id: str):
         document_service = DocumentService()
         success, result = await document_service.get_document(project_id, doc_id)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(f"Document retrieved successfully | project_id={project_id} | doc_id={doc_id}")
 
@@ -1052,9 +962,7 @@ async def get_project_document(project_id: str, doc_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logfire.error(
-            f"Failed to get document | error={str(e)} | project_id={project_id} | doc_id={doc_id}"
-        )
+        logfire.error(f"Failed to get document | error={str(e)} | project_id={project_id} | doc_id={doc_id}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
@@ -1079,11 +987,7 @@ async def update_project_document(project_id: str, doc_id: str, request: UpdateD
         document_service = DocumentService()
         success, result = await document_service.update_document(project_id, doc_id, update_fields)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(f"Document updated successfully | project_id={project_id} | doc_id={doc_id}")
 
@@ -1092,9 +996,7 @@ async def update_project_document(project_id: str, doc_id: str, request: UpdateD
     except HTTPException:
         raise
     except Exception as e:
-        logfire.error(
-            f"Failed to update document | error={str(e)} | project_id={project_id} | doc_id={doc_id}"
-        )
+        logfire.error(f"Failed to update document | error={str(e)} | project_id={project_id} | doc_id={doc_id}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
@@ -1108,11 +1010,7 @@ async def delete_project_document(project_id: str, doc_id: str):
         document_service = DocumentService()
         success, result = await document_service.delete_document(project_id, doc_id)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(f"Document deleted successfully | project_id={project_id} | doc_id={doc_id}")
 
@@ -1121,9 +1019,7 @@ async def delete_project_document(project_id: str, doc_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logfire.error(
-            f"Failed to delete document | error={str(e)} | project_id={project_id} | doc_id={doc_id}"
-        )
+        logfire.error(f"Failed to delete document | error={str(e)} | project_id={project_id} | doc_id={doc_id}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
@@ -1134,23 +1030,15 @@ async def delete_project_document(project_id: str, doc_id: str):
 async def list_project_versions(project_id: str, field_name: str = None):
     """List version history for a project's JSONB fields."""
     try:
-        logfire.info(
-            f"Listing versions for project | project_id={project_id} | field_name={field_name}"
-        )
+        logfire.info(f"Listing versions for project | project_id={project_id} | field_name={field_name}")
 
         # Use VersioningService to list versions
         versioning_service = VersioningService()
         success, result = await versioning_service.list_versions(project_id, field_name)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
-        logfire.info(
-            f"Versions listed successfully | project_id={project_id} | count={result.get('total_count', 0)}"
-        )
+        logfire.info(f"Versions listed successfully | project_id={project_id} | count={result.get('total_count', 0)}")
 
         return result
 
@@ -1165,9 +1053,7 @@ async def list_project_versions(project_id: str, field_name: str = None):
 async def create_project_version(project_id: str, request: CreateVersionRequest):
     """Create a version snapshot for a project's JSONB field."""
     try:
-        logfire.info(
-            f"Creating version for project | project_id={project_id} | field_name={request.field_name}"
-        )
+        logfire.info(f"Creating version for project | project_id={project_id} | field_name={request.field_name}")
 
         # Use VersioningService to create version
         versioning_service = VersioningService()
@@ -1181,11 +1067,7 @@ async def create_project_version(project_id: str, request: CreateVersionRequest)
             created_by=request.created_by,
         )
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=400, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(
             f"Version created successfully | project_id={project_id} | version_number={result['version_number']}"
@@ -1210,15 +1092,9 @@ async def get_project_version(project_id: str, field_name: str, version_number: 
 
         # Use VersioningService to get version content
         versioning_service = VersioningService()
-        success, result = await versioning_service.get_version_content(
-            project_id, field_name, version_number
-        )
+        success, result = await versioning_service.get_version_content(project_id, field_name, version_number)
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(
             f"Version retrieved successfully | project_id={project_id} | field_name={field_name} | version_number={version_number}"
@@ -1254,11 +1130,7 @@ async def restore_project_version(
             restored_by=request.restored_by,
         )
 
-        if not success:
-            if "not found" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result.get("error"))
-            else:
-                raise HTTPException(status_code=500, detail=result)
+        result = handle_service_result(success, result, resource_type="resource")
 
         logfire.info(
             f"Version restored successfully | project_id={project_id} | field_name={field_name} | version_number={version_number}"

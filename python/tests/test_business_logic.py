@@ -5,13 +5,13 @@ def test_task_status_transitions(client):
     """Test task status update endpoint."""
     # Test status update endpoint exists
     response = client.patch("/api/tasks/test-id", json={"status": "doing"})
-    assert response.status_code in [200, 400, 404, 405, 422, 500]
+    assert response.status_code in [200, 400, 404, 405, 422]
 
 
 def test_progress_calculation(client):
     """Test project progress endpoint."""
     response = client.get("/api/projects/test-id/progress")
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code in [200, 404]
 
 
 def test_rate_limiting(client):
@@ -19,7 +19,7 @@ def test_rate_limiting(client):
     # Make several requests
     for i in range(5):
         response = client.get("/api/projects")
-        assert response.status_code in [200, 429, 500]  # 500 is OK in test environment
+        assert response.status_code in [200, 429]  # Valid responses only
 
 
 def test_data_validation(client):
@@ -48,23 +48,17 @@ def test_permission_checks(client):
 def test_crawl_depth_limits(client):
     """Test crawl depth validation."""
     # Too deep
-    response = client.post(
-        "/api/knowledge/crawl", json={"url": "https://example.com", "max_depth": 100}
-    )
+    response = client.post("/api/knowledge/crawl", json={"url": "https://example.com", "max_depth": 100})
     assert response.status_code in [200, 400, 404, 422]
 
     # Valid depth
-    response = client.post(
-        "/api/knowledge/crawl", json={"url": "https://example.com", "max_depth": 2}
-    )
+    response = client.post("/api/knowledge/crawl", json={"url": "https://example.com", "max_depth": 2})
     assert response.status_code in [200, 201, 400, 404, 422, 500]
 
 
 def test_document_chunking(client):
     """Test document chunking endpoint."""
-    response = client.post(
-        "/api/knowledge/documents/chunk", json={"content": "x" * 1000, "chunk_size": 500}
-    )
+    response = client.post("/api/knowledge/documents/chunk", json={"content": "x" * 1000, "chunk_size": 500})
     assert response.status_code in [200, 400, 404, 422, 500]
 
 

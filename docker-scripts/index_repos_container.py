@@ -69,7 +69,7 @@ class SimpleFileProvider:
         full_path = self.repo_path / file_path
         try:
             return full_path.read_text(encoding="utf-8", errors="ignore")
-        except:
+        except (IOError, OSError):
             return ""
 
 

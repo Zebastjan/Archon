@@ -48,9 +48,9 @@ components/          # Legacy components (migrating)
 ## Core Modules
 
 ### Knowledge Management
-**Backend**: `python/src/server/services/knowledge_service.py`
+**Backend**: `python/src/server/services/knowledge_service.py`, `python/src/server/services/documents/`
 **Frontend**: `archon-ui-main/src/features/knowledge/`
-**Features**: Web crawling, document upload, embeddings, RAG search
+**Features**: Local document processing (Dockling), document upload, embeddings, RAG search
 
 ### Project Management
 **Backend**: `python/src/server/services/project_*_service.py`
@@ -165,13 +165,16 @@ Single Docker Compose deployment with all services.
 ### Feature Flags
 Controlled via Settings UI. Projects feature can be disabled.
 
-## Recent Refactors (Phases 1-5)
+## Recent Refactors (Phases 1-7)
 
-1. **Removed ETag cache layer** - Browser handles HTTP caching
-2. **Standardized query keys** - Each feature owns its keys
-3. **Fixed optimistic updates** - UUID-based with nanoid
-4. **Configured deduplication** - Centralized QueryClient
-5. **Removed manual invalidations** - Trust backend consistency
+1. **Removed web crawling system** - Archon no longer crawls websites (local document processing only)
+2. **Added Dockling integration** - Document processing pipeline for PDFs, Markdown, and text files
+3. **Created exception hierarchy** - Centralized error handling across services
+4. **Modularized code storage** - Refactored code storage into 5 modules under `server/services/storage/code_storage/`
+5. **Standardized query keys** - Each feature owns its keys
+6. **Fixed optimistic updates** - UUID-based with nanoid
+7. **Configured deduplication** - Centralized QueryClient
+8. **Removed manual invalidations** - Trust backend consistency
 
 ## Performance Optimizations
 

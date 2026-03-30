@@ -2,7 +2,7 @@
 Hybrid Search Strategy
 
 Implements hybrid search combining vector similarity search with full-text search
-using PostgreSQL's ts_vector for improved recall and precision in document and 
+using PostgreSQL's ts_vector for improved recall and precision in document and
 code example retrieval.
 
 Strategy combines:
@@ -26,6 +26,47 @@ class HybridSearchStrategy:
     def __init__(self, base_strategy):
         self.base_strategy = base_strategy
 
+    def _format_search_result(self, row: dict) -> dict[str, Any]:
+        """Format a database row into a standardized search result dict.
+
+        Args:
+            row: Database row from hybrid search query
+
+        Returns:
+            Standardized search result dictionary
+        """
+        return {
+            "id": row["id"],
+            "url": row["url"],
+            "chunk_number": row["chunk_number"],
+            "content": row["content"],
+            "metadata": row["metadata"],
+            "source_id": row["source_id"],
+            "similarity": row["similarity"],
+            "match_type": row["match_type"],
+        }
+
+    def _format_code_result(self, row: dict) -> dict[str, Any]:
+        """Format a database row into a standardized code result dict.
+
+        Args:
+            row: Database row from hybrid code search query
+
+        Returns:
+            Standardized code search result dictionary
+        """
+        return {
+            "id": row["id"],
+            "url": row["url"],
+            "chunk_number": row["chunk_number"],
+            "content": row["content"],
+            "summary": row["summary"],
+            "metadata": row["metadata"],
+            "source_id": row["source_id"],
+            "similarity": row["similarity"],
+            "match_type": row["match_type"],
+        }
+
     async def search_documents_hybrid(
         self,
         query: str,
@@ -34,7 +75,7 @@ class HybridSearchStrategy:
         filter_metadata: dict | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Perform hybrid search on archon_crawled_pages table using the PostgreSQL 
+        Perform hybrid search on archon_crawled_pages table using the PostgreSQL
         hybrid search function that combines vector and full-text search.
 
         Args:
@@ -70,19 +111,7 @@ class HybridSearchStrategy:
                     return []
 
                 # Format results to match expected structure
-                results = []
-                for row in rows:
-                    result = {
-                        "id": row["id"],
-                        "url": row["url"],
-                        "chunk_number": row["chunk_number"],
-                        "content": row["content"],
-                        "metadata": row["metadata"],
-                        "source_id": row["source_id"],
-                        "similarity": row["similarity"],
-                        "match_type": row["match_type"],
-                    }
-                    results.append(result)
+                results = [self._format_search_result(row) for row in rows]
 
                 span.set_attribute("results_count", len(results))
 
@@ -92,10 +121,7 @@ class HybridSearchStrategy:
                     mt = r.get("match_type", "unknown")
                     match_types[mt] = match_types.get(mt, 0) + 1
 
-                logger.debug(
-                    f"Hybrid search returned {len(results)} results. "
-                    f"Match types: {match_types}"
-                )
+                logger.debug(f"Hybrid search returned {len(results)} results. Match types: {match_types}")
 
                 return results
 
@@ -112,7 +138,7 @@ class HybridSearchStrategy:
         source_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Perform hybrid search on archon_code_examples table using the PostgreSQL 
+        Perform hybrid search on archon_code_examples table using the PostgreSQL
         hybrid search function that combines vector and full-text search.
 
         Args:
@@ -158,20 +184,7 @@ class HybridSearchStrategy:
                     return []
 
                 # Format results to match expected structure
-                results = []
-                for row in rows:
-                    result = {
-                        "id": row["id"],
-                        "url": row["url"],
-                        "chunk_number": row["chunk_number"],
-                        "content": row["content"],
-                        "summary": row["summary"],
-                        "metadata": row["metadata"],
-                        "source_id": row["source_id"],
-                        "similarity": row["similarity"],
-                        "match_type": row["match_type"],
-                    }
-                    results.append(result)
+                results = [self._format_code_result(row) for row in rows]
 
                 span.set_attribute("results_count", len(results))
 
@@ -181,10 +194,7 @@ class HybridSearchStrategy:
                     mt = r.get("match_type", "unknown")
                     match_types[mt] = match_types.get(mt, 0) + 1
 
-                logger.debug(
-                    f"Hybrid code search returned {len(results)} results. "
-                    f"Match types: {match_types}"
-                )
+                logger.debug(f"Hybrid code search returned {len(results)} results. Match types: {match_types}")
 
                 return results
 

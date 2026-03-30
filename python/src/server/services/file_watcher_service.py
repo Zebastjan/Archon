@@ -100,7 +100,8 @@ async def _get_last_indexed_hash(repo_id: str, file_path: str) -> str | None:
         if result:
             return result["content_hash"]
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to get last indexed hash for {file_path}: {e}")
         return None
 
 

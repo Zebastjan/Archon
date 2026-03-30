@@ -13,15 +13,14 @@ investigate this issue systematically and generate an RCA report saved to `RCA.m
 
 ## Context About Archon
 
-You're working with Archon V2 Beta, a microservices-based AI knowledge management system:
+You're working with Archon V2 Beta, a code intelligence platform with MCP tools for AI agents. It uses a single-container architecture with embedded PostgreSQL.
 
 - **Frontend**: React + TypeScript on port 3737
 - **Main Server**: FastAPI + Socket.IO on port 8181
-- **MCP Server**: Lightweight HTTP protocol server on port 8051
-- **Agents Service**: PydanticAI agents on port 8052
-- **Database**: Supabase (PostgreSQL + pgvector)
+- **MCP Server**: STDIO transport via `docker exec`
+- **Database**: PostgreSQL + pgvector (embedded in container)
 
-All services run in Docker containers managed by docker-compose.
+All services run in a single Docker container.
 
 ## Investigation Approach
 
@@ -38,8 +37,8 @@ First, understand what's broken:
 
 Check if all services are running properly:
 
-- Docker container status (`docker-compose ps`)
-- Service health endpoints (ports 8181, 8051, 8052, 3737)
+- Docker container status (`docker ps`)
+- Service health endpoints (ports 8181, 3737)
 - Recent error logs from affected services
 - Database connectivity
 
@@ -69,9 +68,9 @@ Based on the issue type, investigate specific areas:
 
 **For API/Backend issues**: Check FastAPI routes, service layer, database queries
 **For Frontend issues**: Check React components, API calls, build process
-**For MCP issues**: Check tool definitions, session management, HTTP calls
+**For MCP issues**: Check tool definitions, STDIO transport
 **For Real-time issues**: Check Socket.IO connections, event handling
-**For Database issues**: Check Supabase connection, migrations, RLS policies
+**For Database issues**: Check PostgreSQL connection, migrations
 
 ### 5. Root Cause Identification
 
@@ -98,19 +97,19 @@ Think hard about where to look, there is some guidance below that you can follow
 
 - `.env` - Environment variables
 - `docker-compose.yml` - Service configuration
-- `python/src/server/config.py` - Server settings
+- `python/src/server/config/config.py` - Server settings
 
 **Service entry points:**
 
 - `python/src/server/main.py` - Main server
-- `python/src/mcp/server.py` - MCP server
+- `python/src/mcp_server/mcp_server_stdio.py` - MCP server
 - `archon-ui-main/src/main.tsx` - Frontend
 
 **Common problem areas:**
 
-- `python/src/server/services/credentials_service.py` - Must initialize first
-- `python/src/server/services/supabase_service.py` - Database connections
-- `python/src/server/socketio_manager.py` - Real-time events
+- `python/src/server/config/config.py` - Environment variable validation
+- `python/src/server/services/database/db_connector.py` - Database connections
+- `python/src/server/socketio_app.py` - Real-time events
 - `archon-ui-main/src/services/` - Frontend API calls
 
 ## Report Structure
@@ -173,17 +172,16 @@ Generate an RCA.md report with:
 
 ```bash
 # Check all services
-docker-compose ps
+docker ps
 
 # View recent errors
-docker-compose logs --tail=50 [service-name] | grep -E "ERROR|Exception"
+docker logs --tail=50 archon | grep -E "ERROR|Exception"
 
 # Health checks
 curl http://localhost:8181/health
-curl http://localhost:8051/health
 
-# Database test
-docker-compose exec archon-server python -c "from src.server.services.supabase_service import SupabaseService; print(SupabaseService.health_check())"
+# MCP test
+./scripts/archon-mcp
 
 # Resource usage
 docker stats --no-stream

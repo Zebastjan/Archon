@@ -8,6 +8,7 @@ instead of direct database access or service imports.
 
 import json
 import logging
+import uuid
 from typing import Any
 
 import httpx
@@ -70,8 +71,8 @@ class MCPClient:
             Dict with the tool response
         """
         try:
-            # MCP tools are called via JSON-RPC protocol
-            request_data = {"jsonrpc": "2.0", "method": tool_name, "params": kwargs, "id": 1}
+            # MCP tools are called via JSON-RPC protocol with unique request ID
+            request_data = {"jsonrpc": "2.0", "method": tool_name, "params": kwargs, "id": str(uuid.uuid4())}
 
             # Make HTTP request to MCP server
             response = await self.client.post(

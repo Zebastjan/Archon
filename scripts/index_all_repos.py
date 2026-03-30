@@ -97,7 +97,7 @@ def configure_git_safe_directories():
                 capture_output=True,
                 timeout=5,
             )
-        except:
+        except (subprocess.CalledProcessError, OSError):
             pass
 
 
@@ -170,7 +170,7 @@ async def create_repo(db, name: str, local_path: str, description: str) -> str:
         )
         if result.returncode == 0:
             commit_sha = result.stdout.strip()[:8]
-    except:
+    except (subprocess.CalledProcessError, OSError):
         pass
 
     await db.execute(

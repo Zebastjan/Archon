@@ -9,6 +9,36 @@ Archon is an AI agent framework built on Pydantic AI with PostgreSQL backends.
 - **Embeddings**: Ollama + BGE-Large (1024 dimensions)
 - **Configuration**: Strict YAML config at `python/config.yaml`
 
+## 🚨 AUTOMATIC SESSION STARTUP (CRITICAL)
+
+### On Every Session Start, You MUST:
+
+1. **Load Context Bundle** - Read `.archon/context/STATUS.md` immediately
+2. **Display Health Status** - Show top 5 audit findings from `repo_health_check`
+3. **List Active Tasks** - Call `find_tasks` to show what's in progress
+4. **Verify Skills** - Confirm `skills_discover` returns 15+ skills
+
+### Startup Tool Sequence (Execute in Order):
+
+```
+mcp0_worktree_get_current_info → Display branch/context
+mcp0_find_projects → Show active projects
+mcp0_repo_health_check → Show health score + top issues
+mcp0_skills_discover → Verify skills indexed
+```
+
+### Context Display Format:
+
+```
+# Session Startup Summary
+- **Branch**: {current_branch}
+- **Project**: {project_name}
+- **Health Score**: {score}/100
+- **Active Tasks**: {count}
+- **Audit Issues**: {critical} critical, {warning} warnings
+- **Skills**: {count} indexed
+```
+
 ## Critical Rules
 
 ### 1. Use MCP Tools First

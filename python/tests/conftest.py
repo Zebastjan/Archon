@@ -11,17 +11,23 @@ from fastapi.testclient import TestClient
 os.environ["TEST_MODE"] = "true"
 os.environ["TESTING"] = "true"
 # Set fake database credentials to prevent connection attempts
-os.environ["ARCHON_DATABASE_URL"] = "postgresql://test:test@localhost:5434/test"
+os.environ["ARCHON_DATABASE_URL"] = "postgresql://test:test@localhost:5432/test"
 os.environ["SUPABASE_URL"] = ""  # Disable Supabase
 os.environ["SUPABASE_SERVICE_KEY"] = ""
 # Set required port environment variables for ServiceDiscovery
 os.environ["ARCHON_SERVER_PORT"] = "8181"
 os.environ["ARCHON_MCP_PORT"] = "8051"
 # ARCHON_AGENTS_PORT removed - agents now integrated into main server
-os.environ["ARCHON_DB_PORT"] = "5434"
+os.environ["ARCHON_DB_PORT"] = "5432"
 
 # Import database module first so patches can be applied
 import sys
+from pathlib import Path
+
+# Add python/src to path BEFORE importing
+PYTHON_SRC = Path(__file__).parent.parent / "src"
+if str(PYTHON_SRC) not in sys.path:
+    sys.path.insert(0, str(PYTHON_SRC))
 
 if "src.server.services.database" not in sys.modules:
     from src.server.services import database

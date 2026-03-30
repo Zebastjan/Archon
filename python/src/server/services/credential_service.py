@@ -36,8 +36,6 @@ class CredentialItem:
     description: str | None = None
 
 
-
-
 class CredentialService:
     """Service for managing application credentials and configuration."""
 
@@ -48,12 +46,13 @@ class CredentialService:
         self._rag_cache_timestamp: float | None = None
         self._rag_cache_ttl = 300  # 5 minutes TTL for RAG settings cache
 
-
     def _get_encryption_key(self) -> bytes:
         """Generate encryption key from environment variables."""
         # Use a database-specific key as the basis for encryption key
         # Try ARCHON_ENCRYPTION_KEY first, fall back to DATABASE_URL, then default
-        service_key = os.getenv("ARCHON_ENCRYPTION_KEY") or os.getenv("ARCHON_DATABASE_URL", "default-key-for-development")
+        service_key = os.getenv("ARCHON_ENCRYPTION_KEY") or os.getenv(
+            "ARCHON_DATABASE_URL", "default-key-for-development"
+        )
 
         # Generate a proper encryption key using PBKDF2
         kdf = PBKDF2HMAC(
@@ -210,8 +209,12 @@ class CredentialService:
                     description = EXCLUDED.description,
                     updated_at = NOW()
                 """,
-                data["key"], data.get("value"), data.get("encrypted_value"),
-                data["is_encrypted"], data.get("category"), data.get("description")
+                data["key"],
+                data.get("value"),
+                data.get("encrypted_value"),
+                data["is_encrypted"],
+                data.get("category"),
+                data.get("description"),
             )
 
             # Invalidate RAG settings cache if this is a rag_strategy setting
@@ -222,29 +225,14 @@ class CredentialService:
 
                 # Also invalidate provider service cache to ensure immediate effect
                 try:
-                    from .llm_provider_service import clear_provider_cache
+                    from .llm_provider import clear_provider_cache
+
                     clear_provider_cache()
                     logger.debug("Also cleared LLM provider service cache")
                 except Exception as e:
                     logger.warning(f"Failed to clear provider service cache: {e}")
 
-                # Also invalidate LLM provider service cache for provider config
-                try:
-                    from . import llm_provider_service
-                    # Clear the provider config caches that depend on RAG settings
-                    cache_keys_to_clear = ["provider_config_llm", "provider_config_embedding", "rag_strategy_settings"]
-                    for cache_key in cache_keys_to_clear:
-                        if cache_key in llm_provider_service._settings_cache:
-                            del llm_provider_service._settings_cache[cache_key]
-                            logger.debug(f"Invalidated LLM provider service cache key: {cache_key}")
-                except ImportError:
-                    logger.warning("Could not import llm_provider_service to invalidate cache")
-                except Exception as e:
-                    logger.error(f"Error invalidating LLM provider service cache: {e}")
-
-            logger.info(
-                f"Successfully {'encrypted and ' if is_encrypted else ''}stored credential: {key}"
-            )
+            logger.info(f"Successfully {'encrypted and ' if is_encrypted else ''}stored credential: {key}")
             return True
 
         except Exception as e:
@@ -272,25 +260,12 @@ class CredentialService:
 
                 # Also invalidate provider service cache to ensure immediate effect
                 try:
-                    from .llm_provider_service import clear_provider_cache
+                    from .llm_provider import clear_provider_cache
+
                     clear_provider_cache()
                     logger.debug("Also cleared LLM provider service cache")
                 except Exception as e:
                     logger.warning(f"Failed to clear provider service cache: {e}")
-
-                # Also invalidate LLM provider service cache for provider config
-                try:
-                    from . import llm_provider_service
-                    # Clear the provider config caches that depend on RAG settings
-                    cache_keys_to_clear = ["provider_config_llm", "provider_config_embedding", "rag_strategy_settings"]
-                    for cache_key in cache_keys_to_clear:
-                        if cache_key in llm_provider_service._settings_cache:
-                            del llm_provider_service._settings_cache[cache_key]
-                            logger.debug(f"Invalidated LLM provider service cache key: {cache_key}")
-                except ImportError:
-                    logger.warning("Could not import llm_provider_service to invalidate cache")
-                except Exception as e:
-                    logger.error(f"Error invalidating LLM provider service cache: {e}")
 
             logger.info(f"Successfully deleted credential: {key}")
             return True
@@ -319,10 +294,7 @@ class CredentialService:
 
         try:
             db = get_database_connector()
-            records = await db.fetch(
-                "SELECT * FROM archon_settings WHERE category = $1",
-                category
-            )
+            records = await db.fetch("SELECT * FROM archon_settings WHERE category = $1", category)
 
             credentials = {}
             for record in records:
@@ -422,19 +394,31 @@ class CredentialService:
                 # First check for explicit EMBEDDING_PROVIDER setting (new split provider approach)
                 explicit_embedding_provider = rag_settings.get("EMBEDDING_PROVIDER")
 
+                # Check environment variable as fallback
+                if not explicit_embedding_provider:
+                    import os
+
+                    explicit_embedding_provider = os.environ.get("EMBEDDING_PROVIDER")
+                    if explicit_embedding_provider:
+                        logger.debug(f"Using EMBEDDING_PROVIDER from environment: '{explicit_embedding_provider}'")
+
                 # Validate that embedding provider actually supports embeddings
                 embedding_capable_providers = {"openai", "google", "openrouter", "ollama"}
 
-                if (explicit_embedding_provider and
-                    explicit_embedding_provider != "" and
-                    explicit_embedding_provider in embedding_capable_providers):
+                if (
+                    explicit_embedding_provider
+                    and explicit_embedding_provider != ""
+                    and explicit_embedding_provider in embedding_capable_providers
+                ):
                     # Use the explicitly set embedding provider
                     provider = explicit_embedding_provider
                     logger.debug(f"Using explicit embedding provider: '{provider}'")
                 else:
                     # Fall back to OpenAI as default embedding provider for backward compatibility
                     if explicit_embedding_provider and explicit_embedding_provider not in embedding_capable_providers:
-                        logger.warning(f"Invalid embedding provider '{explicit_embedding_provider}' doesn't support embeddings, defaulting to OpenAI")
+                        logger.warning(
+                            f"Invalid embedding provider '{explicit_embedding_provider}' doesn't support embeddings, defaulting to OpenAI"
+                        )
                     provider = "openai"
                     logger.debug("No explicit embedding provider set, defaulting to OpenAI for backward compatibility")
             else:

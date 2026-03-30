@@ -1,19 +1,33 @@
 """Nim language support using Tree-sitter.
 
 Extracts procedures, types, methods, imports, and their relationships
-from Nim source code using tree-sitter-language-pack.
+from Nim source code.
 """
 
-from tree_sitter import Node, Parser
+from tree_sitter import Language, Node, Parser
 import logging
 
+# Try to import Nim grammar - first from tree_sitter_nim, then from language pack
 try:
-    from tree_sitter_language_pack import get_language  # type: ignore[import-untyped]
+    import tree_sitter_nim as ts_nim
 
     HAS_TS_NIM = True
-except ImportError:
-    HAS_TS_NIM = False
     get_language = None  # type: ignore[assignment]
+except ImportError:
+    try:
+        from tree_sitter_language_pack import get_language  # type: ignore[import-untyped]
+
+        ts_nim = None
+        HAS_TS_NIM = True
+    except ImportError:
+        HAS_TS_NIM = False
+        get_language = None  # type: ignore[assignment]
+        ts_nim = None
+        HAS_TS_NIM = True
+    except ImportError:
+        HAS_TS_NIM = False
+        get_language = None  # type: ignore[assignment]
+        nim_language = None
 
 from .language_support import (
     CodeEntity,
@@ -66,15 +80,29 @@ class NimLanguageSupport(LanguageSupportBase):
         Raises:
             ImportError: If tree-sitter-language-pack is not installed
         """
-        if not HAS_TS_NIM or get_language is None:
-            raise ImportError(
-                "tree-sitter-language-pack is required. Install with: uv pip install tree-sitter-language-pack"
-            )
-
-        self._language = get_language("nim")  # type: ignore[misc]
-        self._parser = Parser(self._language)
         self._logger = logger
-        self._logger.debug("Nim language support initialized")
+        self._has_ts_nim = HAS_TS_NIM
+        self._language = None
+        self._parser = None
+
+        if self._has_ts_nim:
+            try:
+                # Try tree_sitter_nim first (newer method)
+                if ts_nim is not None:
+                    self._language = Language(ts_nim.language())
+                    self._parser = Parser(self._language)
+                    self._logger.debug("Nim language support initialized with tree_sitter_nim")
+                # Fall back to language pack
+                elif get_language is not None:
+                    self._language = Language(get_language("nim"))  # type: ignore[misc]
+                    self._parser = Parser(self._language)
+                    self._logger.debug("Nim language support initialized with tree-sitter-language-pack")
+            except Exception as e:
+                self._logger.warning(f"Failed to initialize tree-sitter Nim: {e}")
+                self._has_ts_nim = False
+
+        if not self._has_ts_nim:
+            self._logger.warning("Nim tree-sitter grammar not available - using regex fallback")
 
     def extract_entities_and_relationships(
         self,

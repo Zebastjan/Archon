@@ -103,10 +103,7 @@ async def find_dangling_state(repository: SupabaseWorkOrderRepository) -> list[s
     return dangling
 
 
-async def reconcile_state(
-    repository: SupabaseWorkOrderRepository,
-    fix: bool = False
-) -> dict[str, Any]:
+async def reconcile_state(repository: SupabaseWorkOrderRepository, fix: bool = False) -> dict[str, Any]:
     """Reconcile database state with filesystem.
 
     Detects both orphaned worktrees and dangling state. If fix=True,
@@ -142,12 +139,12 @@ async def reconcile_state(
         # Clean up orphaned worktrees
         worktree_base = Path(config.WORKTREE_BASE_DIR)
         base_dir_resolved = os.path.abspath(os.path.normpath(str(worktree_base)))
-        
+
         for orphan_path in orphans:
             try:
                 # Safety check: verify orphan_path is inside worktree base directory
                 orphan_path_resolved = os.path.abspath(os.path.normpath(orphan_path))
-                
+
                 # Verify path is within base directory and not the base directory itself
                 try:
                     common_path = os.path.commonpath([base_dir_resolved, orphan_path_resolved])
@@ -156,22 +153,24 @@ async def reconcile_state(
                     # Check if path is a root directory (Unix / or Windows drive root like C:\)
                     path_obj = Path(orphan_path_resolved)
                     is_not_root = not (
-                        orphan_path_resolved in ("/", "\\") or
-                        (os.name == "nt" and len(path_obj.parts) == 2 and path_obj.parts[1] == "")
+                        orphan_path_resolved in ("/", "\\")
+                        or (os.name == "nt" and len(path_obj.parts) == 2 and path_obj.parts[1] == "")
                     )
                 except ValueError:
                     # commonpath raises ValueError if paths are on different drives (Windows)
                     is_inside_base = False
                     is_not_base = True
                     is_not_root = True
-                
+
                 if is_inside_base and is_not_base and is_not_root:
-                shutil.rmtree(orphan_path)
-                actions.append(f"Deleted orphaned worktree: {orphan_path}")
-                logger.info("orphaned_worktree_deleted", path=orphan_path)
+                    shutil.rmtree(orphan_path)
+                    actions.append(f"Deleted orphaned worktree: {orphan_path}")
+                    logger.info("orphaned_worktree_deleted", path=orphan_path)
                 else:
                     # Safety check failed - do not delete
-                    actions.append(f"Skipped deletion of {orphan_path} (safety check failed: outside worktree base or invalid path)")
+                    actions.append(
+                        f"Skipped deletion of {orphan_path} (safety check failed: outside worktree base or invalid path)"
+                    )
                     logger.error(
                         "orphaned_worktree_deletion_skipped_safety_check_failed",
                         path=orphan_path,
@@ -191,7 +190,7 @@ async def reconcile_state(
                 await repository.update_status(
                     work_order_id,
                     AgentWorkOrderStatus.FAILED,
-                    error_message="Worktree missing - state/filesystem divergence detected during reconciliation"
+                    error_message="Worktree missing - state/filesystem divergence detected during reconciliation",
                 )
                 actions.append(f"Marked work order {work_order_id} as failed (worktree missing)")
                 logger.info("dangling_state_updated", work_order_id=work_order_id)

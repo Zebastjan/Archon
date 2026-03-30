@@ -21,7 +21,7 @@ def get_free_gpu_memory_mb():
             timeout=5,
         )
         return int(result.stdout.strip())
-    except:
+    except (subprocess.CalledProcessError, ValueError):
         return 99999
 
 
@@ -44,7 +44,7 @@ def generate_embedding(text: str):
         if proc.returncode == 0:
             data = json.loads(proc.stdout)
             return data.get("embedding")
-    except:
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
         pass
     return None
 

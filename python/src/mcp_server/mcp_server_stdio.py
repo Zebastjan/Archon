@@ -138,16 +138,19 @@ def main():
     logger.info("   Transport: STDIO (for OctoFriend and other stdio clients)")
 
     # Initialize file watcher if enabled
+    watcher_service = None
     try:
+        from src.mcp_server.features.reindex_tools import get_watcher_service
         from src.server.services.file_watcher_config import get_watcher_config
 
         watcher_config = get_watcher_config()
         if watcher_config.enabled:
-            logger.info(f"👁️ File watcher enabled (debounce: {watcher_config.debounce_ms}ms)")
+            watcher_service = get_watcher_service()
+            logger.info(f"👁️ File watcher started (debounce: {watcher_config.debounce_ms}ms)")
         else:
             logger.info("👁️ File watcher disabled in config")
     except Exception as e:
-        logger.warning(f"Could not initialize file watcher config: {e}")
+        logger.warning(f"Could not initialize file watcher: {e}")
 
     try:
         # Run with stdio transport (default for FastMCP)

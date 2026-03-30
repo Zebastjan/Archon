@@ -122,14 +122,14 @@ def register_worktree_tools(mcp: FastMCP) -> None:
 
                 try:
                     issues = json.loads(issues)
-                except:
+                except json.JSONDecodeError:
                     issues = []
             if isinstance(warnings, str):
                 import json
 
                 try:
                     warnings = json.loads(warnings)
-                except:
+                except json.JSONDecodeError:
                     warnings = []
 
             return {

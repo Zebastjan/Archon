@@ -14,6 +14,60 @@ from mcp.server.fastmcp import Context, FastMCP
 logger = logging.getLogger(__name__)
 
 
+# Input validation utilities
+def validate_non_empty_string(value: str, name: str, max_length: int = 500) -> tuple[bool, str]:
+    """Validate that a string is non-empty and within length limits."""
+    if not value or not isinstance(value, str):
+        return False, f"{name} is required and must be a string"
+    if len(value.strip()) == 0:
+        return False, f"{name} cannot be empty or whitespace only"
+    if len(value) > max_length:
+        return False, f"{name} exceeds maximum length of {max_length} characters"
+    return True, ""
+
+
+def validate_match_count(value: int, max_allowed: int = 50) -> tuple[bool, str]:
+    """Validate match_count parameter."""
+    if not isinstance(value, int):
+        return False, f"match_count must be an integer, got {type(value).__name__}"
+    if value < 1:
+        return False, "match_count must be at least 1"
+    if value > max_allowed:
+        return False, f"match_count cannot exceed {max_allowed}"
+    return True, ""
+
+
+def validate_return_mode(value: str) -> tuple[bool, str]:
+    """Validate return_mode parameter."""
+    if value not in ("pages", "chunks"):
+        return False, f"return_mode must be 'pages' or 'chunks', got '{value}'"
+    return True, ""
+
+
+def validate_uuid(value: str, name: str = "id") -> tuple[bool, str]:
+    """Validate UUID format."""
+    import re
+    if not value or not isinstance(value, str):
+        return False, f"{name} is required and must be a string"
+    # UUID pattern: 8-4-4-4-12 hex digits
+    uuid_pattern = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    if not re.match(uuid_pattern, value):
+        return False, f"{name} must be a valid UUID format"
+    return True, ""
+
+
+def validate_url(value: str) -> tuple[bool, str]:
+    """Validate URL format."""
+    if not value or not isinstance(value, str):
+        return False, "url is required and must be a string"
+    if len(value) > 2048:
+        return False, "url exceeds maximum length of 2048 characters"
+    # Basic URL validation
+    if not (value.startswith('http://') or value.startswith('https://') or value.startswith('file://')):
+        return False, "url must start with http://, https://, or file://"
+    return True, ""
+
+
 def register_rag_tools(mcp: FastMCP):
     """Register all RAG tools with the MCP server."""
 
@@ -78,6 +132,24 @@ def register_rag_tools(mcp: FastMCP):
             JSON string with search results
         """
         try:
+            # Input validation
+            valid, error_msg = validate_non_empty_string(query, "query", max_length=500)
+            if not valid:
+                return json.dumps({"success": False, "error": error_msg}, indent=2)
+
+            valid, error_msg = validate_match_count(match_count)
+            if not valid:
+                return json.dumps({"success": False, "error": error_msg}, indent=2)
+
+            valid, error_msg = validate_return_mode(return_mode)
+            if not valid:
+                return json.dumps({"success": False, "error": error_msg}, indent=2)
+
+            if source_id is not None:
+                valid, error_msg = validate_non_empty_string(source_id, "source_id")
+                if not valid:
+                    return json.dumps({"success": False, "error": error_msg}, indent=2)
+
             from src.server.services.database import get_database_connector
             
             db = get_database_connector()
@@ -155,6 +227,20 @@ def register_rag_tools(mcp: FastMCP):
             JSON string with code examples
         """
         try:
+            # Input validation
+            valid, error_msg = validate_non_empty_string(query, "query", max_length=500)
+            if not valid:
+                return json.dumps({"success": False, "error": error_msg}, indent=2)
+
+            valid, error_msg = validate_match_count(match_count)
+            if not valid:
+                return json.dumps({"success": False, "error": error_msg}, indent=2)
+
+            if source_id is not None:
+                valid, error_msg = validate_non_empty_string(source_id, "source_id")
+                if not valid:
+                    return json.dumps({"success": False, "error": error_msg}, indent=2)
+
             from src.server.services.database import get_database_connector
             
             db = get_database_connector()
@@ -215,6 +301,16 @@ def register_rag_tools(mcp: FastMCP):
             JSON string with pages
         """
         try:
+            # Input validation
+            valid, error_msg = validate_non_empty_string(source_id, "source_id")
+            if not valid:
+                return json.dumps({"success": False, "error": error_msg}, indent=2)
+
+            if section is not None:
+                valid, error_msg = validate_non_empty_string(section, "section")
+                if not valid:
+                    return json.dumps({"success": False, "error": error_msg}, indent=2)
+
             from src.server.services.database import get_database_connector
             
             db = get_database_connector()

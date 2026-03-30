@@ -47,7 +47,8 @@ class DatabaseMetricsService:
             try:
                 code_examples_result = await db.fetch("SELECT COUNT(*) as count FROM archon_code_examples")
                 metrics["code_examples_count"] = code_examples_result[0]["count"] if code_examples_result else 0
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to get code examples count: {e}")
                 metrics["code_examples_count"] = 0
 
             # Add timestamp
@@ -55,9 +56,7 @@ class DatabaseMetricsService:
 
             # Calculate additional metrics
             metrics["average_pages_per_source"] = (
-                round(metrics["pages_count"] / metrics["sources_count"], 2)
-                if metrics["sources_count"] > 0
-                else 0
+                round(metrics["pages_count"] / metrics["sources_count"], 2) if metrics["sources_count"] > 0 else 0
             )
 
             safe_logfire_info(
@@ -99,8 +98,7 @@ class DatabaseMetricsService:
             )
 
             stats["recent_sources"] = [
-                {"source_id": s["source_id"], "created_at": s["created_at"]}
-                for s in (recent_sources or [])
+                {"source_id": s["source_id"], "created_at": s["created_at"]} for s in (recent_sources or [])
             ]
 
             return stats

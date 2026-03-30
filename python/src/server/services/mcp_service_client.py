@@ -5,6 +5,7 @@ This module provides HTTP clients for the MCP service to communicate with
 other services (API and Agents) instead of importing their modules directly.
 """
 
+import os
 import uuid
 from typing import Any
 from urllib.parse import urljoin
@@ -24,7 +25,9 @@ class MCPServiceClient:
     def __init__(self):
         self.api_url = get_api_url()
         self.agents_url = get_agents_url()
-        self.service_auth = "mcp-service-key"  # In production, use proper key management
+        self.service_auth = os.getenv("MCP_SERVICE_AUTH_KEY", "")
+        if not self.service_auth:
+            mcp_logger.warning("MCP_SERVICE_AUTH_KEY env var not set, using empty auth")
         self.timeout = httpx.Timeout(
             connect=5.0,
             read=300.0,  # 5 minutes for long operations like crawling
@@ -68,9 +71,7 @@ class MCPServiceClient:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    endpoint, json=request_data, headers=self._get_headers()
-                )
+                response = await client.post(endpoint, json=request_data, headers=self._get_headers())
                 response.raise_for_status()
                 result = response.json()
 
@@ -122,9 +123,7 @@ class MCPServiceClient:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # First, get search results from API service
-                response = await client.post(
-                    endpoint, json=request_data, headers=self._get_headers()
-                )
+                response = await client.post(endpoint, json=request_data, headers=self._get_headers())
                 response.raise_for_status()
                 result = response.json()
 
@@ -170,9 +169,7 @@ class MCPServiceClient:
             "message": "Document storage should be handled by Server's service layer",
         }
 
-    async def generate_embeddings(
-        self, texts: list[str], model: str = "text-embedding-3-small"
-    ) -> dict[str, Any]:
+    async def generate_embeddings(self, texts: list[str], model: str = "text-embedding-3-small") -> dict[str, Any]:
         """
         Generate embeddings - this should be handled by Server's service layer.
         MCP tools shouldn't need to directly generate embeddings.

@@ -171,9 +171,12 @@ class CodeEntityService:
                     embedding_model, embedding_dimension, entity_identity,
                     branch_name, parent_commit_sha
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                RETURNING id, repo_id, file_path, line_start, line_end, entity_type,
-                          name, signature, docstring, source_code, language, commit_sha,
-                          branch_name, parent_commit_sha
+                ON CONFLICT (repo_id, file_path, name, entity_type, commit_sha) DO UPDATE SET
+                    source_code = EXCLUDED.source_code,
+                    signature = EXCLUDED.signature,
+                    docstring = EXCLUDED.docstring,
+                    updated_at = NOW()
+                RETURNING id
             """
 
             record = await db.fetchrow(
@@ -253,83 +256,60 @@ class CodeEntityService:
     ) -> str | None:
         """Store a code entity with optional embedding.
 
+        NOTE: Embedding columns have been removed from the schema.
+        Embeddings are stored separately in archon_embeddings table.
+        This method now just stores the entity without embedding.
+
         Args:
             entity: The code entity to store
             repo_id: Repository ID
             commit_sha: Git commit SHA
-            embedding: Optional embedding vector
-            embedding_model: Name of the embedding model
-            embedding_dimension: Dimension of the embedding
+            embedding: IGNORED - embeddings stored separately
+            embedding_model: IGNORED
+            embedding_dimension: IGNORED
 
         Returns:
             Entity ID if stored successfully, None otherwise
         """
         try:
             db = await self._get_db()
+            import hashlib
 
-            # Determine which embedding column to use
-            embedding_column = None
-            if embedding and embedding_dimension:
-                if embedding_dimension == 384:
-                    embedding_column = "embedding_384"
-                elif embedding_dimension == 768:
-                    embedding_column = "embedding_768"
-                elif embedding_dimension == 1024:
-                    embedding_column = "embedding_1024"
-                elif embedding_dimension == 1536:
-                    embedding_column = "embedding_1536"
-                elif embedding_dimension == 3072:
-                    embedding_column = "embedding_3072"
+            entity_identity = hashlib.md5(
+                f"{repo_id}{entity.file_path}{entity.name}{entity.entity_type}".encode()
+            ).hexdigest()
 
-            # Build query dynamically based on whether we have an embedding
-            if embedding_column:
-                query = f"""
-                    INSERT INTO archon_code_entities (
-                        repo_id, file_path, line_start, line_end, entity_type,
-                        name, signature, docstring, source_code, language, commit_sha,
-                        {embedding_column}, embedding_model, embedding_dimension, entity_identity
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector, $13, $14, md5($1::text || $2 || $6 || $5))
-                    RETURNING id
-                """
-                record = await db.fetchrow(
-                    query,
-                    repo_id,
-                    entity.file_path,
-                    entity.line_start,
-                    entity.line_end,
-                    entity.entity_type,
-                    entity.name,
-                    entity.signature,
-                    entity.docstring,
-                    entity.source_code,
-                    entity.language,
-                    commit_sha,
-                    embedding,
-                    embedding_model,
-                    embedding_dimension,
-                )
-            else:
-                query = """
-                    INSERT INTO archon_code_entities (
-                        repo_id, file_path, line_start, line_end, entity_type,
-                        name, signature, docstring, source_code, language, commit_sha, entity_identity
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, md5($1::text || $2 || $6 || $5))
-                    RETURNING id
-                """
-                record = await db.fetchrow(
-                    query,
-                    repo_id,
-                    entity.file_path,
-                    entity.line_start,
-                    entity.line_end,
-                    entity.entity_type,
-                    entity.name,
-                    entity.signature,
-                    entity.docstring,
-                    entity.source_code,
-                    entity.language,
-                    commit_sha,
-                )
+            query = """
+                INSERT INTO archon_code_entities (
+                    repo_id, file_path, line_start, line_end, entity_type,
+                    name, signature, docstring, source_code, language, commit_sha,
+                    embedding_model, embedding_dimension, entity_identity
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (repo_id, file_path, name, entity_type, commit_sha) DO UPDATE SET
+                    source_code = EXCLUDED.source_code,
+                    signature = EXCLUDED.signature,
+                    docstring = EXCLUDED.docstring,
+                    updated_at = NOW()
+                RETURNING id
+            """
+
+            record = await db.fetchrow(
+                query,
+                repo_id,
+                entity.file_path,
+                entity.line_start,
+                entity.line_end,
+                entity.entity_type,
+                entity.name,
+                entity.signature,
+                entity.docstring,
+                entity.source_code,
+                entity.language,
+                commit_sha,
+                embedding_model,
+                embedding_dimension,
+                entity_identity,
+            )
 
             if record:
                 entity_id = record["id"]
@@ -496,7 +476,7 @@ class CodeEntityService:
             }.get(embedding_dimension, "embedding_1536")
 
             # Convert embedding list to PostgreSQL vector literal string
-            embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
+            embedding_str = "[" + ",".join(str(float(x)) for x in query_embedding) + "]"
 
             query = f"""
                 SELECT

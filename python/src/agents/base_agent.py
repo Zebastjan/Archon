@@ -85,13 +85,13 @@ class RateLimitHandler:
                     if retries > self.max_retries:
                         logger.debug(f"Max retries exceeded for rate limit: {full_error}")
                         if progress_callback:
-                            await progress_callback({
-                                "step": "ai_generation",
-                                "log": f"❌ Rate limit exceeded after {self.max_retries} retries",
-                            })
-                        raise Exception(
-                            f"Rate limit exceeded after {self.max_retries} retries: {full_error}"
-                        )
+                            await progress_callback(
+                                {
+                                    "step": "ai_generation",
+                                    "log": f"❌ Rate limit exceeded after {self.max_retries} retries",
+                                }
+                            )
+                        raise Exception(f"Rate limit exceeded after {self.max_retries} retries: {full_error}")
 
                     # Extract wait time from error message if available
                     wait_time = self._extract_wait_time(full_error)
@@ -105,10 +105,12 @@ class RateLimitHandler:
 
                     # Send progress update if callback provided
                     if progress_callback:
-                        await progress_callback({
-                            "step": "ai_generation",
-                            "log": f"⏱️ Rate limit hit. Waiting {wait_time:.0f}s before retry {retries}/{self.max_retries}",
-                        })
+                        await progress_callback(
+                            {
+                                "step": "ai_generation",
+                                "log": f"⏱️ Rate limit hit. Waiting {wait_time:.0f}s before retry {retries}/{self.max_retries}",
+                            }
+                        )
 
                     await asyncio.sleep(wait_time)
                     continue
@@ -116,10 +118,12 @@ class RateLimitHandler:
                     # Non-rate-limit error, re-raise immediately
                     logger.debug(f"Non-rate-limit error, re-raising: {full_error}")
                     if progress_callback:
-                        await progress_callback({
-                            "step": "ai_generation",
-                            "log": f"❌ Error: {str(e)}",
-                        })
+                        await progress_callback(
+                            {
+                                "step": "ai_generation",
+                                "log": f"❌ Error: {str(e)}",
+                            }
+                        )
                     raise
 
         raise Exception(f"Failed after {self.max_retries} retries")
@@ -133,7 +137,7 @@ class RateLimitHandler:
             match = re.search(r"try again in (\d+(?:\.\d+)?)s", error_message)
             if match:
                 return float(match.group(1))
-        except:
+        except (AttributeError, ValueError):
             pass
         return None
 

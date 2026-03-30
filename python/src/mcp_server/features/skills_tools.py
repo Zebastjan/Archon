@@ -48,9 +48,51 @@ def register_skills_tools(mcp: FastMCP) -> None:
         """
         try:
             from src.mcp_server import worktree_context
+            from pathlib import Path
 
-            repo_root = worktree_context.get_repo_root() or os.getcwd()
-            skills_root = os.path.join(repo_root, "skills")
+            # Try multiple strategies to find skills directory
+            skills_root = None
+            
+            # Strategy 1: Check common locations FIRST (most reliable)
+            if not skills_root:
+                common_paths = [
+                    Path("/archon/skills"),  # Docker container path
+                    Path("/home/zebastjan/dev/archon/skills"),  # Host path
+                    Path("/workspace/skills"),
+                ]
+                for path in common_paths:
+                    if path.exists():
+                        skills_root = str(path)
+                        logger.info(f"Found skills at common path: {skills_root}")
+                        break
+            
+            # Strategy 2: Check worktree context repo root
+            if not skills_root:
+                repo_root = worktree_context.get_repo_root()
+                if repo_root:
+                    candidate = Path(repo_root) / "skills"
+                    if candidate.exists():
+                        skills_root = str(candidate)
+                        logger.info(f"Found skills at repo root: {skills_root}")
+            
+            # Strategy 3: Walk up parent directories from cwd
+            if not skills_root:
+                cwd = Path.cwd()
+                for parent in [cwd] + list(cwd.parents):
+                    candidate = parent / "skills"
+                    # Skip if this looks like an internal IDE/MCP directory
+                    if "/.mcp/" in str(candidate) or "/mcp_server/" in str(candidate):
+                        continue
+                    if candidate.exists():
+                        skills_root = str(candidate)
+                        logger.info(f"Found skills walking up from cwd: {skills_root}")
+                        break
+            
+            if not skills_root:
+                return {
+                    "success": False,
+                    "error": "Skills directory not found",
+                }
 
             results = await index_all_skills(
                 repo_id=repo_id,
@@ -98,15 +140,62 @@ def register_skills_tools(mcp: FastMCP) -> None:
         """
         try:
             from src.mcp_server import worktree_context
+            from pathlib import Path
 
-            repo_root = worktree_context.get_repo_root() or os.getcwd()
-            skills_root = os.path.join(repo_root, "skills")
-
+            # Try multiple strategies to find skills directory
+            skills_root = None
+            
+            # Strategy 1: Check common locations FIRST (most reliable)
+            if not skills_root:
+                common_paths = [
+                    Path("/archon/skills"),  # Docker container path
+                    Path("/home/zebastjan/dev/archon/skills"),  # Host path
+                    Path("/workspace/skills"),
+                ]
+                for path in common_paths:
+                    if path.exists():
+                        skills_root = str(path)
+                        logger.info(f"Found skills at common path: {skills_root}")
+                        break
+            
+            # Strategy 2: Check worktree context repo root
+            if not skills_root:
+                repo_root = worktree_context.get_repo_root()
+                if repo_root:
+                    candidate = Path(repo_root) / "skills"
+                    if candidate.exists():
+                        skills_root = str(candidate)
+                        logger.info(f"Found skills at repo root: {skills_root}")
+            
+            # Strategy 3: Walk up parent directories from cwd
+            if not skills_root:
+                cwd = Path.cwd()
+                for parent in [cwd] + list(cwd.parents):
+                    candidate = parent / "skills"
+                    # Skip if this looks like an internal IDE/MCP directory
+                    if "/.mcp/" in str(candidate) or "/mcp_server/" in str(candidate):
+                        continue
+                    if candidate.exists():
+                        skills_root = str(candidate)
+                        logger.info(f"Found skills walking up from cwd: {skills_root}")
+                        break
+            
+            if not skills_root:
+                logger.warning("Could not find skills directory from any strategy")
+                return {
+                    "success": True,
+                    "count": 0,
+                    "skills": [],
+                    "warning": "Skills directory not found",
+                }
+            
+            logger.info(f"Discovering skills from: {skills_root}")
             skills = discover_skills(skills_root)
 
             return {
                 "success": True,
                 "count": len(skills),
+                "skills_root": skills_root,
                 "skills": [
                     {
                         "path": skill.path,

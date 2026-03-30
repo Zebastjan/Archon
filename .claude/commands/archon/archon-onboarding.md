@@ -15,18 +15,17 @@ Archon is a centralized knowledge base for AI coding assistants. It enables Clau
 
 Its powered by a **Model Context Protocol (MCP) server**
 
-And you can crawl and store knowledge that you can use multiple rag strategies to improve your AI coders performance.
+Archon processes local documents (PDFs, Markdown, text files) and stores them in a searchable knowledge base with embeddings.
 
 ## Quick Architecture Overview
 
-This is a **true microservices architecture** with 4 independent services:
+This is a **single-container architecture** with embedded PostgreSQL:
 
 1. **Frontend** (port 3737) - React UI for managing knowledge and projects
 2. **Server** (port 8181) - Core API handling all business logic
-3. **MCP Server** (port 8051) - Lightweight MCP protocol interface
-4. **Agents** (port 8052) - AI operations with PydanticAI
+3. **MCP Server** (STDIO via `docker exec`) - MCP protocol interface
 
-All services communicate via HTTP only - no shared code, true separation of concerns.
+All services run in a single Docker container for local development.
 
 ## Getting Started - Your First 30 Minutes
 
@@ -61,7 +60,7 @@ Ask the user to choose their focus area. Present these options clearly and wait 
 2. **Backend API (Python/FastAPI)** - If you like building robust APIs
 3. **MCP Tools (Python)** - If you're interested in AI tool protocols
 4. **RAG/Search (Python)** - If you enjoy search and ML engineering
-5. **Web Crawling (Python)** - If you like data extraction challenges
+5. **Document Processing (Python)** - If you like data extraction challenges
 
 ### Your Onboarding Analysis
 
@@ -109,13 +108,13 @@ Your report to the user should include:
 - Identify a search improvement or ranking enhancement opportunity
 - Give the user an overview of the RAG system and suggest optimizations
 
-**If the user chose Web Crawling:**
+**If the user chose Document Processing:**
 
-- Start with `python/src/server/services/rag/crawling_service.py`
-- Look at sitemap detection and parsing logic
-- Take a deep dive into the crawling architecture and content extraction
-- Identify a crawling enhancement or new content type support to add
-- Give the user an overview of the crawling system and parsing strategies
+- Start with `python/src/server/services/documents/local_document_service.py`
+- Look at the Dockling integration for document parsing
+- Take a deep dive into the document pipeline (chunking, summarization)
+- Identify a document type support enhancement or processing improvement
+- Give the user an overview of the document processing system
 
 ## How to Find Contribution Opportunities
 

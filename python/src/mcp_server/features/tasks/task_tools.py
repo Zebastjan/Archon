@@ -12,6 +12,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 
 from src.mcp_server.utils.error_handling import MCPErrorFormatter
+from src.mcp_server.utils.tool_helpers import optimize_response, truncate_text
 from src.server.services.projects.task_service import TaskService
 from src.server.services.worktree_service import get_worktree_service
 
@@ -21,26 +22,9 @@ MAX_DESCRIPTION_LENGTH = 1000
 DEFAULT_PAGE_SIZE = 10
 
 
-def truncate_text(text: str, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
-    """Truncate text to maximum length with ellipsis."""
-    if text and len(text) > max_length:
-        return text[:max_length - 3] + "..."
-    return text
-
-
 def optimize_task_response(task: dict) -> dict:
     """Optimize task object for MCP response."""
-    task = task.copy()
-    if "description" in task and task["description"]:
-        task["description"] = truncate_text(task["description"])
-    if "sources" in task and isinstance(task["sources"], list):
-        task["sources_count"] = len(task["sources"])
-        del task["sources"]
-    if "code_examples" in task and isinstance(task["code_examples"], list):
-        task["code_examples_count"] = len(task["code_examples"])
-        del task["code_examples"]
-    return task
-
+    return optimize_response(task, description_field="description")
 
 def register_task_tools(mcp: FastMCP):
     """Register consolidated task management tools with the MCP server."""

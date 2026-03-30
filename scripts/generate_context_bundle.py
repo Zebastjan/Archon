@@ -293,6 +293,15 @@ def generate_context_bundle(repo_root: Path, force: bool = False) -> dict[str, s
     render_template("KNOWN_ISSUES.md.j2", issues_context, issues_path, templates_dir)
     generated["KNOWN_ISSUES.md"] = str(issues_path)
 
+    # Generate HEALTH.md
+    try:
+        sys.path.insert(0, str(repo_root / "scripts"))
+        from generate_health_md import write_health_md
+        health_path = write_health_md(repo_root)
+        generated["HEALTH.md"] = str(health_path)
+    except Exception as e:
+        logger.warning(f"Failed to generate HEALTH.md: {e}")
+
     return generated
 
 

@@ -3,7 +3,7 @@
 Fast Overnight Embedding Generator - Auto-Optimizing
 
 - Dynamic batch sizing based on GPU memory
-- Concurrent processing within batches  
+- Concurrent processing within batches
 - Batches DB updates
 - Target: 50-100+ ent/sec on RTX 3060
 """
@@ -41,17 +41,22 @@ def get_gpu_memory():
     """Get free GPU memory in MB."""
     try:
         result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=memory.free,memory.total,utilization.gpu',
-             '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, timeout=5
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.free,memory.total,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
-            parts = result.stdout.strip().split(',')
+            parts = result.stdout.strip().split(",")
             free_mb = float(parts[0])
             total_mb = float(parts[1])
             util = float(parts[2])
             return free_mb, total_mb, util
-    except:
+    except (subprocess.CalledProcessError, ValueError):
         pass
     return 8000, 12000, 50  # Safe defaults
 
@@ -84,7 +89,7 @@ def optimize_batch_size(free_mb, util):
     elif util < 50 and free_mb > 4000:
         new_batch = min(128, int(new_batch * 1.2))
 
-    changed = (new_batch != CURRENT_BATCH_SIZE)
+    changed = new_batch != CURRENT_BATCH_SIZE
     CURRENT_BATCH_SIZE = new_batch
     CONCURRENT_REQUESTS = new_concurrent
     return changed
@@ -100,7 +105,9 @@ signal.signal(signal.SIGTERM, handle_signal)
 signal.signal(signal.SIGINT, handle_signal)
 
 
-async def get_embedding_single(text: str, client: httpx.AsyncClient, sem: asyncio.Semaphore) -> list[float] | None:
+async def get_embedding_single(
+    text: str, client: httpx.AsyncClient, sem: asyncio.Semaphore
+) -> list[float] | None:
     """Get single embedding with semaphore control."""
     async with sem:
         for attempt in range(MAX_RETRIES):
@@ -108,7 +115,7 @@ async def get_embedding_single(text: str, client: httpx.AsyncClient, sem: asynci
                 response = await client.post(
                     f"{OLLAMA_URL}/api/embeddings",
                     json={"model": MODEL, "prompt": text[:4000]},
-                    timeout=30.0
+                    timeout=30.0,
                 )
                 if response.status_code == 200:
                     data = response.json()
@@ -135,7 +142,9 @@ def prepare_text(entity: dict) -> str:
     return "\n".join(parts) if parts else entity.get("name", "unknown")
 
 
-async def process_batch(rows: list, conn: asyncpg.Connection, client: httpx.AsyncClient) -> tuple[int, int]:
+async def process_batch(
+    rows: list, conn: asyncpg.Connection, client: httpx.AsyncClient
+) -> tuple[int, int]:
     """Process a batch with concurrent requests."""
     texts = [prepare_text(dict(r)) for r in rows]
     ids = [str(r["id"]) for r in rows]
@@ -167,7 +176,7 @@ async def process_batch(rows: list, conn: asyncpg.Connection, client: httpx.Asyn
                        embedding_model = $2,
                        updated_at = NOW()
                    WHERE id = $3""",
-                updates
+                updates,
             )
         except Exception as e:
             print(f"  DB batch error: {e}")
@@ -189,7 +198,9 @@ async def main():
     free_mb, total_mb, util = get_gpu_memory()
     print(f"GPU: {free_mb:.0f}MB free / {total_mb:.0f}MB total ({util:.0f}% util)")
     optimize_batch_size(free_mb, util)
-    print(f"Initial settings: batch={CURRENT_BATCH_SIZE}, concurrent={CONCURRENT_REQUESTS}")
+    print(
+        f"Initial settings: batch={CURRENT_BATCH_SIZE}, concurrent={CONCURRENT_REQUESTS}"
+    )
     print()
 
     # Connect DB
@@ -230,7 +241,9 @@ async def main():
     print(f"Starting... (Ctrl+C to stop gracefully)")
     print()
 
-    async with httpx.AsyncClient(timeout=60.0, limits=httpx.Limits(max_connections=20)) as client:
+    async with httpx.AsyncClient(
+        timeout=60.0, limits=httpx.Limits(max_connections=20)
+    ) as client:
         while not shutdown_requested:
             batch_num += 1
 
@@ -240,7 +253,9 @@ async def main():
                 free_mb, total_mb, util = get_gpu_memory()
                 changed = optimize_batch_size(free_mb, util)
                 if changed:
-                    print(f"\n  [GPU] {free_mb:.0f}MB free, {util:.0f}% util -> batch={CURRENT_BATCH_SIZE}, concurrent={CONCURRENT_REQUESTS}\n")
+                    print(
+                        f"\n  [GPU] {free_mb:.0f}MB free, {util:.0f}% util -> batch={CURRENT_BATCH_SIZE}, concurrent={CONCURRENT_REQUESTS}\n"
+                    )
                 last_optimize = now
 
             # Fetch batch
@@ -272,10 +287,12 @@ async def main():
                 pct = 100 * current_done / total
                 eta_hours = (remaining - processed) / rate / 3600 if rate > 0 else 0
 
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] "
-                      f"{current_done:,}/{total:,} ({pct:.1f}%) | "
-                      f"Rate: {rate:.1f}/s | ETA: {eta_hours:.1f}h | "
-                      f"Batch: {batch_time:.1f}s | Failed: {failed_total}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"{current_done:,}/{total:,} ({pct:.1f}%) | "
+                    f"Rate: {rate:.1f}/s | ETA: {eta_hours:.1f}h | "
+                    f"Batch: {batch_time:.1f}s | Failed: {failed_total}"
+                )
 
                 last_checkpoint = current_done
 
@@ -287,8 +304,8 @@ async def main():
     print("=" * 70)
     print(f"Processed: {processed:,}")
     print(f"Failed: {failed_total:,}")
-    print(f"Time: {elapsed/3600:.1f}h")
-    print(f"Avg rate: {processed/elapsed:.1f}/s" if elapsed > 0 else "N/A")
+    print(f"Time: {elapsed / 3600:.1f}h")
+    print(f"Avg rate: {processed / elapsed:.1f}/s" if elapsed > 0 else "N/A")
     print(f"Ended: {datetime.now().isoformat()}")
 
     await conn.close()
@@ -305,5 +322,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

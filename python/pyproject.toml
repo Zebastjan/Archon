@@ -37,29 +37,25 @@ dev = [
     "pytest-timeout>=2.3.0",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.5",
-    "requests>=2.31.0",
     "factory-boy>=3.3.0",
 ]
 
 # Server container dependencies
 server = [
-    # Web framework
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
+    # Web framework (aligned with agent-work-orders)
+    "fastapi>=0.119.1",
+    "uvicorn>=0.38.0",
     "python-multipart>=0.0.20",
     "watchfiles>=0.18",
     # MCP protocol support
     "mcp>=1.12.2",
-    # Web crawling
-    "crawl4ai==0.7.4",
-    # Database and storage
-    "supabase==2.15.1",
-    "asyncpg>=0.29.0",
+    # Database and storage (PostgreSQL only - no Supabase)
+    "asyncpg>=0.30.0",
     "sqlalchemy[asyncio]>=2.0.0",
     # AI/ML libraries
     "openai==1.71.0",
-    "pydantic-ai>=0.0.13",
     # Document processing
+    "docling>=2.0.0",
     "pypdf2>=3.0.1",
     "pdfplumber>=0.11.6",
     "python-docx>=1.1.2",
@@ -68,27 +64,25 @@ server = [
     "python-jose[cryptography]>=3.3.0",
     "cryptography>=41.0.0",
     "slowapi>=0.1.9",
-    # Core utilities
-    "httpx>=0.24.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
+    # Core utilities (aligned with agent-work-orders)
+    "httpx>=0.28.1",
+    "pydantic>=2.12.3",
+    "python-dotenv>=1.1.1",
     # OPTIONAL: Docker SDK only needed for legacy Docker socket monitoring mode
     # Uncomment if ENABLE_DOCKER_SOCKET_MONITORING=true (not recommended - security risk)
     # "docker>=6.1.0",
     "tldextract>=5.0.0",
     # Logging
     "logfire>=0.30.0",
-    # Testing (needed for UI-triggered tests)
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-mock>=3.12.0",
     "gitpython>=3.1.46",
     # Tree-sitter for multi-language code parsing
-    "tree-sitter>=0.22.0",
-    "tree-sitter-python>=0.21.0",
-    "tree-sitter-typescript>=0.21.0",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-python>=0.25.0",
+    "tree-sitter-typescript>=0.23.2",
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-language-pack>=0.7.2",
+    # Git ignore pattern matching
+    "pathspec>=0.12.1",
     # Code auditing
     "semgrep>=1.60.0",
 ]
@@ -103,34 +97,32 @@ server-reranking = [
 # MCP container dependencies
 mcp = [
     "mcp==1.12.2",
-    "httpx>=0.24.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
-    "supabase==2.15.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.12.3",
+    "python-dotenv>=1.1.1",
+    # NOTE: supabase removed - using PostgreSQL only
     "logfire>=0.30.0",
-    "fastapi>=0.104.0",
+    "fastapi>=0.119.1",
     "watchdog>=3.0.0",  # Auto-reload for development
-    "asyncpg>=0.29.0",  # Database connectivity
+    "asyncpg>=0.30.0",  # Database connectivity
     "psycopg2-binary>=2.9.11",  # Code metrics service (sync DB)
     "semgrep>=1.60.0",  # Code auditing
     "openai==1.71.0",  # RAG service dependencies
-    "python-jose[cryptography]>=3.3.0",  # Cryptography for supabase
+    "python-jose[cryptography]>=3.3.0",  # JWT utilities
     "cryptography>=41.0.0",  # Crypto utilities
-    "pydantic-ai>=0.0.13",  # AI utilities
     "psutil>=5.9.0",  # System utilities
     "tldextract>=5.0.0",  # URL parsing
 ]
 
-# Agents container dependencies (ML/reranking service)
-agents = [
-    "pydantic-ai>=0.0.13",
-    "pydantic>=2.0.0",
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
-    "httpx>=0.24.0",
-    "python-dotenv>=1.0.0",
-    "structlog>=23.1.0",
-]
+# Agents container dependencies (ML/reranking service) - DISABLED
+# agents = [
+#     "pydantic>=2.12.3",
+#     "fastapi>=0.119.1",
+#     "uvicorn>=0.38.0",
+#     "httpx>=0.28.1",
+#     "python-dotenv>=1.1.1",
+#     "structlog>=25.4.0",
+# ]
 
 # Agent Work Orders container dependencies (workflow orchestration service)
 agent-work-orders = [
@@ -141,50 +133,48 @@ agent-work-orders = [
     "python-dotenv>=1.1.1",
     "structlog>=25.4.0",
     "sse-starlette>=2.3.3",
-    "supabase==2.15.1",
+    # NOTE: supabase removed - using PostgreSQL only
 ]
 
 # All dependencies for running unit tests locally
-# This combines all container dependencies plus test-specific ones
+# This is auto-generated - do not edit manually
+# Sources: server, mcp, agents, agent-work-orders, dev
 all = [
-    # All server dependencies
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
-    "python-multipart>=0.0.20",
-    "watchfiles>=0.18",
-    "crawl4ai==0.7.4",
-    "supabase==2.15.1",
-    "asyncpg>=0.29.0",
+    # Core (from server + mcp + agents)
+    "fastapi>=0.119.1",
+    "uvicorn>=0.38.0",
+    "pydantic>=2.12.3",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.1.1",
+    # Database (PostgreSQL only - no Supabase)
+    "asyncpg>=0.30.0",
+    # AI/ML
     "openai==1.71.0",
+    # Document processing
+    "docling>=2.0.0",
     "pypdf2>=3.0.1",
     "pdfplumber>=0.11.6",
     "python-docx>=1.1.2",
     "markdown>=3.8",
+    # Security
     "python-jose[cryptography]>=3.3.0",
     "cryptography>=41.0.0",
     "slowapi>=0.1.9",
-    # OPTIONAL: Docker SDK only needed for legacy Docker socket monitoring mode
-    # Uncomment if ENABLE_DOCKER_SOCKET_MONITORING=true (not recommended - security risk)
-    # "docker>=6.1.0",
+    # MCP
+    "mcp==1.12.2",
+    "watchfiles>=0.18",
+    # Agents/ML
+    "structlog>=25.4.0",
+    # Agent Work Orders
+    "sse-starlette>=2.3.3",
+    # Utilities
     "tldextract>=5.0.0",
     "logfire>=0.30.0",
-    # MCP specific (mcp version)
-    "mcp==1.12.2",
-    # Agents specific
-    "pydantic-ai>=0.0.13",
-    "structlog>=23.1.0",
-    # Agent Work Orders specific
-    "sse-starlette>=2.3.3",
-    # Shared utilities
-    "httpx>=0.24.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
-    # Git integration
     "gitpython>=3.1.46",
-    # Tree-sitter for multi-language code parsing
-    "tree-sitter>=0.22.0",
-    "tree-sitter-python>=0.21.0",
-    "tree-sitter-typescript>=0.21.0",
+    # Tree-sitter
+    "tree-sitter>=0.25.2",
+    "tree-sitter-python>=0.25.0",
+    "tree-sitter-typescript>=0.23.2",
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-language-pack>=0.7.2",
     # Code auditing
@@ -194,7 +184,7 @@ all = [
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.12.0",
     "pytest-timeout>=2.3.0",
-    "requests>=2.31.0",
+    "pytest-cov>=6.2.1",
     "factory-boy>=3.3.0",
 ]
 
@@ -229,7 +219,7 @@ line-ending = "auto"
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false
+disallow_untyped_defs = true
 disallow_any_unimported = false
 no_implicit_optional = true
 warn_redundant_casts = true

@@ -1,9 +1,12 @@
-"""
-Agents API - PydanticAI agents integrated into the main server
+"""Agents API - PydanticAI agents integrated into the main server
 
 This module provides endpoints for running and streaming PydanticAI agents
 directly within the main Archon server, eliminating the need for a separate
 agents service.
+
+NOTE: Agents are currently DISABLED. The PydanticAI dependency has been removed
+to simplify the codebase. Agents can be re-enabled by reinstalling pydantic-ai
+and uncommenting the imports below.
 """
 
 import json
@@ -16,14 +19,22 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Import agents directly - they now use services instead of HTTP MCP calls
-from ...agents.document_agent import DocumentAgent
-from ...agents.rag_agent import RagAgent
-
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+# Try to import agents - they require pydantic-ai which is disabled
+try:
+    from ...agents.document_agent import DocumentAgent
+    from ...agents.rag_agent import RagAgent
+
+    AGENTS_ENABLED = True
+except ImportError:
+    logger.warning("Agents disabled - pydantic-ai not available")
+    DocumentAgent = None
+    RagAgent = None
+    AGENTS_ENABLED = False
 
 
 # Request/Response models
@@ -45,253 +56,205 @@ class AgentResponse(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
-# Agent registry - populated during startup
-AVAILABLE_AGENTS: dict[str, type] = {
-    "document": DocumentAgent,
-    "rag": RagAgent,
-}
+# Agent registry - populated during startup if agents are available
+AVAILABLE_AGENTS: dict[str, type] = {}
+if AGENTS_ENABLED:
+    if DocumentAgent:
+        AVAILABLE_AGENTS["document"] = DocumentAgent
+    if RagAgent:
+        AVAILABLE_AGENTS["rag"] = RagAgent
 
 # Global agents storage - initialized in lifespan
 _agents: dict[str, Any] = {}
 
 
-def initialize_agents():
-    """
-    Initialize agents configuration (agents are created lazily on first use).
+def get_available_agents() -> list[dict[str, Any]]:
+    """Get list of available agent types with their capabilities."""
+    if not AGENTS_ENABLED:
+        return []
 
-    This allows the server to start without OpenAI API keys.
-    Agents will be instantiated when first requested.
-    """
-    global _agents
+    agents_info = []
+    for agent_type, agent_class in AVAILABLE_AGENTS.items():
+        try:
+            # Create temporary instance to get metadata
+            temp_agent = agent_class()
+            agents_info.append(
+                {
+                    "type": agent_type,
+                    "name": temp_agent.name,
+                    "description": temp_agent.__doc__ or f"{agent_type.capitalize()} agent",
+                    "model": temp_agent.model,
+                    "capabilities": getattr(temp_agent, "capabilities", []),
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get agent info for {agent_type}: {e}")
+    return agents_info
 
-    # Mark agents as available but don't instantiate yet
-    _agents = {}
-    for name, agent_class in AVAILABLE_AGENTS.items():
-        # Store agent class and config for lazy instantiation
-        model_key = f"{name.upper()}_AGENT_MODEL"
-        model = os.getenv(model_key, "openai:gpt-4o-mini")
-        _agents[name] = {
-            "class": agent_class,
-            "model": model,
-            "instance": None,  # Will be created on first use
+
+@router.get("/available")
+async def list_available_agents() -> dict[str, Any]:
+    """List all available agent types and their capabilities."""
+    if not AGENTS_ENABLED:
+        return {
+            "success": False,
+            "agents": [],
+            "message": "Agents are disabled - pydantic-ai dependency removed",
+            "count": 0,
         }
-        logger.info(f"Registered {name} agent (model: {model}) - lazy initialization")
 
-    return _agents
-
-
-def get_agent(name: str):
-    """
-    Get or create an agent instance (lazy initialization).
-
-    Args:
-        name: Agent name (e.g., "document", "rag")
-
-    Returns:
-        Agent instance or None if not available
-    """
-    global _agents
-
-    if name not in _agents:
-        return None
-
-    agent_info = _agents[name]
-
-    # If it's already an instance, return it
-    if agent_info.get("instance") is not None:
-        return agent_info["instance"]
-
-    # Lazy initialization - create the agent now
-    try:
-        agent_class = agent_info["class"]
-        model = agent_info["model"]
-        instance = agent_class(model=model)
-        _agents[name]["instance"] = instance
-        logger.info(f"Lazy-initialized {name} agent")
-        return instance
-    except Exception as e:
-        logger.error(f"Failed to lazy-initialize {name} agent: {e}")
-        return None
-
-
-def get_agents():
-    """Get the agents registry."""
-    return _agents
-
-
-@router.get("/health")
-async def health_check():
-    """Health check endpoint for agents"""
+    agents = get_available_agents()
     return {
-        "status": "healthy",
-        "service": "agents",
-        "agents_available": list(_agents.keys()),
-        "agents_initialized": len(_agents),
+        "success": True,
+        "agents": agents,
+        "count": len(agents),
     }
 
 
-@router.post("/run", response_model=AgentResponse)
-async def run_agent(request: AgentRequest):
-    """
-    Run a specific agent with the given prompt.
+@router.post("/run")
+async def run_agent(request: AgentRequest) -> AgentResponse:
+    """Run an agent synchronously and return the result."""
+    if not AGENTS_ENABLED:
+        return AgentResponse(
+            success=False,
+            error="Agents are disabled - pydantic-ai dependency removed. To enable agents, reinstall pydantic-ai.",
+        )
 
-    The agent will use services directly (not HTTP calls) for data operations.
-    Agents are lazily initialized on first use.
-    """
     try:
-        # Get or create the requested agent (lazy initialization)
-        agent = get_agent(request.agent_type)
+        agent_type = request.agent_type
 
-        if agent is None:
-            raise HTTPException(
-                status_code=400, detail=f"Unknown agent type: {request.agent_type}. Available: {list(_agents.keys())}"
+        # Check if agent type is available
+        if agent_type not in AVAILABLE_AGENTS:
+            available = list(AVAILABLE_AGENTS.keys())
+            return AgentResponse(
+                success=False,
+                error=f"Agent type '{agent_type}' not available. Available: {available}",
             )
 
-        # Prepare dependencies based on agent type
-        if request.agent_type == "rag":
-            from ...agents.rag_agent import RagDependencies
-
-            deps = RagDependencies(
-                source_filter=request.context.get("source_filter") if request.context else None,
-                match_count=request.context.get("match_count", 5) if request.context else 5,
-                project_id=request.context.get("project_id") if request.context else None,
-                user_id=request.context.get("user_id") if request.context else None,
-            )
-        elif request.agent_type == "document":
-            from ...agents.document_agent import DocumentDependencies
-
-            deps = DocumentDependencies(
-                project_id=request.context.get("project_id") if request.context else None,
-                user_id=request.context.get("user_id") if request.context else None,
-                current_document_id=request.context.get("current_document_id") if request.context else None,
-            )
-        else:
-            # Default dependencies
-            from ...agents.base_agent import ArchonDependencies
-
-            deps = ArchonDependencies()
+        # Get or create agent instance
+        agent_instance = _agents.get(agent_type)
+        if agent_instance is None:
+            agent_class = AVAILABLE_AGENTS[agent_type]
+            agent_instance = agent_class()
+            _agents[agent_type] = agent_instance
+            logger.info(f"Initialized {agent_type} agent: {agent_instance.name}")
 
         # Run the agent
-        result = await agent.run(request.prompt, deps)
+        result = await agent_instance.run(request.prompt, deps=request.context)
 
         return AgentResponse(
             success=True,
             result=result,
-            metadata={"agent_type": request.agent_type, "model": agent.model},
+            metadata={
+                "agent_type": agent_type,
+                "model": agent_instance.model,
+            },
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error running {request.agent_type} agent: {e}")
-        return AgentResponse(success=False, error=str(e))
-
-
-@router.get("/list")
-async def list_agents():
-    """List all available agents and their capabilities"""
-    agents_info = {}
-
-    for name, agent_info in _agents.items():
-        # Handle both lazy init dicts and instantiated agents
-        if isinstance(agent_info, dict):
-            # Lazy init mode - get from config dict
-            agent_class = agent_info.get("class")
-            model = agent_info.get("model")
-            instance = agent_info.get("instance")
-
-            agents_info[name] = {
-                "name": name,
-                "model": model,
-                "description": agent_class.__doc__ if agent_class else "No description available",
-                "available": True,
-                "initialized": instance is not None,
-            }
-        else:
-            # Direct instance (shouldn't happen with lazy init, but handle for backwards compat)
-            agents_info[name] = {
-                "name": agent_info.name,
-                "model": agent_info.model,
-                "description": agent_info.__class__.__doc__ or "No description available",
-                "available": True,
-                "initialized": True,
-            }
-
-    return {"agents": agents_info, "total": len(agents_info)}
-
-
-@router.post("/{agent_type}/stream")
-async def stream_agent(agent_type: str, request: AgentRequest):
-    """
-    Stream responses from an agent using Server-Sent Events (SSE).
-
-    This endpoint streams the agent's response in real-time, allowing
-    for a more interactive experience.
-
-    Agents are lazily initialized on first use.
-    """
-    # Get or create the requested agent (lazy initialization)
-    agent = get_agent(agent_type)
-
-    if agent is None:
-        raise HTTPException(
-            status_code=400, detail=f"Unknown agent type: {agent_type}. Available: {list(_agents.keys())}"
+        logger.exception(f"Agent run failed: {e}")
+        return AgentResponse(
+            success=False,
+            error=str(e),
         )
 
-    async def generate() -> AsyncGenerator[str, None]:
+
+@router.post("/stream")
+async def stream_agent(request: AgentRequest) -> StreamingResponse:
+    """Run an agent and stream the response."""
+    if not AGENTS_ENABLED:
+        return StreamingResponse(
+            iter([b"data: Agents are disabled - pydantic-ai dependency removed\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
-            # Prepare dependencies based on agent type
-            if agent_type == "rag":
-                from ...agents.rag_agent import RagDependencies
+            agent_type = request.agent_type
 
-                deps = RagDependencies(
-                    source_filter=request.context.get("source_filter") if request.context else None,
-                    match_count=request.context.get("match_count", 5) if request.context else 5,
-                    project_id=request.context.get("project_id") if request.context else None,
-                    user_id=request.context.get("user_id") if request.context else None,
-                )
-            elif agent_type == "document":
-                from ...agents.document_agent import DocumentDependencies
+            # Check if agent type is available
+            if agent_type not in AVAILABLE_AGENTS:
+                available = list(AVAILABLE_AGENTS.keys())
+                yield f"data: Error: Agent type '{agent_type}' not available. Available: {available}\n\n".encode()
+                return
 
-                deps = DocumentDependencies(
-                    project_id=request.context.get("project_id") if request.context else None,
-                    user_id=request.context.get("user_id") if request.context else None,
-                    current_document_id=request.context.get("current_document_id") if request.context else None,
-                )
-            else:
-                # Default dependencies
-                from ...agents.base_agent import ArchonDependencies
+            # Get or create agent instance
+            agent_instance = _agents.get(agent_type)
+            if agent_instance is None:
+                agent_class = AVAILABLE_AGENTS[agent_type]
+                agent_instance = agent_class()
+                _agents[agent_type] = agent_instance
 
-                deps = ArchonDependencies()
+            # Stream the response
+            async for chunk in agent_instance.stream(request.prompt, deps=request.context):
+                data = json.dumps({"chunk": str(chunk)})
+                yield f"data: {data}\n\n".encode()
 
-            # Use PydanticAI's run_stream method
-            async with agent.run_stream(request.prompt, deps) as stream:
-                # Stream text chunks as they arrive
-                async for chunk in stream.stream_text():
-                    event_data = json.dumps({"type": "stream_chunk", "content": chunk})
-                    yield f"data: {event_data}\n\n"
-
-                # Get the final structured result
-                try:
-                    final_result = await stream.get_data()
-                    event_data = json.dumps({"type": "stream_complete", "content": final_result})
-                    yield f"data: {event_data}\n\n"
-                except Exception:
-                    # If we can't get structured data, just send completion
-                    event_data = json.dumps({"type": "stream_complete", "content": ""})
-                    yield f"data: {event_data}\n\n"
+            # Send completion event
+            yield b"data: [DONE]\n\n"
 
         except Exception as e:
-            logger.error(f"Error streaming {agent_type} agent: {e}")
-            event_data = json.dumps({"type": "error", "error": str(e)})
-            yield f"data: {event_data}\n\n"
+            logger.exception(f"Agent stream failed: {e}")
+            error_data = json.dumps({"error": str(e)})
+            yield f"data: {error_data}\n\n".encode()
 
-    # Return SSE response
     return StreamingResponse(
-        generate(),
+        event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # Disable Nginx buffering
-        },
     )
+
+
+@router.get("/health")
+async def agents_health() -> dict[str, Any]:
+    """Health check for agents service."""
+    if not AGENTS_ENABLED:
+        return {
+            "status": "disabled",
+            "message": "Agents are disabled - pydantic-ai dependency removed",
+            "agents": {},
+        }
+
+    agents_status = {}
+    for agent_type in AVAILABLE_AGENTS:
+        agent_instance = _agents.get(agent_type)
+        agents_status[agent_type] = {
+            "initialized": agent_instance is not None,
+            "model": agent_instance.model if agent_instance else None,
+        }
+
+    return {
+        "status": "healthy" if agents_status else "uninitialized",
+        "agents": agents_status,
+    }
+
+
+async def initialize_agents() -> dict[str, Any]:
+    """Initialize agents at startup.
+
+    This function is called during application lifespan to initialize
+    all available agents. If agents are disabled, returns empty status.
+
+    Returns:
+        Status dictionary with initialized agents
+    """
+    if not AGENTS_ENABLED:
+        logger.info("Agents initialization skipped - pydantic-ai not available")
+        return {"status": "disabled", "agents": {}}
+
+    initialized = {}
+    for agent_type, agent_class in AVAILABLE_AGENTS.items():
+        try:
+            agent_instance = agent_class()
+            _agents[agent_type] = agent_instance
+            initialized[agent_type] = {
+                "initialized": True,
+                "model": agent_instance.model,
+                "name": agent_instance.name,
+            }
+            logger.info(f"Initialized {agent_type} agent: {agent_instance.name}")
+        except Exception as e:
+            logger.error(f"Failed to initialize {agent_type} agent: {e}")
+            initialized[agent_type] = {"initialized": False, "error": str(e)}
+
+    logger.info(f"Agents initialization complete: {len(initialized)} agents")
+    return {"status": "initialized", "agents": initialized}

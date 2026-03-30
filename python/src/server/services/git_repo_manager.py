@@ -24,6 +24,46 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# Default patterns to always ignore - dependencies and build artifacts
+DEFAULT_IGNORE_PATTERNS = [
+    ".venv/",
+    ".venv\\",
+    "venv/",
+    "venv\\",
+    "node_modules/",
+    "node_modules\\",
+    ".git/",
+    ".git\\",
+    "__pycache__/",
+    "__pycache__\\",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    ".pytest_cache/",
+    ".pytest_cache\\",
+    ".mypy_cache/",
+    ".mypy_cache\\",
+    "dist/",
+    "dist\\",
+    "build/",
+    "build\\",
+    "*.egg-info/",
+    "*.egg-info\\",
+    ".tox/",
+    ".tox\\",
+    ".coverage",
+    "htmlcov/",
+    "htmlcov\\",
+    ".idea/",
+    ".idea\\",
+    ".vscode/",
+    ".vscode\\",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+]
+
+
 def should_ignore_file(file_path: Path, repo_root: Path) -> bool:
     """Check if a file should be ignored based on .gitignore and .archonignore.
 
@@ -34,49 +74,80 @@ def should_ignore_file(file_path: Path, repo_root: Path) -> bool:
     Returns:
         True if file should be ignored, False otherwise
     """
+    # Check default ignore patterns first (fast path)
+    relative_path = str(file_path.relative_to(repo_root))
+
+    for pattern in DEFAULT_IGNORE_PATTERNS:
+        if pattern.endswith("/") or pattern.endswith("\\"):
+            # Directory pattern - check if path starts with this directory
+            dir_pattern = pattern.rstrip("/\\")
+            if relative_path.startswith(dir_pattern + "/") or relative_path.startswith(dir_pattern + "\\"):
+                return True
+        elif pattern.startswith("*"):
+            # Glob pattern - simple check for common cases
+            if pattern == "*.pyc" and relative_path.endswith(".pyc"):
+                return True
+            if pattern == "*.pyo" and relative_path.endswith(".pyo"):
+                return True
+            if pattern == "*.pyd" and relative_path.endswith(".pyd"):
+                return True
+            if pattern == "*.min.js" and relative_path.endswith(".min.js"):
+                return True
+            if pattern == "*.min.css" and relative_path.endswith(".min.css"):
+                return True
+            if pattern == "*.map" and relative_path.endswith(".map"):
+                return True
+        else:
+            # Exact match or directory
+            if (
+                relative_path == pattern
+                or relative_path.startswith(pattern + "/")
+                or relative_path.startswith(pattern + "\\")
+            ):
+                return True
+
+    # Try to use pathspec for .gitignore patterns
     try:
         import pathspec
+
+        patterns = []
+
+        # Read .gitignore
+        gitignore_path = repo_root / ".gitignore"
+        if gitignore_path.exists():
+            try:
+                with open(gitignore_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            patterns.append(line)
+            except Exception as e:
+                logger.debug(f"Failed to read .gitignore: {e}")
+
+        # Read .archonignore
+        archonignore_path = repo_root / ".archonignore"
+        if archonignore_path.exists():
+            try:
+                with open(archonignore_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            patterns.append(line)
+            except Exception as e:
+                logger.debug(f"Failed to read .archonignore: {e}")
+
+        if patterns:
+            # Use pathspec to match
+            try:
+                matcher = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+                return matcher.match_file(relative_path)
+            except Exception as e:
+                logger.debug(f"Error matching patterns: {e}")
     except ImportError:
-        logger.warning("pathspec not installed, skipping ignore filtering")
-        return False
+        # pathspec not installed, but we already checked default patterns
+        pass
 
-    patterns = []
-
-    # Read .gitignore
-    gitignore_path = repo_root / ".gitignore"
-    if gitignore_path.exists():
-        try:
-            with open(gitignore_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        patterns.append(line)
-        except Exception as e:
-            logger.debug(f"Failed to read .gitignore: {e}")
-
-    # Read .archonignore
-    archonignore_path = repo_root / ".archonignore"
-    if archonignore_path.exists():
-        try:
-            with open(archonignore_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        patterns.append(line)
-        except Exception as e:
-            logger.debug(f"Failed to read .archonignore: {e}")
-
-    if not patterns:
-        return False
-
-    # Use pathspec to match
-    try:
-        matcher = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-        relative_path = file_path.relative_to(repo_root)
-        return matcher.match_file(relative_path)
-    except Exception as e:
-        logger.debug(f"Error matching patterns: {e}")
-        return False
+    return False
 
 
 @dataclass
@@ -240,8 +311,8 @@ class GitRepositoryManager:
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
-        except Exception:
-            pass  # Table might already exist
+        except Exception as e:
+            logger.debug(f"Could not create archon_code_repos table (may already exist): {e}")
 
         result = await db.fetchrow(
             """
@@ -459,7 +530,7 @@ fi
 
         # Find all supported files in the repo, filtering by ignore patterns
         all_files = []
-        for ext in [".py", ".ts", ".tsx", ".js", ".jsx", ".nim", ".nims"]:
+        for ext in [".py", ".ts", ".tsx", ".js", ".jsx", ".nim", ".nims", ".tla", ".cfg"]:
             for f in config.local_path.rglob(f"*{ext}"):
                 if f.is_file() and not should_ignore_file(f, config.local_path):
                     all_files.append(f)

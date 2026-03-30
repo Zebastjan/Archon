@@ -1,24 +1,24 @@
 # Archon Status
 
-## Current Branch: feature/multi-language-code-intelligence
-**Purpose**: Feature development: multi-language-code-intelligence
+## Current Branch: feature/agent-recovery-and-session-wiring
+**Purpose**: Feature development: agent-recovery-and-session-wiring
 
 ## Recent Changes
 
-- fdb9049 - docs: Add note about using Zebastjan fork for Git remote
+- a997d5f - test: verify git hook with code change
 
-- d0a5e68 - docs: Add IDE MCP setup guide and update ADR-003 with lessons learned
+- 3804f49 - Add Nim language support to file discovery
 
-- a39d06f - Add tests for code_repos module and fix stub tests
+- f347b7f - feat: Add OCTO.md for OctoFriend integration
 
-- 299dfc9 - Standardize testing infrastructure
+- d28b93b - docs: Add agent recovery and OctoFriend integration
 
-- c901123 - docs: add ADR-006 to README
+- 155e8f3 - docs: Add MCP vs. Git tool clarity to AGENTS.md
 
 
 ## Active Worktrees
 
-- feature/multi-language-code-intelligence (this branch)
+- feature/agent-recovery-and-session-wiring (this branch)
 
 
 ## Quick Commands
