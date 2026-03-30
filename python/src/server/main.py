@@ -19,7 +19,21 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from .exceptions import (
+    ArchonError,
+    NotFoundError,
+    ValidationError,
+    ServiceError,
+    ConfigurationError,
+    StorageError,
+    AuthenticationError,
+    AuthorizationError,
+    RateLimitError,
+    ConflictError,
+    TimeoutError,
+)
 from .api_routes.agent_chat_api import router as agent_chat_router
 from .api_routes.agent_work_orders_proxy import router as agent_work_orders_router
 from .api_routes.agents_api import initialize_agents, router as agents_router
@@ -29,19 +43,21 @@ from .api_routes.git_api_classification import router as git_classification_rout
 from .api_routes.git_test_api import router as git_test_router
 from .api_routes.ingestion_api import router as ingestion_router
 from .api_routes.internal_api import router as internal_router
-from .api_routes.knowledge_api import router as knowledge_router
+from .api_routes.knowledge import router as knowledge_router
 from .api_routes.mcp_api import router as mcp_router
 from .api_routes.migration_api import router as migration_router
-from .api_routes.ollama_api import router as ollama_router
+from .api_routes.ollama import router as ollama_router
 from .api_routes.openrouter_api import router as openrouter_router
 from .api_routes.pages_api import router as pages_router
 from .api_routes.progress_api import router as progress_router
-from .api_routes.projects_api import router as projects_router
+from .api_routes.projects import router as projects_router
 from .api_routes.providers_api import router as providers_router
 
 # Audit API - Semgrep integration (new)
 from .api_routes.audit_api import router as audit_router
 from .api_routes.code_repos_api import router as code_repos_router
+from .api_routes.code_search_api import router as code_search_router
+from .api_routes.health_api import router as health_router
 
 # Import modular API routers
 from .api_routes.settings_api import router as settings_router
@@ -49,18 +65,7 @@ from .api_routes.version_api import router as version_router
 
 # Import Logfire configuration
 from .config.logfire_config import api_logger, setup_logfire
-from .services.crawler_manager import cleanup_crawler, initialize_crawler
-
-# Import utilities and core classes
 from .services.credential_service import initialize_credentials
-
-# Import missing dependencies that the modular APIs need
-try:
-    from crawl4ai import AsyncWebCrawler, BrowserConfig
-except ImportError:
-    # These are optional dependencies for full functionality
-    AsyncWebCrawler = None
-    BrowserConfig = None
 
 # Logger will be initialized after credentials are loaded
 logger = logging.getLogger(__name__)
@@ -157,8 +162,8 @@ async def lifespan(app: FastAPI):
                                     migration.name,
                                 )
                                 api_logger.info(f"✅ Recorded migration: {migration.name}")
-                            except:
-                                pass
+                            except Exception as e:
+                                api_logger.debug(f"Could not record migration {migration.name}: {e}")
 
                     except Exception as me:
                         api_logger.warning(f"⚠️ Migration {migration.name} issue: {me}")
@@ -202,12 +207,6 @@ async def lifespan(app: FastAPI):
         if schema_validation_message:
             api_logger.info(f"✅ {schema_validation_message}")
 
-        # Initialize crawling context
-        try:
-            await initialize_crawler()
-        except Exception as e:
-            api_logger.warning(f"Could not fully initialize crawling context: {str(e)}")
-
         # Restore paused/in_progress operations from database after restart
         try:
             from .utils.progress.progress_tracker import ProgressTracker
@@ -247,6 +246,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             api_logger.warning(f"Could not initialize agents: {e}")
 
+        # Start automatic health monitoring
+        try:
+            from .services.health_monitoring_service import start_health_monitoring
+
+            await start_health_monitoring()
+            api_logger.info("✅ Health monitoring service started")
+        except Exception as e:
+            api_logger.warning(f"Could not start health monitoring: {e}")
+
         # Mark initialization as complete
         _initialization_complete = True
         api_logger.info("🎉 Archon backend started successfully!")
@@ -263,13 +271,6 @@ async def lifespan(app: FastAPI):
 
     try:
         # MCP tools cleanup not needed - handled by dedicated server
-
-        # Cleanup crawling context
-        try:
-            await cleanup_crawler()
-        except Exception as e:
-            api_logger.warning("Could not cleanup crawling context: %s", e, exc_info=True)
-
         api_logger.info("✅ Cleanup completed")
 
     except Exception:
@@ -285,9 +286,13 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Allow origins from environment variable or default to localhost for development
+_allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3737,http://localhost:3000")
+allow_origins = [origin.strip() for origin in _allowed_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -311,10 +316,174 @@ async def skip_health_check_logs(request, call_next):
     return await call_next(request)
 
 
+# Global exception handlers
+# These provide consistent error responses and logging across all API routes
+
+
+@app.exception_handler(NotFoundError)
+async def not_found_exception_handler(request: Request, exc: NotFoundError):
+    """Handle NotFoundError - return 404 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.warning(f"Not found error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """Handle ValidationError - return 422 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.warning(f"Validation error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(AuthenticationError)
+async def authentication_exception_handler(request: Request, exc: AuthenticationError):
+    """Handle AuthenticationError - return 401 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.warning(f"Authentication error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(AuthorizationError)
+async def authorization_exception_handler(request: Request, exc: AuthorizationError):
+    """Handle AuthorizationError - return 403 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.warning(f"Authorization error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(ServiceError)
+async def service_exception_handler(request: Request, exc: ServiceError):
+    """Handle ServiceError - return 502 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.error(f"Service error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(StorageError)
+async def storage_exception_handler(request: Request, exc: StorageError):
+    """Handle StorageError - return 500 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.error(f"Storage error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(ConfigurationError)
+async def configuration_exception_handler(request: Request, exc: ConfigurationError):
+    """Handle ConfigurationError - return 500 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.error(f"Configuration error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(RateLimitError)
+async def rate_limit_exception_handler(request: Request, exc: RateLimitError):
+    """Handle RateLimitError - return 429 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.warning(f"Rate limit error | code={exc.code} | message={exc.message} | details={exc.details}")
+    headers = {}
+    if "retry_after" in exc.details:
+        headers["Retry-After"] = str(exc.details["retry_after"])
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+        headers=headers,
+    )
+
+
+@app.exception_handler(ConflictError)
+async def conflict_exception_handler(request: Request, exc: ConflictError):
+    """Handle ConflictError - return 409 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.warning(f"Conflict error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(TimeoutError)
+async def timeout_exception_handler(request: Request, exc: TimeoutError):
+    """Handle TimeoutError - return 504 with structured error response."""
+    from .config.logfire_config import api_logger
+
+    api_logger.error(f"Timeout error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(ArchonError)
+async def archon_exception_handler(request: Request, exc: ArchonError):
+    """Handle generic ArchonError - return appropriate status code."""
+    from .config.logfire_config import api_logger
+
+    api_logger.error(f"Archon error | code={exc.code} | message={exc.message} | details={exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Handle unhandled exceptions - log full traceback and return 500."""
+    import traceback
+    from .config.logfire_config import api_logger
+
+    error_msg = str(exc)
+    stack_trace = traceback.format_exc()
+
+    api_logger.error(
+        f"Unhandled exception | type={type(exc).__name__} | message={error_msg}\nTraceback:\n{stack_trace}"
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_type": type(exc).__name__,
+            "code": "INTERNAL_ERROR",
+            "message": "An unexpected error occurred",
+            "status_code": 500,
+            "details": {},
+        },
+    )
+
+
 # Include API routers
 app.include_router(settings_router)
 # MCP router removed - MCP tools now handled by dedicated stdio server
-# app.include_router(mcp_client_router)  # Removed - not part of new architecture
 app.include_router(knowledge_router)
 
 app.include_router(pages_router)
@@ -335,7 +504,9 @@ app.include_router(version_router)
 app.include_router(migration_router)
 app.include_router(ingestion_router)
 app.include_router(audit_router)  # Semgrep audit endpoints
+app.include_router(code_search_router)  # Code entity semantic search
 app.include_router(code_repos_router)  # Code repository management
+app.include_router(health_router)  # Health monitoring and alerts
 
 
 # Root endpoint
@@ -515,3 +686,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# Test comment

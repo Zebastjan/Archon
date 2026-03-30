@@ -26,7 +26,7 @@
 
 Archon is the **command center** for AI coding assistants. For you, it's a sleek interface to manage knowledge, context, and tasks for your projects. For the AI coding assistant(s), it's a **Model Context Protocol (MCP) server** to collaborate on and leverage the same knowledge, context, and tasks. Connect Claude Code, Kiro, Cursor, Windsurf, etc. to give your AI agents access to:
 
-- **Your documentation** (crawled websites, uploaded PDFs/docs)
+- **Your documentation** (local files: Markdown, PDFs, Word docs, and more)
 - **Smart search capabilities** with advanced RAG strategies
 - **Task management** integrated with your knowledge base
 - **Real-time updates** as you add new content and collaborate with your coding assistant on tasks
@@ -111,10 +111,9 @@ This new vision for Archon replaces the old one (the agenteer). Archon used to b
 
 Once everything is running:
 
-1. **Test Web Crawling**: Go to http://localhost:3737 → Knowledge Base → "Crawl Website" → Enter a doc URL (such as https://ai.pydantic.dev/llms.txt)
-2. **Test Document Upload**: Knowledge Base → Upload a PDF
-3. **Test Projects**: Projects → Create a new project and add tasks
-4. **Integrate with your AI coding assistant**: MCP Dashboard → Copy connection config for your AI coding assistant 
+1. **Test Document Upload**: Go to http://localhost:3737 → Knowledge Base → Upload a document (Markdown, PDF, Word, etc.)
+2. **Test Projects**: Projects → Create a new project and add tasks
+3. **Integrate with your AI coding assistant**: MCP Dashboard → Copy connection config for your AI coding assistant 
 
 ## Installing Make
 
@@ -192,7 +191,7 @@ If you need to completely reset your database and start fresh:
 
 4. **Reconfigure**:
    - Select your LLM/embedding provider and set the API key again
-   - Re-upload any documents or re-crawl websites
+   - Re-upload any documents
 
 The reset script safely removes all tables, functions, triggers, and policies with proper dependency handling.
 
@@ -229,8 +228,7 @@ To upgrade Archon to the latest version:
 
 ### 🧠 Knowledge Management
 
-- **Smart Web Crawling**: Automatically detects and crawls entire documentation sites, sitemaps, and individual pages
-- **Document Processing**: Upload and process PDFs, Word docs, markdown files, and text documents with intelligent chunking
+- **Local Document Processing**: Upload and process PDFs, Word docs, markdown files, RST, ODT, and text documents with intelligent chunking using Dockling
 - **Code Example Extraction**: Automatically identifies and indexes code examples from documentation for enhanced search
 - **Vector Search**: Advanced semantic search with contextual embeddings for precise knowledge retrieval
 - **Source Management**: Organize knowledge by source, type, and tags for easy filtering
@@ -252,7 +250,7 @@ To upgrade Archon to the latest version:
 
 ### 🔄 Real-time Collaboration
 
-- **WebSocket Updates**: Live progress tracking for crawling, processing, and AI operations
+- **WebSocket Updates**: Live progress tracking for document processing and AI operations
 - **Multi-user Support**: Collaborative knowledge building and project management
 - **Background Processing**: Asynchronous operations that don't block the user interface
 - **Health Monitoring**: Built-in service health checks and automatic reconnection
@@ -501,3 +499,4 @@ Archon Community License (ACL) v1.2 - see [LICENSE](LICENSE) file for details.
 
 **TL;DR**: Archon is free, open, and hackable. Run it, fork it, share it - just don't sell it as-a-service without permission.
 # Test
+# Test commit for git hook verification
