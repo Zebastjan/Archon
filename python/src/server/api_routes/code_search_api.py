@@ -151,6 +151,7 @@ async def search_code_entities(request: CodeSearchRequest) -> dict[str, Any]:
 @router.get("/repos/{repo_id}/entities")
 async def get_repo_entities(
     repo_id: str,
+    name: str | None = None,
     entity_type: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -159,6 +160,7 @@ async def get_repo_entities(
 
     Args:
         repo_id: Repository ID
+        name: Optional filter by entity name (case-insensitive partial match)
         entity_type: Optional filter by entity type
         limit: Maximum number of results
         offset: Pagination offset
@@ -169,12 +171,47 @@ async def get_repo_entities(
     try:
         db = get_database_connector()
 
-        if entity_type:
+        # Build query based on filters
+        if name and entity_type:
+            # Filter by both name and entity_type
             results = await db.fetch(
                 """SELECT id, file_path, entity_type, name, signature, docstring, 
                           line_start, line_end, language, commit_sha
                    FROM archon_code_entities 
-                   WHERE repo_id = $1 AND entity_type = $2
+                   WHERE repo_id = $1 
+                     AND name ILIKE $2 
+                     AND entity_type = $3
+                   ORDER BY file_path, name
+                   LIMIT $4 OFFSET $5""",
+                repo_id,
+                f"%{name}%",
+                entity_type,
+                limit,
+                offset,
+            )
+        elif name:
+            # Filter by name only
+            results = await db.fetch(
+                """SELECT id, file_path, entity_type, name, signature, docstring, 
+                          line_start, line_end, language, commit_sha
+                   FROM archon_code_entities 
+                   WHERE repo_id = $1 
+                     AND name ILIKE $2
+                   ORDER BY file_path, name
+                   LIMIT $3 OFFSET $4""",
+                repo_id,
+                f"%{name}%",
+                limit,
+                offset,
+            )
+        elif entity_type:
+            # Filter by entity_type only
+            results = await db.fetch(
+                """SELECT id, file_path, entity_type, name, signature, docstring, 
+                          line_start, line_end, language, commit_sha
+                   FROM archon_code_entities 
+                   WHERE repo_id = $1 
+                     AND entity_type = $2
                    ORDER BY file_path, name
                    LIMIT $3 OFFSET $4""",
                 repo_id,
@@ -183,6 +220,7 @@ async def get_repo_entities(
                 offset,
             )
         else:
+            # No filters
             results = await db.fetch(
                 """SELECT id, file_path, entity_type, name, signature, docstring, 
                           line_start, line_end, language, commit_sha
@@ -201,6 +239,7 @@ async def get_repo_entities(
             "success": True,
             "entities": entities,
             "repo_id": repo_id,
+            "name_filter": name,
             "entity_type_filter": entity_type,
             "limit": limit,
             "offset": offset,

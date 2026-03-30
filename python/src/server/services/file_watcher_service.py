@@ -129,37 +129,41 @@ async def _update_working_tree_chunks(
     try:
         db = get_database_connector()
 
-        # Delete existing working_tree chunks for this file
-        await db.execute(
-            """
-            DELETE FROM archon_chunks
-            WHERE repo_id = $1 AND file_path = $2 AND source = 'working_tree'
-            """,
-            repo_id,
-            file_path,
-        )
-
-        # Insert new working_tree chunks
+        # Use transaction for atomic delete-insert operation
+        # If insert fails, the delete is rolled back - file keeps old chunks
         chunk_ids = []
-        for i, chunk_content in enumerate(chunks):
-            token_count = len(chunk_content.split()) * 4 // 3
-            result = await db.fetch(
+        async with db.transaction() as conn:
+            # Delete existing working_tree chunks for this file
+            await conn.execute(
                 """
-                INSERT INTO archon_chunks
-                (repo_id, file_path, chunk_index, content, token_count, source, commit_sha)
-                VALUES ($1, $2, $3, $4, $5, 'working_tree', NULL)
-                RETURNING id
+                DELETE FROM archon_chunks
+                WHERE repo_id = $1 AND file_path = $2 AND source = 'working_tree'
                 """,
                 repo_id,
                 file_path,
-                i,
-                chunk_content,
-                token_count,
             )
-            if result:
-                chunk_ids.append((str(result[0]["id"]), chunk_content))
 
-        # Generate embeddings for chunks if enabled
+            # Insert new working_tree chunks within same transaction
+            for i, chunk_content in enumerate(chunks):
+                token_count = len(chunk_content.split()) * 4 // 3
+                result = await conn.fetch(
+                    """
+                    INSERT INTO archon_chunks
+                    (repo_id, file_path, chunk_index, content, token_count, source, commit_sha)
+                    VALUES ($1, $2, $3, $4, $5, 'working_tree', NULL)
+                    RETURNING id
+                    """,
+                    repo_id,
+                    file_path,
+                    i,
+                    chunk_content,
+                    token_count,
+                )
+                if result:
+                    chunk_ids.append((str(result[0]["id"]), chunk_content))
+
+        # Generate embeddings for chunks if enabled (outside transaction since embeddings
+        # are stored in a separate table and can fail independently)
         if generate_embeddings and chunk_ids:
             try:
                 from src.server.services.embeddings.unified_embedding_service import get_unified_embedding_service

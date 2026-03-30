@@ -9,6 +9,7 @@ Supports both local PostgreSQL and Supabase (as fallback) via configuration.
 """
 
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
@@ -18,6 +19,103 @@ from asyncpg import Pool
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Allowed Archon tables for SQL injection protection
+ALLOWED_TABLES = frozenset(
+    [
+        "archon_settings",
+        "archon_sources",
+        "archon_crawled_pages",
+        "archon_code_examples",
+        "archon_page_metadata",
+        "archon_projects",
+        "archon_tasks",
+        "archon_project_sources",
+        "archon_document_versions",
+        "archon_migrations",
+        "archon_prompts",
+        "archon_code_repos",
+        "archon_code_entities",
+        "archon_code_relationships",
+        "archon_operation_progress",
+        "archon_document_blobs",
+        "archon_chunks",
+        "archon_embedding_sets",
+        "archon_embeddings",
+        "archon_summaries",
+        "archon_crawl_url_state",
+        "archon_git_repositories",
+        "archon_git_commits",
+        "archon_git_files",
+        "archon_code_metrics",
+        "archon_file_metrics",
+        "archon_audit_rules",
+        "archon_audit_findings",
+        "archon_audit_runs",
+        "archon_semgrep_findings",
+        "archon_audit_triage_memory",
+        "archon_audit_false_negatives",
+        "archon_audit_rule_quality",
+        "archon_semgrep_config",
+        "archon_audit_config",
+        "archon_audit_finding_tasks",
+        "archon_documents",
+        "archon_agent_work_orders",
+        "archon_agent_work_order_steps",
+        "archon_configured_repositories",
+    ]
+)
+
+# Valid identifier pattern: alphanumeric + underscore, must start with letter or underscore
+VALID_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+class SQLInjectionError(Exception):
+    """Raised when a potential SQL injection is detected in table/column names."""
+
+    pass
+
+
+def _validate_identifier(name: str, context: str = "identifier") -> None:
+    """
+    Validate that an identifier (table/column name) is safe.
+
+    Args:
+        name: The identifier to validate
+        context: Description of what this identifier represents (for error messages)
+
+    Raises:
+        SQLInjectionError: If the identifier contains unsafe characters
+    """
+    if not isinstance(name, str):
+        raise SQLInjectionError(f"{context} must be a string, got {type(name).__name__}")
+
+    if not name:
+        raise SQLInjectionError(f"{context} cannot be empty")
+
+    if not VALID_IDENTIFIER_PATTERN.match(name):
+        raise SQLInjectionError(
+            f"Invalid {context} '{name}'. Identifiers must start with a letter or underscore "
+            f"and contain only alphanumeric characters and underscores."
+        )
+
+
+def _validate_table_name(table: str) -> None:
+    """
+    Validate table name against allowlist.
+
+    Args:
+        table: Table name to validate
+
+    Raises:
+        SQLInjectionError: If table name is not in allowlist or contains unsafe characters
+    """
+    _validate_identifier(table, "table name")
+
+    if table not in ALLOWED_TABLES:
+        raise SQLInjectionError(
+            f"Table '{table}' is not in the allowed tables list. Allowed tables: {', '.join(sorted(ALLOWED_TABLES))}"
+        )
 
 
 class DatabaseConfig:
@@ -181,6 +279,54 @@ class DatabaseConnector:
                     logger.debug(f"Rollback failed (connection likely clean): {e}")
                 raise
 
+    @asynccontextmanager
+    async def transaction(self) -> AsyncGenerator[asyncpg.Connection, None]:
+        """
+        Start a database transaction with automatic commit/rollback.
+
+        This context manager provides atomic database operations. All queries
+        executed within the transaction block are committed together on success,
+        or rolled back together on failure.
+
+        Usage:
+            >>> async with db.transaction() as conn:
+            ...     await conn.execute("INSERT INTO archon_sources ...")
+            ...     await conn.execute("INSERT INTO archon_embeddings ...")
+            ... # Commits automatically if no exception
+
+            >>> async with db.transaction() as conn:
+            ...     await conn.execute("INSERT INTO archon_sources ...")
+            ...     raise ValueError("Something went wrong")
+            ... # Automatically rolled back on exception
+
+        Raises:
+            TransactionError: If transaction cannot be started or committed
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        async with self._pool.acquire() as connection:
+            # Start transaction
+            try:
+                await connection.execute("BEGIN")
+                self._logger.debug("transaction_started")
+            except Exception as e:
+                raise TransactionError(f"Failed to start transaction: {e}") from e
+
+            try:
+                yield connection
+                # Success - commit the transaction
+                await connection.execute("COMMIT")
+                self._logger.debug("transaction_committed")
+            except Exception:
+                # Failure - rollback the transaction
+                try:
+                    await connection.execute("ROLLBACK")
+                    self._logger.debug("transaction_rolled_back")
+                except Exception as rollback_error:
+                    self._logger.error(f"transaction_rollback_failed error={rollback_error}")
+                raise
+
     # Convenience methods matching Supabase-like interface
 
     async def fetch(
@@ -288,11 +434,23 @@ class DatabaseConnector:
 
         Returns:
             Inserted record if returning=True
+
+        Raises:
+            SQLInjectionError: If table or column names contain unsafe characters
         """
+        # Validate table name
+        _validate_table_name(table)
+
         columns = list(data.keys())
         values = list(data.values())
+
+        # Validate all column names
+        for col in columns:
+            _validate_identifier(col, "column name")
+
         placeholders = [f"${i + 1}" for i in range(len(values))]
 
+        # Now safe to interpolate validated identifiers
         query = f"""
             INSERT INTO {table} ({", ".join(columns)})
             VALUES ({", ".join(placeholders)})
@@ -324,10 +482,23 @@ class DatabaseConnector:
 
         Returns:
             Updated records if returning=True
+
+        Raises:
+            SQLInjectionError: If table or column names contain unsafe characters
         """
+        # Validate table name
+        _validate_table_name(table)
+
+        # Validate all column names in SET and WHERE clauses
+        for col in data.keys():
+            _validate_identifier(col, "SET column name")
+        for col in where.keys():
+            _validate_identifier(col, "WHERE column name")
+
         set_clauses = [f"{k} = ${i + 1}" for i, k in enumerate(data.keys())]
         where_clauses = [f"{k} = ${i + len(data) + 1}" for i, k in enumerate(where.keys())]
 
+        # Now safe to interpolate validated identifiers
         query = f"""
             UPDATE {table}
             SET {", ".join(set_clauses)}
@@ -360,9 +531,20 @@ class DatabaseConnector:
 
         Returns:
             Deleted records if returning=True
+
+        Raises:
+            SQLInjectionError: If table or column names contain unsafe characters
         """
+        # Validate table name
+        _validate_table_name(table)
+
+        # Validate all column names in WHERE clause
+        for col in where.keys():
+            _validate_identifier(col, "WHERE column name")
+
         where_clauses = [f"{k} = ${i + 1}" for i, k in enumerate(where.keys())]
 
+        # Now safe to interpolate validated identifiers
         query = f"""
             DELETE FROM {table}
             WHERE {" AND ".join(where_clauses)}
@@ -394,40 +576,86 @@ class DatabaseConnector:
             table: Table name
             columns: Columns to select (default: all)
             where: WHERE conditions
-            order_by: ORDER BY clause
-            limit: LIMIT
-            offset: OFFSET
+            order_by: ORDER BY clause (column name, optionally with ASC/DESC)
+            limit: LIMIT (must be int)
+            offset: OFFSET (must be int)
 
         Returns:
             List of records
+
+        Raises:
+            SQLInjectionError: If table or column names contain unsafe characters
+            ValueError: If limit or offset are not valid integers
         """
-        cols = ", ".join(columns) if columns else "*"
+        # Validate table name
+        _validate_table_name(table)
+
+        # Validate column names
+        if columns:
+            for col in columns:
+                _validate_identifier(col, "column name")
+            cols = ", ".join(columns)
+        else:
+            cols = "*"
 
         query = f"SELECT {cols} FROM {table}"
         values = []
+        param_idx = 1
 
         if where:
+            # Validate WHERE column names
+            for col in where.keys():
+                _validate_identifier(col, "WHERE column name")
+
             where_clauses = []
-            for i, (k, v) in enumerate(where.items()):
+            for k, v in where.items():
                 if isinstance(v, list):
                     # Handle IN clauses
-                    placeholders = [f"${len(values) + j + 1}" for j in range(len(v))]
+                    placeholders = [f"${param_idx + j}" for j in range(len(v))]
                     where_clauses.append(f"{k} IN ({', '.join(placeholders)})")
                     values.extend(v)
+                    param_idx += len(v)
                 else:
-                    where_clauses.append(f"{k} = ${len(values) + 1}")
+                    where_clauses.append(f"{k} = ${param_idx}")
                     values.append(v)
+                    param_idx += 1
 
             query += f" WHERE {' AND '.join(where_clauses)}"
 
         if order_by:
-            query += f" ORDER BY {order_by}"
+            # ORDER BY can be "column_name" or "column_name ASC/DESC"
+            # Split and validate each part
+            order_parts = order_by.split()
+            if len(order_parts) > 2:
+                raise SQLInjectionError(f"Invalid ORDER BY clause: '{order_by}'")
 
-        if limit:
-            query += f" LIMIT {limit}"
+            col_name = order_parts[0]
+            _validate_identifier(col_name, "ORDER BY column")
 
-        if offset:
-            query += f" OFFSET {offset}"
+            # Validate sort direction if provided
+            if len(order_parts) == 2:
+                sort_dir = order_parts[1].upper()
+                if sort_dir not in ("ASC", "DESC"):
+                    raise SQLInjectionError(f"Invalid sort direction: '{order_parts[1]}'. Must be ASC or DESC.")
+                validated_order = f"{col_name} {sort_dir}"
+            else:
+                validated_order = col_name
+
+            query += f" ORDER BY {validated_order}"
+
+        if limit is not None:
+            if not isinstance(limit, int) or limit < 0:
+                raise ValueError(f"limit must be a non-negative integer, got {limit}")
+            query += f" LIMIT ${param_idx}"
+            values.append(limit)
+            param_idx += 1
+
+        if offset is not None:
+            if not isinstance(offset, int) or offset < 0:
+                raise ValueError(f"offset must be a non-negative integer, got {offset}")
+            query += f" OFFSET ${param_idx}"
+            values.append(offset)
+            param_idx += 1
 
         records = await self.fetch(query, *values)
         return [dict(r) for r in records]
@@ -435,6 +663,12 @@ class DatabaseConnector:
 
 class DatabaseConnectionError(Exception):
     """Raised when database connection fails."""
+
+    pass
+
+
+class TransactionError(Exception):
+    """Raised when a database transaction operation fails."""
 
     pass
 

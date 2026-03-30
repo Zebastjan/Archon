@@ -56,72 +56,72 @@ class DocumentIngestionService:
             # Generate source ID
             source_id = str(uuid.uuid4())
 
-            # Create source record
-            await self.db.execute(
-                """
-                INSERT INTO archon_sources (
-                    source_id, name, url, description
-                ) VALUES ($1, $2, $3, $4)
-                """,
-                source_id,
-                title,
-                source_url or f"ingested://{title.replace(' ', '_')}",
-                f"Ingested document: {title}",
-            )
-
             # Simple chunking strategy - split by paragraphs first, then by size
             chunks = self._chunk_text(content, chunk_size, chunk_overlap)
 
             safe_logfire_info(f"Text chunked | source_id={source_id} | chunks={len(chunks)}")
 
-            # Generate embeddings and store chunks
+            # Use transaction for atomic ingestion
+            # If any part fails, the entire operation is rolled back
             stored_chunks = 0
-            for i, chunk in enumerate(chunks):
-                try:
-                    # Generate embedding
-                    embedding = await self.embedding_service.generate(chunk)
-                    
-                    if embedding is None:
-                        safe_logfire_error(f"Embedding returned None for chunk {i}")
-                        continue
-                        
-                    logger.info(f"Generated embedding | chunk={i} | dims={len(embedding)}")
+            async with self.db.transaction() as conn:
+                # Create source record within transaction
+                await conn.execute(
+                    """
+                    INSERT INTO archon_sources (
+                        source_id, name, url, description
+                    ) VALUES ($1, $2, $3, $4)
+                    """,
+                    source_id,
+                    title,
+                    source_url or f"ingested://{title.replace(' ', '_')}",
+                    f"Ingested document: {title}",
+                )
 
-                    # Convert embedding list to PostgreSQL vector string
-                    vector_str = '[' + ','.join(str(x) for x in embedding) + ']'
+                # Generate embeddings and store chunks within same transaction
+                for i, chunk in enumerate(chunks):
+                    try:
+                        # Generate embedding
+                        embedding = await self.embedding_service.generate(chunk)
 
-                    # Store chunk with embedding
-                    chunk_id = uuid.uuid4()
-                    item_uuid = uuid.UUID(source_id)
-                    await self.db.execute(
-                        """
-                        INSERT INTO archon_embeddings (
-                            id, item_id, item_type, chunk_index, total_chunks,
-                            embedding, model_id
-                        ) VALUES ($1, $2, $3, $4, $5, $6::vector, $7)
-                        """,
-                        chunk_id,
-                        item_uuid,
-                        "source",
-                        i,
-                        len(chunks),
-                        vector_str,
-                        "bge-large",
-                    )
-                    stored_chunks += 1
-                    logger.info(f"Stored chunk | chunk_id={chunk_id}")
+                        if embedding is None:
+                            safe_logfire_error(f"Embedding returned None for chunk {i}")
+                            continue
 
-                except Exception as e:
-                    logger.error(f"Failed to process chunk {i}: {e}")
-                    safe_logfire_error(f"Failed to process chunk {i} | error={str(e)}")
-                    continue
+                        logger.info(f"Generated embedding | chunk={i} | dims={len(embedding)}")
 
-            # Update is not needed - archon_sources is simple, no status tracking
-            pass
+                        # Convert embedding list to PostgreSQL vector string
+                        vector_str = "[" + ",".join(str(x) for x in embedding) + "]"
+
+                        # Store chunk with embedding
+                        chunk_id = uuid.uuid4()
+                        item_uuid = uuid.UUID(source_id)
+                        await conn.execute(
+                            """
+                            INSERT INTO archon_embeddings (
+                                id, item_id, item_type, chunk_index, total_chunks,
+                                embedding, model_id
+                            ) VALUES ($1, $2, $3, $4, $5, $6::vector, $7)
+                            """,
+                            chunk_id,
+                            item_uuid,
+                            "source",
+                            i,
+                            len(chunks),
+                            vector_str,
+                            "bge-large",
+                        )
+                        stored_chunks += 1
+                        logger.info(f"Stored chunk | chunk_id={chunk_id}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to process chunk {i}: {e}")
+                        safe_logfire_error(f"Failed to process chunk {i} | error={str(e)}")
+                        # Re-raise to trigger transaction rollback
+                        raise
 
             safe_logfire_info(
-                f"Document ingestion complete | source_id={source_id} | "
-                f"chunks={stored_chunks}/{len(chunks)}"
+                f"Document ingestion complete | source_id={source_id} | chunks={stored_chunks}/{len(chunks)}"
             )
 
             return {
@@ -232,9 +232,9 @@ class DocumentIngestionService:
         try:
             # Generate query embedding
             query_embedding = await self.embedding_service.generate(query)
-            
+
             # Convert to vector string
-            vector_str = '[' + ','.join(str(x) for x in query_embedding) + ']'
+            vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
             # Search using pgvector
             results = await self.db.fetch(

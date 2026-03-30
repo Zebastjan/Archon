@@ -66,6 +66,8 @@ from .api_routes.version_api import router as version_router
 # Import Logfire configuration
 from .config.logfire_config import api_logger, setup_logfire
 from .services.credential_service import initialize_credentials
+from .services.database import close_database
+from .services.health_monitoring_service import stop_health_monitoring
 
 # Logger will be initialized after credentials are loaded
 logger = logging.getLogger(__name__)
@@ -270,6 +272,20 @@ async def lifespan(app: FastAPI):
     api_logger.info("🛑 Shutting down Archon backend...")
 
     try:
+        # Stop health monitoring service
+        try:
+            await stop_health_monitoring()
+            api_logger.info("✅ Health monitoring stopped")
+        except Exception as e:
+            api_logger.warning(f"Could not stop health monitoring: {e}")
+
+        # Close database connection pool
+        try:
+            await close_database()
+            api_logger.info("✅ Database connection pool closed")
+        except Exception as e:
+            api_logger.warning(f"Could not close database pool: {e}")
+
         # MCP tools cleanup not needed - handled by dedicated server
         api_logger.info("✅ Cleanup completed")
 
